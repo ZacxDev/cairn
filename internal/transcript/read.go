@@ -104,8 +104,11 @@ type Tool struct {
 	// ID pairs a Claude Code `tool_use` with its `tool_result`. Never rendered.
 	ID   string
 	Name string
-	// Input is the call's input as indented JSON.
-	Input string
+	// Input is the call's input as indented JSON; InputBytes is the input's size as compact JSON
+	// (what the agent read API's skeleton reports — never the indented rendering's size), set only
+	// when the reader measures ([reader.measure]).
+	Input      string
+	InputBytes int
 	// HasResult is false for a call whose result is not in the same turn (still running, or in a
 	// record that never arrived).
 	HasResult bool
@@ -258,6 +261,19 @@ type reader struct {
 	// roomOut is set when an item is left out because the PAGE allowance is spent (not a child's
 	// own cap): the turn being built does not fit whole.
 	roomOut bool
+	// measure is set by the agent read API's skeleton ([View.Skeleton]): every piece then also
+	// carries the size of each of its units by class, and whether it is a compaction boundary.
+	// The collapsed reading leaves it false and pays nothing for it.
+	measure bool
+	// scanned is the stored bytes every stream scan of this reader has read, record by record.
+	scanned int64
+}
+
+// sizedUnit is one classified unit and its size in bytes: the stored record's own length for a
+// whole-record unit, the unit's value re-encoded as compact JSON for a unit inside one.
+type sizedUnit struct {
+	class Class
+	bytes int
 }
 
 // piece is what ONE stored record contributes: its items, what it only counts, and whether it
@@ -268,6 +284,9 @@ type piece struct {
 	bookkeeping int
 	duplicates  int
 	human       bool
+	// units and compaction are filled only when [reader.measure] is set.
+	units      []sizedUnit
+	compaction bool
 }
 
 // window collects the turns of one page out of a stream of pieces.
@@ -422,6 +441,7 @@ func (r *reader) stream(name string, emit func(piece)) error {
 		return r.opencodeStream(name, emit)
 	}
 	return scanTo(r.a, r.meta, name, func(rec archive.StoredRecord) error {
+		r.scanned += int64(len(rec.Rec))
 		emit(r.claudePiece(name, rec))
 		return nil
 	})
@@ -508,9 +528,16 @@ func (r *reader) claudePiece(stream string, sr archive.StoredRecord) piece {
 	rec := decodeObject(sr.Rec)
 	if rec == nil {
 		p.items = append(p.items, Item{Class: Unknown, Stream: stream, Seq: sr.Seq, Label: "not a JSON object", Bytes: len(sr.Rec)})
+		if r.measure {
+			p.units = append(p.units, sizedUnit{Unknown, len(sr.Rec)})
+		}
 		return p
 	}
 	kind, _ := rec["type"].(string)
+	if r.measure {
+		sub, _ := rec["subtype"].(string)
+		p.compaction = (kind == "system" && sub == "compact_boundary") || truthy(rec["isCompactSummary"])
+	}
 	// A subagent's stream is written by its parent agent, whatever one record says about itself.
 	inChild := stream != mainStream
 	var child *Child
@@ -525,6 +552,9 @@ func (r *reader) claudePiece(stream string, sr archive.StoredRecord) piece {
 			class = AgentPrompt
 		}
 		node := at(rec, u.Path)
+		if r.measure {
+			p.units = append(p.units, sizedUnit{class, unitBytes(sr.Rec, node, u.Path)})
+		}
 		it := Item{Class: class, Stream: stream, Seq: sr.Seq}
 		switch class {
 		case HumanText:
@@ -543,6 +573,9 @@ func (r *reader) claudePiece(stream string, sr archive.StoredRecord) piece {
 		case ToolCall:
 			block, _ := node.(map[string]any)
 			t := &Tool{Input: indent(block["input"])}
+			if r.measure {
+				t.InputBytes = compactBytes(block["input"])
+			}
 			t.ID, _ = block["id"].(string)
 			t.Name, _ = block["name"].(string)
 			if in, ok := block["input"].(map[string]any); ok {
@@ -715,6 +748,30 @@ func unitText(node any) string {
 	return ""
 }
 
+// compactBytes is the size of a decoded JSON value re-encoded compactly, HTML left unescaped — 0
+// for an absent value.
+func compactBytes(v any) int {
+	if v == nil {
+		return 0
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return 0
+	}
+	return b.Len() - 1 // Encode appends a newline
+}
+
+// unitBytes is a unit's size: the whole stored record for the record itself (path ""), and the
+// value at its path re-encoded compactly for a unit inside one.
+func unitBytes(raw []byte, node any, path string) int {
+	if path == "" {
+		return len(raw)
+	}
+	return compactBytes(node)
+}
+
 // indent renders a JSON value for reading. A string is itself.
 func indent(v any) string {
 	if v == nil {
@@ -744,6 +801,7 @@ func (r *reader) opencodeStream(name string, emit func(piece)) error {
 	var order []string
 	last := map[string]unit{}
 	err := scanTo(r.a, r.meta, name, func(rec archive.StoredRecord) error {
+		r.scanned += int64(len(rec.Rec))
 		key := rec.Src
 		if i := strings.LastIndexByte(key, '@'); i >= 0 {
 			key = key[:i]
@@ -772,12 +830,18 @@ func (r *reader) opencodeStream(name string, emit func(piece)) error {
 		if !strings.HasPrefix(key, "prt:") {
 			// The session's and each message's `info`: metadata about the conversation, not part of it.
 			p.bookkeeping++
+			if r.measure {
+				p.units = append(p.units, sizedUnit{Bookkeeping, len(u.rec)})
+			}
 			emit(p)
 			continue
 		}
 		part := decodeObject(u.rec)
 		if part == nil {
 			p.items = append(p.items, Item{Class: Unknown, Stream: name, Seq: u.seq, Label: "not a JSON object", Bytes: len(u.rec)})
+			if r.measure {
+				p.units = append(p.units, sizedUnit{Unknown, len(u.rec)})
+			}
 			emit(p)
 			continue
 		}
@@ -785,6 +849,12 @@ func (r *reader) opencodeStream(name string, emit func(piece)) error {
 		kind, _ := part["type"].(string)
 		it := Item{Stream: name, Seq: u.seq}
 		units := ClassifyOpencodePart(roles[msgID], inChild, part)
+		if r.measure {
+			for _, un := range units {
+				p.units = append(p.units, sizedUnit{un.Class, unitBytes(u.rec, at(part, un.Path), un.Path)})
+			}
+			p.compaction = kind == "compaction"
+		}
 		switch units[0].Class {
 		case HumanText:
 			it.Class, it.Text = HumanText, unitText(part)
@@ -804,6 +874,10 @@ func (r *reader) opencodeStream(name string, emit func(piece)) error {
 			p.items = append(p.items, r.collapsed(it))
 		case ToolCall:
 			it.Class, it.Tool = ToolCall, opencodeTool(part, u.seq)
+			if r.measure {
+				state, _ := part["state"].(map[string]any)
+				it.Tool.InputBytes = compactBytes(state["input"])
+			}
 			p.items = append(p.items, r.collapsed(it))
 		case Bookkeeping:
 			p.bookkeeping++

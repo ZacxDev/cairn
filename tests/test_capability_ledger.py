@@ -541,10 +541,11 @@ class TestTheGoOnlyDeclaration:
         registry (`arcs`, `arc-show`, `arc-register`); S2 of the scope-refs plan the
         `sources` ROUTE, S3 its `sources` verb and S5 the `audit-refs` verb; S3 of the scope-mail plan the four `memo-*`
         verbs, with NO route (they are clients of `cairn-ui`'s client listener, not the
-        pod). The next one moves this test in the same commit."""
+        pod); S8 of the transcripts plan the `transcript` verb, also with no route, for the
+        memo verbs' reason. The next one moves this test in the same commit."""
         assert GO_ONLY_VERBS == frozenset({"sessions", "arcs", "arc-show", "arc-register",
                                            "memo-check", "memo-read", "memo-send", "memo-retract",
-                                           "sources", "audit-refs"})
+                                           "sources", "audit-refs", "transcript"})
         assert go_only_route_names() == frozenset({
             "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
             "GET arc", "HEAD arc", "PUT arc", "GET sources", "HEAD sources",
@@ -568,6 +569,7 @@ class TestTheGoOnlyDeclaration:
         assert go_only_verbs(ledger) == {
             SYNTHETIC_VERB, "sessions", "arcs", "arc-show", "arc-register",
             "memo-check", "memo-read", "memo-send", "memo-retract", "sources", "audit-refs",
+            "transcript",
         }
         # A GET route is ALSO a HEAD route on the Go server.
         assert go_only_route_names(ledger) == {

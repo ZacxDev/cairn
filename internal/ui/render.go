@@ -86,6 +86,11 @@ type PageView struct {
 	// to reading it. The FOLDED operand lives on it, as `TagMatches.Tag`.
 	TagMatches *TagMatches
 
+	// TranscriptsStored is set on the HUB alone, when this deployment has a transcript store: the
+	// "My sessions" card renders only then (transcripts S7 follow-up) — S4's rule that a `cairn-ui`
+	// without `-transcript-dir` renders nothing new.
+	TranscriptsStored bool
+
 	// Scope is the scope under view on the scope and entry pages, nil on the root.
 	Scope *Scope
 	// Entry is the entry under view on the entry page, nil elsewhere.

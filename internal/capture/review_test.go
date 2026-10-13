@@ -257,6 +257,32 @@ func TestTheAgentDoesNotDeclareF1(t *testing.T) {
 	}
 }
 
+// TestTheAgentDoesNotDeclareF1ForAClaudeCodeSession — the Claude Code half of the rule above, which
+// is a separate upload site (`Declared:` is spelled once per runtime in `agent.go`): a session whose
+// tool input names the program and whose ledger is EMPTY carries F1's `*` in its own `V` and does NOT
+// declare it. The control is that the session SHIPPED — the sink holds its declaration, so an empty
+// one below is the agent's choice, not an upload that never happened.
+//
+// RED with the Claude Code upload declaring `ss.V`: #266's audit measured that mutation leaving the
+// whole suite green, because only the opencode site had a test.
+func TestTheAgentDoesNotDeclareF1ForAClaudeCodeSession(t *testing.T) {
+	w := loadWorld(t)
+	e := materialize(t, w, "cc-f1-empty-ledger")
+	a := newAgent(t, e, oneInstance, &fakeRunner{}, &bytes.Buffer{})
+	mustRun(t, a)
+	id := w.Sessions["cc-f1-empty-ledger"].ID
+	if got := a.State.Sessions[id].V; !slices.Contains(got, "*") {
+		t.Fatalf("the fixture: a program-naming input with an empty ledger must trip F1 in V, got %v", got)
+	}
+	declared, shipped := e.sink.declared["personal/"+id]
+	if !shipped || len(e.sink.records["personal/"+id+"/main"]) == 0 {
+		t.Fatalf("the control: the session did not ship (declared=%v), so its declaration below says nothing", declared)
+	}
+	if slices.Contains(declared, "*") {
+		t.Fatalf("declared %v — F1's `*` must stay in the agent's own V and never reach the pod", declared)
+	}
+}
+
 // TestALedgerThatIsNotARegularFileFailsClosed (#266's audit): the client refuses to write through a
 // symlink or into anything but a regular file, and the agent now refuses to READ one: a symlink at
 // the ledger path (here to a perfectly good ledger naming `beta-notes`) and a FIFO are each `*` —

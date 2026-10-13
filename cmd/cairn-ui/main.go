@@ -314,7 +314,7 @@ func main() {
 	// 🔴 SCOPE MAIL'S CLIENT LISTENER (S2 of the scope-mail plan): one flag, NO default and no
 	// environment spelling — see `clientapi.go` beside this file for why, and for its refusals.
 	clientAPIAddr := flag.String(flagClientAPIAddr, "",
-		"host:port of the THIRD listener serving the four memo routes to agents' narrowed journal credentials "+
+		"host:port of the THIRD listener serving the four memo routes and the three transcript read routes to agents' narrowed journal credentials "+
 			"(machine tokens only). NO DEFAULT: unset, there is no listener. Needs -control-journal and -db-dsn")
 	dsnDefault, dsnErr := databaseDSNDefault(os.Getenv)
 	dbDSN := flag.String("db-dsn", dsnDefault,
@@ -801,12 +801,26 @@ func main() {
 	// was opened; what is left is the store, the handler and the bind. The authenticator is the SAME
 	// `machine` the browser chain holds — the one machine-token backend over the one journal
 	// authority — and `clientapi.Config.Auth`'s type admits nothing else.
+	// 🔴 THE TRANSCRIPT READ SIDE (S4 of the transcripts plan) EXISTS ONLY WHERE THE STORE WAS OPENED —
+	// which takes all six worker flags, `-transcript-dir` among them. Built here, once, because TWO
+	// listeners read through it: the browser surface (the session page, the raw-record row and the agent
+	// read rows) and the client listener (the agent read rows, transcripts S8). NIL without an archive —
+	// never a Store over a nil archive — so the section never renders and every read row answers its
+	// one miss, and a deployment without `-transcript-dir` serves what it served before. It reads the
+	// SAME `*store` the browse pages read, because the write half of a session's visibility set is a
+	// walk of that store's trailers. Reading does NOT depend on `-arm-transcript-capture`: disarming
+	// stops uploads, it does not hide what is stored.
+	var transcriptReads *transcript.Store
+	if transcripts != nil {
+		transcriptReads = transcript.NewStore(transcripts, *store)
+	}
+
 	clientAPIModeLine := "client API off (no -" + flagClientAPIAddr + ")"
 	var clientAPIServer *http.Server
 	var clientAPINet net.Listener
 	if *clientAPIAddr != "" {
 		clientAPIServer, clientAPINet, clientAPIModeLine, err = openClientAPI(*clientAPIAddr, machine, authority, pgDB,
-			netid.NewRateLimiter(maxFailures, window, lockout), trustedProxies)
+			netid.NewRateLimiter(maxFailures, window, lockout), trustedProxies, transcriptReads)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error()+". Refusing to start")
 			os.Exit(exitConfig)
@@ -890,17 +904,8 @@ func main() {
 		// `-instance-name`'s, set whether or not the app is armed.
 		App: app,
 	}
-	// 🔴 THE TRANSCRIPT READ SIDE (S4 of the transcripts plan) EXISTS ONLY WHERE THE STORE WAS OPENED —
-	// which takes all six worker flags, `-transcript-dir` among them. Assigned inside the `if`, never
-	// as a Store over a nil archive unconditionally: with no archive the field stays
-	// NIL, the session page renders no transcript section and the raw-record row answers its one miss,
-	// so a deployment without `-transcript-dir` serves what it served before. It reads the SAME
-	// `*store` the browse pages read, because the write half of a session's visibility set is a walk
-	// of that store's trailers. Reading does NOT depend on `-arm-transcript-capture`: disarming stops
-	// uploads, it does not hide what is stored.
-	if transcripts != nil {
-		cfg.Transcripts = transcript.NewStore(transcripts, *store)
-	}
+	// The transcript read side built above, NIL without an archive (see there).
+	cfg.Transcripts = transcriptReads
 	srv, err := ui.New(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())

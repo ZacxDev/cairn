@@ -93,6 +93,12 @@ func TestTheRouteLedgerMatchesTheDispatchTable(t *testing.T) {
 		// answers at all is the visibility predicate's verdict about this caller — the owner, or a
 		// reader of every scope the session touched — and every miss is one body.
 		"GET /session/transcript content",
+		// 🔴 THE AGENT READ API (S8 of the transcripts plan). `content`, never `public`: whether any of the
+		// three answers is the visibility predicate's verdict about this caller, and every miss is one
+		// body. The client listener serves the same three answers through the same function.
+		"GET /transcript/records content",
+		"GET /transcript/skeleton content",
+		"GET /transcript/tool content",
 		// 🔴 "MY SESSIONS" (S7 of the transcripts plan). `content`, never `public`: the list is the
 		// transcript store's owner arm — which stored sessions are THIS caller's — and a narrowed
 		// credential lists nothing.
@@ -524,6 +530,12 @@ var bareGETAnswer = map[string]int{
 	// And the raw-record view, for the session page's reason: a request naming no session asked about
 	// nothing, so it gets the navigation page rather than the uniform no-transcript refusal.
 	"GET /session/transcript content": http.StatusOK,
+	// 🔴 THE AGENT READ API ANSWERS 400 BARE, AND THAT IS THE DECISION: it is JSON for an agent, not a
+	// page, so there is no navigation page to fall back on, and a request naming no session asked about
+	// nothing — the 400 names the missing parameter and is decided before any predicate is asked.
+	"GET /transcript/skeleton content": http.StatusBadRequest,
+	"GET /transcript/records content":  http.StatusBadRequest,
+	"GET /transcript/tool content":     http.StatusBadRequest,
 	// "My sessions" has no operand to name: its bare request IS the page (the empty state when the
 	// caller owns nothing, or the deployment stores no transcripts).
 	"GET /my-sessions content": http.StatusOK,
@@ -757,6 +769,13 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"GET", "/session/transcripts"},
 		{"GET", "/session/"},
 		{"GET", "/transcript"},
+		// The agent read API's near-misses (transcripts S8): a prefix match on any of its rows would serve each.
+		{"GET", "/transcript/"},
+		{"GET", "/transcript/records/"},
+		{"GET", "/transcript/recordsx"},
+		{"GET", "/transcript/skeletons"},
+		{"GET", "/transcript/tool/1"},
+		{"GET", "/transcripts/records"},
 		// "My sessions"' near-misses (transcripts S7): a prefix match on the row would serve each.
 		{"GET", "/my-sessions/"},
 		{"GET", "/my-sessionsx"},
@@ -820,6 +839,7 @@ func TestEveryServedPathComesFromTheLedger(t *testing.T) {
 		{"PUT", "/memo"},
 		{"POST", "/scope/sources/"},
 		{"POST", "/session/transcript"},
+		{"POST", "/transcript/records"},
 		{"POST", "/my-sessions"},
 		{"POST", "/session"},
 		{"PUT", "/scope/sources"},
@@ -973,6 +993,14 @@ var contentAuthority = map[string]string{
 	// transcript predicate's, read off the request's own authorization — a seam this walk has no
 	// counter for; `TestTheRawRecordViewAsksThePredicate` is what measures it.
 	"GET /session/transcript content": "source",
+	// 🔴 `transcript`: the agent read API asks NO `Source` method — its one authority is the transcript
+	// predicate (`transcript.Store.View`), read off the request's own authorization, and this walk has
+	// no counter for it. So the walk asserts what it CAN of these rows (the bare 400 names the missing
+	// `session`, before anything is asked) and `TestTheAgentReadRoutesAskThePredicate` measures the
+	// predicate over every row, every viewer, and every miss.
+	"GET /transcript/skeleton content": "transcript",
+	"GET /transcript/records content":  "transcript",
+	"GET /transcript/tool content":     "transcript",
 	// `source`: "My sessions" consults `Visible` for the shell, like every browse page. ⚠ The list
 	// itself is the transcript store's OWNER ARM, read off the request's own identity — a seam this
 	// walk has no counter for; `TestMySessionsListsTheViewersOwnAndNoOneElses` is what measures it.
@@ -1096,6 +1124,15 @@ func TestEveryContentRouteConsultsTheAuthority(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 
+		if contentAuthority[route] == "transcript" {
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"detail":"session: is required"`) {
+				t.Errorf("%s answered %d %q bare, want the 400 naming the missing session", route, rec.Code, rec.Body.String())
+			}
+			if source.calls != 0 {
+				t.Errorf("%s consulted the Source (%d) — its one authority is the transcript predicate", route, source.calls)
+			}
+			continue
+		}
 		if rec.Code != http.StatusOK {
 			t.Errorf("declared route %s answered %d, not 200, so the authority count below is about a refusal",
 				route, rec.Code)

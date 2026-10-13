@@ -19,11 +19,12 @@
 // 🔴 THE POD DERIVES THE READ HALF OF `V` ITSELF, FROM WHAT IT STORES (decision 3: "so an old or
 // lying agent cannot shrink `V`"). Every accepted record and every text blob is fed to
 // `internal/transcript/scopeuse` — the ONE function the capture agent routes with — and what it finds
-// (`R_header`, and `*` for F1/F2) is folded into `meta.json`'s grow-only `derived_scopes`. The agent's
-// declaration is kept BESIDE it and can only add. ⚠ The pod holds no read LEDGER until S11, so F1
-// ("a tool input names the program and the ledger is empty") fires for every session that names
-// `cairn` in a tool input: such a session is `*` — owner-only (decision 4) — which is the plan's
-// stated cost until S11. See [derive].
+// (`R_header`, and `*` for F2) is folded into `meta.json`'s grow-only `derived_scopes`. The agent's
+// declaration is kept BESIDE it and can only add. F1 ("a tool input names the program and the ledger is
+// empty") is NOT derived into that set: since S11 (#266) the pod holds the uploaded client read
+// LEDGER and decides F1 at view time from it ([Meta.LedgerScopes]), and the agent does not declare F1
+// either — so a session that names `cairn` is `*` (owner-only, decision 4) only until its ledger
+// arrives. See [derive].
 //
 // Layout under the configured directory (decision 15, with one deviation stated):
 //

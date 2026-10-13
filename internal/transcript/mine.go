@@ -52,7 +52,8 @@ type MineResult struct {
 //
 // ⚠ IT READS EVERY STORED SESSION'S `meta.json`, because "newest first" over sessions nobody
 // indexes by owner can only be answered by reading them all; the page bounds what it RENDERS, not
-// this. No store walk: ownership never reads `V`.
+// this. Measured on one host: 2,000 stored sessions cost 31 ms and 13.9 MB a call, 10,000 cost 221 ms
+// and 69.6 MB — linear in the whole archive. No store walk: ownership never reads `V`.
 func (s *Store) Mine(viewer Viewer) (MineResult, error) {
 	var out MineResult
 	if s == nil || s.archive == nil {

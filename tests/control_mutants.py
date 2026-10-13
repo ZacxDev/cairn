@@ -5506,6 +5506,39 @@ MUTANTS: tuple[Mutant, ...] = (
         "assistant's head limit reads as consistency — and the one thing the operator asked never to "
         "be cut is then cut at 1,200 characters with no reveal.",
     ),
+    # 🔴 THE AGENT READ API (S8 of the transcripts plan): the plan's two rows. ⚠ NEITHER CAN BE A
+    # LISTENER-LOCAL "SKIP THE PREDICATE" EDIT, AND THAT IS #261's DESIGN RATHER THAN A GAP: a stored
+    # record leaves `internal/transcript` only inside a `View`, and `Store.View` is the only constructor
+    # OUTSIDE the package — so no compiling edit in `internal/ui` or `internal/clientapi` serves a
+    # session without asking. ⚠ Inside the package one does compile (`Answer` building a `View` from
+    # `ReadMeta` directly), and `TestTheAgentReadRoutesAskThePredicate` would see it, but it is not a
+    # row here. Each row
+    # therefore breaks the PREDICATE the read API asks, in a shape a reader of that API would plausibly
+    # write, and names the S8 surface test as its killer: what it proves is that the JSON routes'
+    # tests SEE a predicate that stopped refusing, on the route each row is named for.
+    Mutant(
+        name="transcript-read-api-without-predicate",
+        path="internal/transcript/visible.go",
+        old="\tif viewer.owns(meta) {\n\t\treturn true\n\t}",
+        new="\tif true || viewer.owns(meta) {\n\t\treturn true\n\t}",
+        killer="TestTheAgentReadRoutesAskThePredicate",
+        why="the read API is for the owner's own agents, so 'an authenticated caller is reading its own "
+        "sessions' reads as the rule — and every credential then reads every stored transcript, a stranger's "
+        "and a narrowed agent's included.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-raw-view-without-predicate",
+        path="internal/transcript/visible.go",
+        old="\tif len(v) == 0 {\n\t\treturn false\n\t}\n\treturn viewer.readsEvery(v)\n}",
+        new="\tif len(v) == 0 {\n\t\treturn false\n\t}\n\treturn true\n}",
+        killer="TestTheRawRecordsViewAsksThePredicate",
+        extra_killers=("TestTheRawRecordViewAsksThePredicate",),
+        why="a session that wrote or read SOMETHING has been vouched for by a scope, so admitting anyone "
+        "once the empty-set case is refused reads as the rule's remainder — and the stored bytes, `view=raw` "
+        "included, then reach a reader of ONE scope the session touched (clause d).",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
     # ---- transcripts S7: "My sessions" (O10, clause g — the listing half) ----------------------
     Mutant(
         name="my-sessions-lists-another-owner",

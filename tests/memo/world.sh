@@ -209,7 +209,7 @@ world_ui_start() {
         couldnt "pid $ui_pid is not the cairn-ui binary; killing it would orphan the server"
       ui_url="http://127.0.0.1:$port"
       api_url="http://127.0.0.1:$aport"
-      grep -qF "client API on 127.0.0.1:$aport (4 route(s), machine tokens only)" "$work/ui.log" ||
+      grep -qF "client API on 127.0.0.1:$aport (7 route(s), machine tokens only)" "$work/ui.log" ||
         couldnt "cairn-ui did not announce the client API listener: $(tail -5 "$work/ui.log")"
       return 0
     fi

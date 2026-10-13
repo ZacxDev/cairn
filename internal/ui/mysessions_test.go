@@ -95,6 +95,18 @@ func TestMySessionsIsTheEmptyStateForAViewerWhoOwnsNothing(t *testing.T) {
 	}
 }
 
+// TestTheEmptySentenceIsTrueForANarrowedOwner (S7 follow-up): the owner's NARROWED credential lists
+// nothing, and the sentence it is shown must say why — pinned WHOLE, because a guard on a word is
+// walked by a reword. RED before: it said only "none was uploaded under your sign-in, or this
+// deployment stores none", both false for that owner.
+func TestTheEmptySentenceIsTrueForANarrowedOwner(t *testing.T) {
+	const want = "No stored session transcript is listed for this credential: none was uploaded under it, " +
+		"this deployment stores none, or the credential is narrowed — a narrowed credential lists none, even its owner's."
+	if mySessionsEmpty != want {
+		t.Errorf("the empty sentence is %q, want %q", mySessionsEmpty, want)
+	}
+}
+
 // TestMySessionsWithNoStoreIsTheEmptyState — S4's convention for a deployment with no transcript
 // store: the same bytes as a store holding nothing of the viewer's, a 200 rather than a 404.
 func TestMySessionsWithNoStoreIsTheEmptyState(t *testing.T) {
