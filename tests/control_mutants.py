@@ -5209,8 +5209,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="worker-wall-skipped-on-the-reread",
         path="internal/worker/worker.go",
-        old="\t\tif err := admit(row, w.cfg.Owner); err != nil {\n\t\t\tw.once(",
-        new="\t\tif err := admit(row, row.Owner); err != nil {\n\t\t\tw.once(",
+        old="\t\tif err := admit(row, w.cfg.wall()); err != nil {\n\t\t\tw.once(",
+        new="\t\tif err := admit(row, Wall{Owner: row.Owner, Plugins: w.cfg.wall().Plugins}); err != nil {\n\t\t\tw.once(",
         killer="TestTheWallRefusesAForeignRowAtStartupAndAsARowAfterwards",
         why="the startup read already refused foreign rows, so the per-request re-read looks safe to "
         "trust — and a row appended afterwards would authenticate a second owner (Q7's wall).",
