@@ -158,7 +158,10 @@ cap is plugin A's (`-max-requests-per-day`, its own ledger file).
 client has no other request, and the suite asserts the fake saw only `GET`s. A 429 is waited out
 until the `X-RateLimit-Reset` it names (at most `-clickup-max-wait`, 4 attempts). The ticket list is
 fetched BEFORE any session and only when something is pending; if the fetch fails nothing is written.
-What is kept of a task: id, custom id, name — the name in memory only (see below).
+What is kept of a task: id, custom id, name. The name stays in memory unless the operator passes
+`-store-ticket-titles`, which sends it as each edge's and suggestion's `title` (Q8: the default
+stores ticket ids only) — and that works only against an instance started with
+`-plugin-store-ticket-titles`; any other refuses the titled write with a 400.
 
 The ClickUp token follows the module's rules for every credential (`internal/endpoint`,
 `internal/secretfile`): a 0600 file, one header, no redirect followed (a 3xx is an error — Go would

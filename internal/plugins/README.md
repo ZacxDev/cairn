@@ -68,6 +68,12 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
 - **The stored body is the re-encoded VALIDATED value** (`CanonicalBody`), never the bytes sent — a
   duplicate key validated as its last value was stored as both.
 - **The summary body is `{"text": …}`** (≤ 16 KiB) — the plan names the type, not its shape.
+- **A ticket TITLE is stored only where the instance says so** (S10; Q8, adopted by O13: ids only by
+  default). `TicketEdge` and `TicketSuggestion` carry an optional `title` (≤ 256 bytes, no control
+  character); `Service.WriteOutput` refuses a body carrying one — `ErrTitleNotStored`, a 400 naming the
+  flag, decided BEFORE the session is looked at so it says nothing about any session — unless
+  `cairn-ui` was started with `-plugin-store-ticket-titles` (no default; refused without a registry).
+  The plan spelled the flag for the pod and left the body's field unstated.
 - **`ticket-scan` is a fourth output type** (S10): `{system, edges, suggestions, model_asked}` — that a
   ticket matcher EXAMINED a session through the envelope's watermark. Decision 13 advances a session only
   when its plugin writes an output, and a matcher that finds nothing had nothing to write; the reasoning

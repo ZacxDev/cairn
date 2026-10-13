@@ -5234,6 +5234,13 @@ clauses (k) and (l).
   suggestion a plugin re-derives with an identical body is shown once. At most 60 blocks render.
 - **A suggestion is never worded as a match**: `suggested`, its confidence, "not a match". An edge
   names its signal in words ("matched on branch name").
+- **A ticket scan (S10) is neither**: "examined for tickets · this pass wrote N ticket edges and M
+  suggestions", and whether a model was asked. Only a plugin's LATEST scan is shown — every pass writes
+  one. `TestATicketScanRendersAsWhatWasExaminedAndOnlyTheLatestIsShown` (RED before the renderer knew
+  the type: the scan reached the suggestion branch and the page panicked).
+- **A stored ticket TITLE (S10, Q8) is text beside its id** — `g.Text`, never a link — and exists only
+  on an instance started with `-plugin-store-ticket-titles`
+  (`TestAStoredTicketTitleRendersAsTextBesideItsId`).
 - **Rows** (`derivedLines`): `/sessions`, `/my-sessions`, the scope page's sessions tab and the arc
   page's sessions tab each carry `derived · <plugin> <version>: <first 160 characters>` — the
   session's latest summary — with the model and time in `title=`.

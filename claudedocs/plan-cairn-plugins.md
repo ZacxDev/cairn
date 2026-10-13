@@ -1339,7 +1339,9 @@ script that prints only counts.
       decision 13 advances a session only when its plugin writes an output: without it a session
       that names no ticket is pending forever. It is a claim like the others and is rendered as one.
     - **What ClickUp material is stored:** the ticket id (and custom id) only by default; the ticket
-      TITLE only when the instance sets a no-default `-plugin-store-ticket-titles` (Q8).
+      TITLE only when the instance sets a no-default `-plugin-store-ticket-titles` (Q8). *As built
+      (S10): an optional `title` on both bodies (≤ 256 bytes), refused 400 by the pod unless that
+      flag is set; the plugin sends it only with its own `-store-ticket-titles`.*
       Descriptions, comments and assignees are never stored. Edges and suggestions are visible
       exactly when their session is (decision 4).
 
