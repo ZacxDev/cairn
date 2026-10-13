@@ -5004,8 +5004,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-capture-armed-by-default",
         path="internal/worker/worker.go",
-        old="\tif !w.cfg.Armed {",
-        new="\tif false && !w.cfg.Armed {",
+        old="\tif rt.upload && !w.cfg.Armed {",
+        new="\tif false && rt.upload && !w.cfg.Armed {",
         killer="TestADisarmedListenerRefusesEveryUploadAndStoresNothing",
         why="a listener that is configured looks like a listener that is meant to accept; the arming "
         "is a separate operator decision (O16) and the configuration is not it.",
@@ -5629,8 +5629,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="plugins-transcript-read-ignores-toggle",
         path="internal/plugins/service.go",
-        old="\tv, err := s.Transcripts.ForPlugin(root, gate)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
-        new="\tv, err := s.Transcripts.ForPlugin(root, transcript.Gate{On: func(*transcript.Meta, []string) bool { return gate.On != nil }})\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
+        old="\tv, err := s.Transcripts.ForPlugin(root, on)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
+        new="\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden",
         killer="TestEveryPluginRefusalIsTheSameBytes",
         why="the capability is checked and the token is the plugin's own, so the session's toggle looks "
         "like a second check of the same thing — and a stolen plugin token reads every stored "
@@ -5751,7 +5751,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-withdraw-repeat-answers-false",
         path="internal/transcript/archive/sweep.go",
-        old="\treturn a.deletedFor(who, root)\n}",
+        old="\treturn a.deletedFor(who, root), nil\n}",
         new="\treturn false, nil\n}",
         killer="TestAWithdrawalDeletesOnlyTheCallersOwnRoot",
         extra_killers=("TestAWithdrawalIsOwnerAndHostBoundAndIdempotent",),
@@ -5760,9 +5760,10 @@ MUTANTS: tuple[Mutant, ...] = (
         "was lost into a permanent hold (the plan's revision 4, retracted).",
         pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/"),
     ),
-    # Beyond the plan's six: the owner arm of the delete, the agent's two withdrawal rules, and the
-    # four S5 audit findings S6 closed (#270: the walk-skip, the arc member snapshot, the output
-    # totals, the 507 line).
+    # Beyond the plan's six: the owner arm of the delete, the agent's withdrawal rules, the S5 audit
+    # findings S6 closed (#270: the walk-skip, the arc veto's snapshot, the output totals, the 507
+    # line), and #273's own audit (a deletion is final for its root, a withdrawal reaches a stopped
+    # instance, no environment proxy, an arc toggle is saved only over the list its page showed).
     Mutant(
         name="transcript-delete-skips-the-owner-arm",
         path="internal/transcript/plugin.go",
@@ -5810,48 +5811,102 @@ MUTANTS: tuple[Mutant, ...] = (
         pkgs=PKGS + ("./internal/capture/",),
     ),
     Mutant(
-        name="plugins-walk-skipped-on-a-stored-off",
-        path="internal/plugins/service.go",
-        old="\t\tSettled: func(meta *transcript.Meta, v []string) bool { return Settled(st, plugin, subject(meta, v), known) },",
-        new="\t\tSettled: func(meta *transcript.Meta, v []string) bool { return !Effective(st, plugin, subject(meta, v), known) },",
+        name="plugins-store-walk-skipped-on-a-stored-off",
+        path="internal/transcript/plugin.go",
+        old="\n\tids := append([]string{meta.Root}, meta.Children...)\n\twritten, err := WrittenScopes(s.storeRoot, ids)\n",
+        new="\n\tif stored := VisibilitySet(meta, Written{}); len(stored) > 0 && !on(meta, stored) {\n\t\treturn nil, nil\n\t}\n"
+        "\tids := append([]string{meta.Root}, meta.Children...)\n\twritten, err := WrittenScopes(s.storeRoot, ids)\n",
         killer="TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",
         why="'OFF over the scopes already known' looks like a sound reason to skip a whole-store walk — it "
         "was the shipped rule, under a comment calling the fold monotone — and a session whose arc home "
         "only the walk finds is answered OFF until an unrelated page view records the scope (#270).",
-        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
+        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/", "./internal/transcript/"),
     ),
     Mutant(
-        name="plugins-settled-ignores-an-on-arc",
-        path="internal/plugins/toggles.go",
-        old="\treturn !everyOn && !anArcIsOn\n}",
-        new="\treturn !everyOn && (!anArcIsOn || true)\n}",
-        killer="TestSettledIsOffForEverySuperset",
-        extra_killers=("TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer",),
-        why="an arc whose home is not in the set says nothing about the session TODAY, so leaving arcs "
-        "out of the skip reads as consistent with the fold — and it is exactly the arc the walk is about "
-        "to bring into the set.",
-        pkgs=PKGS + ("./internal/plugins/", "./internal/worker/"),
-    ),
-    Mutant(
-        name="plugins-arc-toggle-covers-unlisted-sessions",
-        path="internal/plugins/toggles.go",
-        old="\t\tif !slices.ContainsFunc(r.Members, func(m string) bool { return slices.Contains(ids, m) }) {\n\t\t\tcontinue",
-        new="\t\tif false && !slices.ContainsFunc(r.Members, func(m string) bool { return slices.Contains(ids, m) }) {\n\t\t\tcontinue",
-        killer="TestAnArcToggleCoversExactlyTheMembersAnAdminSaw",
-        why="an arc toggle reads as a statement about the ARC, so applying it to whatever the arc holds "
-        "is the natural fold — and a writer of the home, who can PUT any session id into the arc and "
-        "self-declare a trailer in the home, turns the plugin on for sessions no admin ever saw (#270, T14).",
+        name="plugins-arc-veto-lifted-by-removing-the-member",
+        path="internal/plugins/service.go",
+        old="\tfor _, k := range st.ArcsVetoing(plugin, ids) {",
+        new="\tfor _, k := range []arcs.Key(nil) {",
+        killer="TestAnArcVetoOutlivesTheMembersRemovalAndAnArcOnIsReadLive",
+        why="an arc toggle reads as a statement about the arc AS IT IS, so folding it over the live member "
+        "list is the natural rule — and a writer of the home, who can PUT the arc without a session, "
+        "lifts an admin's veto with no admin act (#270, T14).",
         pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="transcript-upload-resurrects-a-deleted-root",
+        path="internal/transcript/archive/archive.go",
+        old="\tif m != nil {\n\t\treturn nil\n\t}\n\ta.mu.Lock()\n\twas, deleted := a.deleted[root]",
+        new="\tif m != nil || true {\n\t\treturn nil\n\t}\n\ta.mu.Lock()\n\twas, deleted := a.deleted[root]",
+        killer="TestADeletedSessionIsNotResurrectedByALaterUpload",
+        extra_killers=("TestADeletionIsFinalForItsRoot", "TestASessionDeletedOnItsInstanceIsNeverSentAgain"),
+        why="a root with no meta is a root nobody holds, which is exactly what a first upload looks like — "
+        "and a stream or blob the agent sends from its start after the owner's delete re-creates the "
+        "session the owner deleted (#273).",
+        pkgs=PKGS + ("./internal/worker/", "./internal/transcript/archive/", "./internal/capture/"),
+    ),
+    Mutant(
+        name="capture-deleted-answer-retried-forever",
+        path="internal/capture/agent.go",
+        old="\tif errors.Is(err, ErrDeleted) {\n\t\ta.sawDeleted = true",
+        new="\tif errors.Is(err, ErrDeleted) {\n\t\ta.sawDeleted = false",
+        killer="TestASessionDeletedOnItsInstanceIsNeverSentAgain",
+        why="every other refusal is one session's failure for one run and is retried, so treating the 410 "
+        "the same reads as consistent — and a session deleted on its instance is re-read, re-redacted "
+        "and refused every minute for as long as it exists on the host.",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-withdrawal-not-sent-to-a-stopped-instance",
+        path="internal/capture/agent.go",
+        old="\treturn a.stopped(ss.Instance) && !ss.shipped()",
+        new="\treturn a.stopped(ss.Instance)",
+        killer="TestAWithdrawalReachesAnInstanceThatIsNotTakingUploads",
+        why="an instance that refuses uploads has nothing to gain from a session being read, so skipping "
+        "every session bound for it is the cheap rule — and a prefix on a quota-full or disarmed "
+        "instance is never withdrawn while it stays that way (#273).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="capture-sink-uses-the-environment-proxy",
+        path="internal/capture/httpsink.go",
+        old="\t\ttransport.Proxy = nil\n",
+        new="",
+        killer="TestNoEnvironmentProxyEverCarriesTheCaptureToken",
+        why="honouring HTTP_PROXY is what every well-behaved client does — and for a plain-http worker "
+        "URL the proxy named by a stray variable receives the capture token and every transcript byte "
+        "in clear (#273).",
+        pkgs=PKGS + ("./internal/capture/",),
+    ),
+    Mutant(
+        name="plugins-arc-toggle-saved-from-a-stale-page",
+        path="internal/ui/plugins.go",
+        old="\tif r.PostFormValue(FieldMembers) != arcMembersDigest(memberSessions(rep.Reg)) {",
+        new="\tif false && r.PostFormValue(FieldMembers) != arcMembersDigest(memberSessions(rep.Reg)) {",
+        killer="TestAnArcToggleFromAStaleTabIsNotSaved",
+        why="the handler re-reads the arc and checks admin on its home, which reads as binding enough — "
+        "and an admin's `on` from a tab opened before a writer added a session turns the plugin on for "
+        "a session that admin was never shown (#273).",
+        pkgs=PKGS + ("./internal/plugins/",),
+    ),
+    Mutant(
+        name="ui-plugin-text-bidi-controls-rendered",
+        path="internal/ui/outputs.go",
+        old="r == 0x200E, r == 0x200F, r == 0x061C:\n\t\t\treturn -1",
+        new="r == 0x200E, r == 0x200F, r == 0x061C:\n\t\t\treturn r",
+        killer="TestBidiControlsInPluginTextAreNotRendered",
+        why="the text is escaped, so it looks inert — and a right-to-left override in a model's summary "
+        "reorders how the page's own `derived` label and what follows it are displayed.",
     ),
     Mutant(
         name="plugins-arc-toggle-snapshot-not-taken",
         path="internal/ui/plugins.go",
-        old="plugins.ArcTarget(rep.Reg.Key()), value, memberSessions(rep.Reg)...) {",
+        old="plugins.ArcTarget(rep.Reg.Key()), value, vetoSnapshot(value, rep.Reg)...) {",
         new="plugins.ArcTarget(rep.Reg.Key()), value) {",
-        killer="TestAnArcToggleSnapshotsItsMembersAndThePageSaysWhoIsCovered",
+        killer="TestAnArcVetoSnapshotsItsMembersAndThePageSaysWhoIsStillVetoed",
         why="the journal line already names the arc, and the arc's members are one registry read away, "
-        "so recording them again looks redundant — and with no snapshot there is nothing an admin's act "
-        "covers: the toggle is inert, or (read live) covers whoever is added later.",
+        "so recording them again looks redundant — and with no snapshot a veto covers only what the arc "
+        "lists NOW, so a writer of the home lifts it by re-registering the arc without the session.",
         pkgs=PKGS + ("./internal/plugins/",),
     ),
     Mutant(
@@ -5859,7 +5914,7 @@ MUTANTS: tuple[Mutant, ...] = (
         path="internal/transcript/archive/sweep.go",
         old="\tif err := a.forgetOutputs(m.Root); err != nil {\n\t\treturn err\n\t}\n",
         new="",
-        killer="TestARefusedOutputWriteRescansNothing",
+        killer="TestTheOutputTotalsFollowDeletionsAndARestart",
         why="the totals only bound growth, so an over-count after a deletion reads as erring on the safe "
         "side — and a plugin whose outputs were all deleted with their sessions stays refused 507 until "
         "the pod restarts, which is the pressure that brought the per-refusal rescan in (#270).",

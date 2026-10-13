@@ -118,15 +118,22 @@ that instance's `-worker` when its URL's host is EXACTLY `HOST`.
   another's URL.
 - **A flag only** — no default and no environment spelling, so a copied environment cannot switch
   it on.
-- **It must be used**: an opt-in naming an alias with no `-worker`, a host that is not that
-  worker's, or a worker that is `https` or loopback anyway is a usage error (exit 2) — one left
-  lying in a unit file would silently start applying after a later URL change.
+- **An opt-in that admits nothing is a WARNING line, not a refusal**: an alias with no `-worker`,
+  or a worker that is `https` or loopback by now. Refusing it (built first) would stop capture on
+  the day a worker moves to `https` with the flag still in the unit file; the plugins' client
+  (`plugins/internal/endpoint`) ignores an unused entry too. A value that is not a bare host is a
+  usage error (exit 2), and a host that is simply not the worker's leaves the URL refused as before.
 - **Said on every run**, per instance, on stderr: `⚠ instance <alias>: the capture token and every
   upload go to <url> over PLAIN HTTP (-allow-plaintext-host); the network between is the only
   transport protection`.
 - **Unchanged by it**: a redirect is never followed (`TestTheSinkNeverFollowsARedirect` — the sink
   knows nothing of the opt-in, so the token still goes nowhere but the named host), and the
   REDACTION-OFF test build still sends to a loopback address only.
+- **No proxy from the environment, ever.** Go's default transport reads `HTTP_PROXY`, and for a
+  plain-`http` URL the whole request — token and transcript — goes to that proxy in clear. The
+  sink's client has no proxy, for `https` too (`TestNoEnvironmentProxyEverCarriesTheCaptureToken`,
+  measured in a child process because Go reads those variables once; mutant
+  `capture-sink-uses-the-environment-proxy`).
 
 ⚠ **What nothing here can check:** that the path to the named host really is protected. The flag is
 the operator's assertion about a network; on an unprotected one the token and every transcript byte
@@ -145,7 +152,7 @@ instance has answered.
 | `{"deleted": true}` — it held the root for this host's (owner, host) and deleted it (transcript, plugin outputs, ticket edges), or already had | resets the session's watermarks, binds it nowhere, then acts on the new answer: re-ships it WHOLE from offset 0 to the other instance, or holds it |
 | `{"deleted": false}`, and this agent has an ACKNOWLEDGED upload of the session on record | holds the session FOR GOOD, loudly (`HOLD … PREFIX NOT WITHDRAWN: not held by this owner and host`): the token was reissued under another host label, say. It is never shipped anywhere else — the prefix's presence elsewhere is surfaced, not duplicated — and what the instance holds must be removed there by hand |
 | `{"deleted": false}`, and no upload of it was ever acknowledged | treats the prefix as never having landed (the instance was not taking uploads) and acts on the new answer |
-| no answer (a network error, a 5xx, a 404 from an instance older than the route, 503/507) | leaves the session bound where it was, ships nothing of it, and asks again next run |
+| no answer (a network error, a 5xx, a 404 from an instance older than the route) | leaves the session bound where it was, ships nothing of it, counts it `withdrawal-pending` on the run's summary line, and asks again next run |
 | 401 / 403 | the same, and the run fails loudly (the token is refused) |
 
 🔴 **WHERE A SESSION IS BOUND IS SAVED BEFORE ITS FIRST UPLOAD LEAVES.** It used to be saved with the
@@ -155,9 +162,24 @@ from (S3b's audit). ⚠ The cost is one state save per session the FIRST time it
 over a large backlog saves once per session (`TestAnIdleRunSavesNothing` pins the count; an idle run
 still saves nothing).
 
-⚠ **What it cannot do.** The third row reads "never landed" off this agent's own watermarks, which a
-kill can leave unsaved — but then the instance DOES hold the prefix and answers `true`, so the case
-cannot be confused in the direction that matters. And a session its OWNER deleted on the instance
-(or retention swept) while it keeps growing here is not re-uploaded: the next upload is answered 409
-naming an empty position, which cannot be resumed from, so the session is refused and logged each
-run. A withdrawal of such a session is answered `true` (the prefix is gone).
+🔴 **A WITHDRAWAL IS SENT TO AN INSTANCE THAT IS NOT TAKING UPLOADS.** A 503 (disarmed) or a 507
+(quota full) stops an instance for UPLOADS for the rest of the run, and a session bound for it used
+to be skipped before it was read — so a read that changed its routing answer was never derived and
+its prefix never withdrawn, for as long as the instance stayed stopped. Now a session WITH a shipped
+prefix is still derived and routed (its new bytes only), and the withdrawal — which stores nothing
+and is not behind the arming gate — goes out; a session with nothing shipped is still skipped
+unread. A refused token (401/403) still ends every request to that instance.
+
+## A session deleted on its instance (410)
+
+An upload answered **410 `{"refused":"deleted"}`** means the session's transcript was deleted on that
+instance — by its owner, by this agent's withdrawal, or by retention — and that is FINAL there. The
+agent marks the session (`deleted` in the state, saved at once), logs `DELETED <root>` ONCE, counts it
+`deleted` on that run's summary line, and never reads or sends it again. Without that mark the
+session was refused every run, and a stream or blob sent from its start was accepted, re-creating
+on the instance the session its owner had deleted.
+
+⚠ **What it cannot do.** The withdrawal table's third row reads "never landed" off this agent's own
+watermarks, which a kill can leave unsaved — but then the instance DOES hold the prefix and answers
+`true`, so the case cannot be confused in the direction that matters. And `deleted` is per session,
+not per instance: a session marked deleted is not sent to ANY instance afterwards.

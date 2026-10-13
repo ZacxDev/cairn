@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/netid"
 	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/redact"
@@ -501,7 +502,8 @@ func TestThe507LineNamesWhichLimitWasHit(t *testing.T) {
 // RED before the fix: over the STORED half the arc's home is not in the set, the fold says OFF, and
 // the walk was skipped on the strength of a "monotone" claim that is false — the session was
 // answered OFF, and flipped ON only after an unrelated VIEWER's page view happened to record
-// `alpha-notes` in its meta. The answer must not depend on who has looked.
+// `alpha-notes` in its meta. The answer must not depend on who has looked. There is no skip now:
+// the fold is asked once, over the whole set (mutant `plugins-store-walk-skipped-on-a-stored-off`).
 func TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer(t *testing.T) {
 	p := newPluginRig(t)
 	owner := string(ownerA.Kind) + ":" + string(ownerA.ID)
@@ -514,9 +516,11 @@ func TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer(t *testing.T) {
 	}
 	p.toggle(plugins.LevelScope, "alpha-notes", plugins.ValueAllowed)
 	p.toggle(plugins.LevelScope, "beta-notes", plugins.ValueAllowed)
-	if err := p.journal.Append(plugins.Record{Plugin: "summary", Level: plugins.LevelArc, Target: "alpha-notes/arc-one",
-		Value: plugins.ValueOn, Members: []string{"s-mixed"}, By: plugins.By{Kind: "user", ID: "u-admin"}, At: "2000-01-02T03:04:05Z"}); err != nil {
-		t.Fatal(err)
+	p.toggle(plugins.LevelArc, "alpha-notes/arc-one", plugins.ValueOn)
+	arcOne := arcs.Key{Home: "alpha-notes", Slug: "arc-one"}
+	p.svc.Arcs = func() (arcs.Snapshot, error) {
+		return arcs.Snapshot{Latest: map[arcs.Key]arcs.Registration{arcOne: {Home: arcOne.Home, Slug: arcOne.Slug,
+			Members: []arcs.Member{{Session: "s-mixed"}}}}}, nil
 	}
 	// CONTROL: the stored half really is narrower than the whole set — nothing has walked yet.
 	if m, err := p.rig.arc.ReadMeta("s-mixed"); err != nil || len(m.Written) != 0 || !slices.Equal(m.Declared, []string{"beta-notes"}) {
@@ -536,10 +540,7 @@ func TestAnArcHomeFoundOnlyByTheWalkDoesNotChangeTheAnswer(t *testing.T) {
 		t.Fatalf("the pending list changed once the walked scope was recorded: %v → %v", first, again)
 	}
 	// NEGATIVE CONTROL: without the arc the same session is OFF (both scopes are only `allowed`).
-	if err := p.journal.Append(plugins.Record{Plugin: "summary", Level: plugins.LevelArc, Target: "alpha-notes/arc-one",
-		Value: plugins.ValueUnset, By: plugins.By{Kind: "user", ID: "u-admin"}, At: "2000-01-02T03:04:06Z"}); err != nil {
-		t.Fatal(err)
-	}
+	p.toggle(plugins.LevelArc, "alpha-notes/arc-one", plugins.ValueUnset)
 	if got := p.pending(summaryToken); slices.Contains(got, "s-mixed") {
 		t.Fatalf("with the arc unset the session is still pending: %v", got)
 	}

@@ -32,7 +32,8 @@
 // 🔴 `-allow-plaintext-host` IS AN EXPLICIT OPERATOR OPT-IN, FLAG ONLY — no default, no environment
 // spelling. A worker URL must be `https`, or `http` to a loopback address; this names ONE instance's
 // worker HOST, exactly, for which plain `http` is accepted because the network it is reached over (a
-// private encrypted mesh) is itself the transport protection. The run says so on stderr every time.
+// private encrypted mesh) is itself the transport protection. The run says so on stderr every time;
+// an opt-in that admits nothing (its worker is `https` by now) is a warning line, never a refusal.
 package main
 
 import (
@@ -188,17 +189,21 @@ func aliased(v string) (string, string) {
 // a token file with no URL, an alias named twice, or an alias the routing does not configure is a
 // usage error: each is an instance the run would silently never reach.
 //
-// 🔴 `-allow-plaintext-host` IS PER INSTANCE AND MUST BE USED. Each names one alias's worker host;
-// only that alias's URL is checked against it, and an opt-in that admitted nothing — an alias with
-// no `-worker`, a host that is not that worker's, a worker that is `https` or loopback anyway — is a
-// usage error: an opt-in left lying in a unit file is one a later URL change silently starts using.
-// `plain` is every instance whose URL the opt-in admitted, for the run's warning line.
-func endpoints(c runConfig, routing client.Routing) (eps map[string]capture.Endpoint, plain map[string]string, err error) {
+// 🔴 `-allow-plaintext-host` IS PER INSTANCE. Each names one alias's worker host; only that alias's
+// URL is checked against it. `plain` is every instance whose URL the opt-in admitted, for the run's
+// warning line.
+//
+// ⚠ AN OPT-IN THAT ADMITTED NOTHING IS A WARNING, NOT A REFUSAL — an alias with no `-worker`, or a
+// worker that is `https` or loopback anyway. Refusing it (built first) would stop CAPTURE on the day
+// a worker moves to `https` and the unit file still carries the flag; the plugins' own client
+// (`plugins/internal/endpoint`) takes the same flag and ignores an unused entry. `unused` is those
+// warnings. A value that is not a bare host is still a usage error: that is a typo, not a leftover.
+func endpoints(c runConfig, routing client.Routing) (eps map[string]capture.Endpoint, plain map[string]string, unused []string, err error) {
 	urls, files, allowed := map[string]string{}, map[string]string{}, map[string][]string{}
 	for _, a := range c.plaintext {
 		alias, host := aliased(a)
 		if host == "" || strings.ContainsAny(host, "/@ \t") {
-			return nil, nil, fmt.Errorf("-allow-plaintext-host %q is not [ALIAS=]HOST — a bare host name or address, no scheme, port or path", a)
+			return nil, nil, nil, fmt.Errorf("-allow-plaintext-host %q is not [ALIAS=]HOST — a bare host name or address, no scheme, port or path", a)
 		}
 		allowed[alias] = append(allowed[alias], host)
 	}
@@ -206,35 +211,36 @@ func endpoints(c runConfig, routing client.Routing) (eps map[string]capture.Endp
 	for _, w := range c.workers {
 		alias, raw := aliased(w)
 		if _, dup := urls[alias]; dup {
-			return nil, nil, fmt.Errorf("-worker names instance %s twice", alias)
+			return nil, nil, nil, fmt.Errorf("-worker names instance %s twice", alias)
 		}
 		u, usedPlaintext, err := capture.ValidateEndpointAllowing(raw, allowed[alias]...)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if len(allowed[alias]) > 0 && !usedPlaintext {
-			return nil, nil, fmt.Errorf("-allow-plaintext-host is set for instance %s, whose -worker does not need it (it is https, "+
-				"or a loopback address); remove the opt-in", alias)
+			unused = append(unused, fmt.Sprintf("-allow-plaintext-host is set for instance %s, whose -worker does not need it "+
+				"(it is https, or a loopback address); the opt-in admits nothing and can be removed", alias))
 		}
 		if usedPlaintext {
 			plain[alias] = u
 		}
 		urls[alias] = u
 	}
-	for alias := range allowed {
+	for _, alias := range sortedKeys(mapOf(allowed)) {
 		if _, ok := urls[alias]; !ok {
-			return nil, nil, fmt.Errorf("-allow-plaintext-host names instance %s, which has no -worker %s=<url>", alias, alias)
+			unused = append(unused, fmt.Sprintf("-allow-plaintext-host names instance %s, which has no -worker %s=<url>; "+
+				"the opt-in admits nothing", alias, alias))
 		}
 	}
 	for _, f := range c.tokenFiles {
 		alias, path := aliased(f)
 		if _, dup := files[alias]; dup {
-			return nil, nil, fmt.Errorf("-capture-token-file names instance %s twice", alias)
+			return nil, nil, nil, fmt.Errorf("-capture-token-file names instance %s twice", alias)
 		}
 		files[alias] = path
 	}
 	if len(urls) == 0 {
-		return nil, nil, errors.New("--run needs at least one -worker [ALIAS=]URL")
+		return nil, nil, nil, errors.New("--run needs at least one -worker [ALIAS=]URL")
 	}
 	known := map[string]bool{}
 	for _, a := range routing.Aliases() {
@@ -243,25 +249,33 @@ func endpoints(c runConfig, routing client.Routing) (eps map[string]capture.Endp
 	out := map[string]capture.Endpoint{}
 	for alias, u := range urls {
 		if !known[alias] {
-			return nil, nil, fmt.Errorf("-worker names instance %s, which this host's routing does not configure (%s)",
+			return nil, nil, nil, fmt.Errorf("-worker names instance %s, which this host's routing does not configure (%s)",
 				alias, strings.Join(routing.Aliases(), ", "))
 		}
 		path, ok := files[alias]
 		if !ok {
-			return nil, nil, fmt.Errorf("-worker %s has no -capture-token-file %s=<file>", alias, alias)
+			return nil, nil, nil, fmt.Errorf("-worker %s has no -capture-token-file %s=<file>", alias, alias)
 		}
 		tok, err := capture.ReadTokenFile(path)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		out[alias] = capture.Endpoint{URL: u, Token: tok}
 	}
 	for alias := range files {
 		if _, ok := urls[alias]; !ok {
-			return nil, nil, fmt.Errorf("-capture-token-file %s has no -worker %s=<url>", alias, alias)
+			return nil, nil, nil, fmt.Errorf("-capture-token-file %s has no -worker %s=<url>", alias, alias)
 		}
 	}
-	return out, plain, nil
+	return out, plain, unused, nil
+}
+
+func mapOf(m map[string][]string) map[string]string {
+	out := map[string]string{}
+	for k := range m {
+		out[k] = ""
+	}
+	return out
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -294,10 +308,13 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	if err != nil {
 		return fail(err)
 	}
-	eps, plain, err := endpoints(c, routing)
+	eps, plain, unused, err := endpoints(c, routing)
 	if err != nil {
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitUsage
+	}
+	for _, line := range unused {
+		fmt.Fprintf(stderr, "cairn-capture: WARNING %s\n", line)
 	}
 	// 🔴 SAID ON EVERY RUN, per instance: the opt-in is a standing statement about a network, and a
 	// line in the journal each minute is what keeps it from being forgotten.

@@ -241,7 +241,7 @@ func derivedSection(d DerivedView) g.Node {
 // with which model, when, and from what.
 func derivedLabel(b DerivedBlock) string {
 	o := b.Output
-	return "derived · " + typeWords[o.Type] + " · by " + o.Plugin + " " + o.PluginVersion + " · model " + o.Model +
+	return "derived · " + typeWords[o.Type] + " · by " + o.Plugin + " " + o.PluginVersion + " · model " + plainText(o.Model) +
 		" · " + o.ProducedAt + " · " + b.Watermark
 }
 
@@ -253,10 +253,10 @@ func derivedBlock(session string, b DerivedBlock) g.Node {
 		body = g.Group([]g.Node{
 			h.P(h.Class("t-line"), g.Text("This output's stored body does not match what this version of cairn accepts "+
 				"for its type, so it is shown as stored and nothing in it is linked.")),
-			h.Pre(h.Class("t-pre"), g.Text(b.Raw)),
+			h.Pre(h.Class("t-pre"), g.Text(plainText(b.Raw))),
 		})
 	case b.Body.Summary != nil:
-		body = h.Div(h.Class("t-text"), g.Text(b.Body.Summary.Text))
+		body = h.Div(h.Class("t-text"), g.Text(plainText(b.Body.Summary.Text)))
 	case b.Body.Edge != nil:
 		e := b.Body.Edge
 		body = h.P(h.Class("t-line"),
@@ -270,7 +270,7 @@ func derivedBlock(session string, b DerivedBlock) g.Node {
 				h.Span(h.Class("badge badge-quiet"), g.Text("suggested")),
 				g.Text(" ticket "), ticketNode(sg.TicketID),
 				g.Text(" · confidence "+strconv.FormatFloat(sg.Confidence, 'f', 2, 64)+" · not a match")),
-			g.If(sg.Rationale != "", h.Div(h.Class("t-text"), g.Text(sg.Rationale))),
+			g.If(sg.Rationale != "", h.Div(h.Class("t-text"), g.Text(plainText(sg.Rationale)))),
 		})
 	}
 	return h.Article(
@@ -329,14 +329,32 @@ func (d derivedLines) line(session string) g.Node {
 		return nil
 	}
 	return h.Span(h.Class("title excerpt"), h.Data("derived", l.Plugin),
-		h.TitleAttr("derived by the plugin "+l.Plugin+" "+l.Version+" (model "+l.Model+") at "+l.ProducedAt+
+		h.TitleAttr("derived by the plugin "+l.Plugin+" "+l.Version+" (model "+plainText(l.Model)+") at "+l.ProducedAt+
 			" — a claim about this session's transcript, not part of its record"),
 		g.Text("derived · "+l.Plugin+" "+l.Version+": "+l.Text))
 }
 
+// plainText is a plugin's text made safe to sit INSIDE a page's own sentences: every Unicode
+// BIDIRECTIONAL CONTROL is removed.
+//
+// 🔴 ESCAPING DOES NOT COVER THIS. `g.Text` neutralises markup; an override or isolate character
+// (U+202E and its family) is not markup — it REORDERS how the following characters are displayed,
+// across the element's own label, so a summary could make "derived · summary · by …" read as
+// something else, or hide what follows it. Model output is exactly where such a character arrives
+// unasked. The stored bytes are untouched; only the rendering drops them.
+func plainText(text string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069, r == 0x200E, r == 0x200F, r == 0x061C:
+			return -1
+		}
+		return r
+	}, text)
+}
+
 // oneLine is a summary's text as ONE clipped line.
 func oneLine(text string) string {
-	text = strings.Join(strings.Fields(text), " ")
+	text = strings.Join(strings.Fields(plainText(text)), " ")
 	if utf8.RuneCountInString(text) <= derivedLineRunes {
 		return text
 	}

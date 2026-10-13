@@ -797,11 +797,11 @@ func main() {
 			os.Exit(exitConfig)
 		}
 		// 🔴 ONE SERVICE FOR THE PLUGIN API AND THE BROWSER'S TOGGLES — the same registry, the same
-		// journal and the same transcript read side, so the fold a plugin is answered by is the fold
-		// a toggle form describes.
+		// journal, the same transcript read side and the same arc journal, so the fold a plugin is
+		// answered by is the fold a toggle form describes.
 		if pluginsOn {
 			pluginService = newPluginService(pluginRegistryLoaded, pluginToggleJournal,
-				transcript.NewStore(transcripts, *store), authority)
+				transcript.NewStore(transcripts, *store), resolvedArcJournal, authority)
 		}
 		handler, rows, err := worker.New(worker.Config{
 			TokenFile: *workerTokens, Owner: workerConf.owner, OwnerHeld: ownerStillHeld(authority, workerConf.owner),

@@ -339,59 +339,134 @@ func TestTheDeleteRowIsBehindBothCrossSiteGates(t *testing.T) {
 	}
 }
 
-// TestAnArcToggleSnapshotsItsMembersAndThePageSaysWhoIsCovered — #270's audit, closed in S6. When the
-// arc home's ADMIN sets the toggle, the handler records the arc's members AT THAT MOMENT in the
-// journal; a member a writer of the home adds afterwards is not in it. The arc page then says which
-// members the toggle covers and which it does NOT, and the fold agrees with the page.
-func TestAnArcToggleSnapshotsItsMembersAndThePageSaysWhoIsCovered(t *testing.T) {
+// TestAnArcVetoSnapshotsItsMembersAndThePageSaysWhoIsStillVetoed — #270's audit, as S6 closed it. When
+// the arc home's ADMIN sets the toggle `off`, the handler records the arc's members AT THAT MOMENT in
+// the journal; a session a writer of the home then REMOVES from the arc stays vetoed, and the arc page
+// says so. An `on` records no snapshot (it is read against the arc's live members), and neither does
+// a scope toggle.
+func TestAnArcVetoSnapshotsItsMembersAndThePageSaysWhoIsStillVetoed(t *testing.T) {
 	rig, journal := pluginsRig(t)
 	wren := rig.signIn(shareWrenToken)
-	arcForm := url.Values{FieldPlugin: {"summary"}, QueryHome: {string(shareOtherScope)}, QuerySlug: {"arc-one"}, FieldValue: {"on"}}
-	if rec := wren.post(PluginArcPath, arcForm); rec.Code != http.StatusSeeOther {
+	arcForm := func(value string) url.Values {
+		return url.Values{FieldPlugin: {"summary"}, QueryHome: {string(shareOtherScope)}, QuerySlug: {"arc-one"}, FieldValue: {value},
+			FieldMembers: {arcMembersDigest([]string{toggleSession})}}
+	}
+	if rec := wren.post(PluginArcPath, arcForm("on")); rec.Code != http.StatusSeeOther {
 		t.Fatalf("the home's admin setting the arc ON answered %d %q", rec.Code, rec.Body.String())
 	}
-	recs := toggleRecords(t, journal)
-	if len(recs) != 1 || !slices.Equal(recs[0].Members, []string{toggleSession}) {
-		t.Fatalf("the journaled arc toggle carries members %v, want the arc's members when it was set: [%s]", recs[0].Members, toggleSession)
-	}
-	// A scope toggle carries no snapshot.
 	if rec := wren.post(PluginScopePath, toggle(shareOtherScope, "allowed")); rec.Code != http.StatusSeeOther {
 		t.Fatalf("the scope toggle answered %d", rec.Code)
 	}
-	if recs = toggleRecords(t, journal); len(recs) != 2 || recs[1].Members != nil {
-		t.Fatalf("a scope toggle journaled a member snapshot: %+v", recs)
+	recs := toggleRecords(t, journal)
+	if len(recs) != 2 || recs[0].Members != nil || recs[1].Members != nil {
+		t.Fatalf("an arc `on` or a scope toggle journaled a member snapshot: %+v", recs)
 	}
-	page := wren.get(arcURL(shareOtherScope, "arc-one")).Body.String()
-	if !strings.Contains(page, `data-covers="1"`) || strings.Contains(page, `data-uncovered`) ||
-		!strings.Contains(visibleText(page), "`on` covers 1 member") {
-		t.Fatalf("the arc page does not say the toggle covers its one member:\n%s", visibleText(page))
+	if page := wren.get(arcURL(shareOtherScope, "arc-one")).Body.String(); strings.Contains(page, "data-still-vetoed") {
+		t.Fatal("an `on` arc's page carries the veto coverage note")
 	}
-	// A WRITER of the home re-registers the arc with a second member. No admin acted.
+	// The admin VETOES the arc while it lists the session.
+	if rec := wren.post(PluginArcPath, arcForm("off")); rec.Code != http.StatusSeeOther {
+		t.Fatalf("the home's admin setting the arc OFF answered %d %q", rec.Code, rec.Body.String())
+	}
+	recs = toggleRecords(t, journal)
+	if len(recs) != 3 || !slices.Equal(recs[2].Members, []string{toggleSession}) {
+		t.Fatalf("the journaled veto carries members %v, want the arc's members when it was set: [%s]", recs[2].Members, toggleSession)
+	}
+	// Every snapshotted member is still listed: nothing more to say.
+	if page := wren.get(arcURL(shareOtherScope, "arc-one")).Body.String(); strings.Contains(page, "data-still-vetoed") {
+		t.Fatal("the page says a session is still vetoed although the arc still lists it")
+	}
+	// A WRITER of the home re-registers the arc WITHOUT the session. No admin acted.
 	rig.srv.source = StoreSource{Root: rig.storeRoot, ArcJournal: arcsJournal(t,
 		arcReg(shareOtherScopeName, "arc-one", arcs.StatusOpen, []string{shareOtherScopeName},
-			arcs.Member{Session: toggleSession, Role: "wrote"}, arcs.Member{Session: "s-added-02", Role: "wrote"}))}
-	page = wren.get(arcURL(shareOtherScope, "arc-one")).Body.String()
+			arcs.Member{Session: "s-other-02", Role: "wrote"}))}
+	page := wren.get(arcURL(shareOtherScope, "arc-one")).Body.String()
 	text := visibleText(page)
-	if !strings.Contains(page, `data-covers="1"`) || !strings.Contains(page, `data-uncovered="1"`) ||
-		!strings.Contains(text, "1 member was added to this arc since and is NOT covered") || !strings.Contains(page, `title="s-added-02"`) {
-		t.Fatalf("the arc page does not say the member added since is NOT covered:\n%s", text)
+	if !strings.Contains(page, `data-still-vetoed="1"`) || !strings.Contains(page, `title="`+toggleSession+`"`) ||
+		!strings.Contains(text, "`off` still covers 1 session this arc listed when the veto was saved and no longer lists") {
+		t.Fatalf("the arc page does not say the removed session is still vetoed:\n%s", text)
 	}
 	st, err := journal.Read()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := st.ArcsCovering("summary", []string{"s-added-02"}); len(got) != 0 {
-		t.Fatalf("the fold covers the member added since: %v", got)
+	if got := st.ArcsVetoing("summary", []string{toggleSession}); len(got) != 1 {
+		t.Fatalf("the fold does not keep vetoing the removed member: %v", got)
 	}
-	if got := st.ArcsCovering("summary", []string{toggleSession}); len(got) != 1 {
-		t.Fatalf("the fold does not cover the member the admin saw: %v", got)
+	// The consent screen says what `allowed` delegates.
+	if consent := visibleText(wren.get(PluginsPath).Body.String()); !strings.Contains(consent, "anyone who can WRITE to the arc's home scope can add a session to it") {
+		t.Fatalf("the plugins page does not state what `allowed` delegates:\n%s", consent)
 	}
-	// The admin saves it again: both are covered, and the page says so.
-	if rec := wren.post(PluginArcPath, arcForm); rec.Code != http.StatusSeeOther {
-		t.Fatalf("saving the toggle again answered %d", rec.Code)
+}
+
+// TestAnArcToggleFromAStaleTabIsNotSaved — #273's audit (F6). The arc toggle form carries a digest of
+// the member list its page rendered; if a writer of the home has changed the arc's members since, the
+// admin's POST saves NOTHING and says to reload — whatever the value, since `on` is read against the
+// arc's live members and the admin must have seen them. RED before the fix: the stale tab's `on` was
+// journaled, turning the plugin on for a session the admin had never been shown.
+func TestAnArcToggleFromAStaleTabIsNotSaved(t *testing.T) {
+	rig, journal := pluginsRig(t)
+	wren := rig.signIn(shareWrenToken)
+	// The admin opens the arc page: the form carries the digest of the list on it.
+	page := wren.get(arcURL(shareOtherScope, "arc-one")).Body.String()
+	digest := arcMembersDigest([]string{toggleSession})
+	if !strings.Contains(page, `name="`+FieldMembers+`" value="`+digest+`"`) {
+		t.Fatalf("the arc toggle form does not carry the digest of the member list it rendered:\n%s", page)
 	}
-	page = wren.get(arcURL(shareOtherScope, "arc-one")).Body.String()
-	if !strings.Contains(page, `data-covers="2"`) || strings.Contains(page, `data-uncovered`) {
-		t.Fatalf("after the admin saved the toggle again the page does not cover both members:\n%s", visibleText(page))
+	form := func(value, members string) url.Values {
+		return url.Values{FieldPlugin: {"summary"}, QueryHome: {string(shareOtherScope)}, QuerySlug: {"arc-one"}, FieldValue: {value},
+			FieldMembers: {members}}
+	}
+	// A WRITER of the home adds a session while the admin's tab sits open.
+	rig.srv.source = StoreSource{Root: rig.storeRoot, ArcJournal: arcsJournal(t,
+		arcReg(shareOtherScopeName, "arc-one", arcs.StatusOpen, []string{shareOtherScopeName},
+			arcs.Member{Session: toggleSession, Role: "wrote"}, arcs.Member{Session: "s-added-02", Role: "wrote"}))}
+	for _, value := range []string{"on", "off", "unset"} {
+		for name, members := range map[string]string{"the stale tab's digest": digest, "no digest at all": "", "a made-up digest": "0000"} {
+			rec := wren.post(PluginArcPath, form(value, members))
+			if rec.Code != http.StatusConflict || rec.Body.String() != arcMembersChanged {
+				t.Errorf("%s, value %s: answered %d %q, want 409 and the reload sentence", name, value, rec.Code, rec.Body.String())
+			}
+		}
+	}
+	if n := len(toggleRecords(t, journal)); n != 0 {
+		t.Fatalf("a stale arc toggle journaled %d record(s)", n)
+	}
+	// Reloaded, the form carries the CURRENT list's digest, and saving over it works.
+	current := arcMembersDigest([]string{"s-added-02", toggleSession})
+	if page := wren.get(arcURL(shareOtherScope, "arc-one")).Body.String(); !strings.Contains(page, `value="`+current+`"`) {
+		t.Fatal("the reloaded arc page does not carry the current member list's digest")
+	}
+	if rec := wren.post(PluginArcPath, form("on", current)); rec.Code != http.StatusSeeOther {
+		t.Fatalf("saving over the current list answered %d %q", rec.Code, rec.Body.String())
+	}
+	if n := len(toggleRecords(t, journal)); n != 1 {
+		t.Fatalf("the fresh save journaled %d record(s), want 1", n)
+	}
+}
+
+// TestBidiControlsInPluginTextAreNotRendered: a summary carrying a right-to-left OVERRIDE (and the
+// rest of the bidirectional-control family) cannot reorder how the page's own label and the text
+// after it are displayed — the controls are dropped from the rendering, on the session page and on
+// the row, while every other character (a right-to-left LETTER included) stays. Escaping alone
+// leaves them in: they are not markup.
+func TestBidiControlsInPluginTextAreNotRendered(t *testing.T) {
+	w := transcriptWorld(t)
+	a := w.archive(t)
+	controls := "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f\u061c"
+	transcripttest.Output(t, a, "s-solo-02", "summary", "0.1.0", "fixture\u202emodel", 2, plugins.TypeSummary,
+		`{"text":"the gadget \u202edeyolped saw \u2066and\u2069 \u05d0 noted"}`)
+	srv := w.server(t, "owner", a)
+	for name, url := range map[string]string{"the session page": sessionURL("s-solo-02"), "the My sessions row": MySessionsPath} {
+		body := getAs(t, srv, url).Body.String()
+		if !strings.Contains(body, "the gadget deyolped saw and \u05d0 noted") {
+			t.Errorf("%s does not carry the summary with its controls dropped and its letters kept", name)
+		}
+		if i := strings.IndexAny(body, controls); i >= 0 {
+			t.Errorf("%s carries a bidirectional control character (U+%04X)", name, []rune(body[i:])[0])
+		}
+	}
+	if body := getAs(t, srv, sessionURL("s-solo-02")).Body.String(); !strings.Contains(visibleText(body), "model fixturemodel") {
+		t.Error("the label's model still carries the override")
 	}
 }

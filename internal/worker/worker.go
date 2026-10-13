@@ -52,6 +52,9 @@ const (
 	// NotOwnerBody is decision 15's ownership refusal — ONE body that names neither the holder nor
 	// its host (contracts: "409 uniform").
 	NotOwnerBody = `{"refused":"held-by-another-uploader"}` + "\n"
+	// DeletedBody answers an upload for a root whose stored session was deleted on this instance
+	// (S6): final for that root — the uploader stops sending the session.
+	DeletedBody = `{"refused":"deleted"}` + "\n"
 )
 
 type route struct {
@@ -339,6 +342,11 @@ func (w *Worker) answer(rw http.ResponseWriter, st archive.Stored, err error, re
 		writeJSON(rw, http.StatusOK, fmt.Sprintf(`{"stored_to":%s,"seq_to":%d}`+"\n", quote(st.StoredTo), st.SeqTo))
 	case err == nil:
 		writeJSON(rw, http.StatusOK, fmt.Sprintf(`{"stored_to":%s}`+"\n", quote(st.StoredTo)))
+	case errors.Is(err, archive.ErrDeleted):
+		// 🔴 410, AND ONLY TO THE DELETED ROOT'S OWN (owner, host) (`archive.gone`): the session's
+		// transcript was deleted here — by its owner, a withdrawal or retention — and the agent must
+		// stop sending it for good. Anybody else asking about that id got the uniform 409 below.
+		writeJSON(rw, http.StatusGone, DeletedBody)
 	case errors.Is(err, archive.ErrNotOwner):
 		writeJSON(rw, http.StatusConflict, NotOwnerBody)
 	case errors.As(err, &stale):

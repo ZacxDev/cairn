@@ -10,7 +10,7 @@ plugin's own credential.
 | file | what |
 |---|---|
 | `manifest.go` | the manifest, the CLOSED capability vocabulary (`pending:list`, `transcript:read`, `output:read:<type>`, `output:write:<type>`) and output-type set (`summary`, `ticket-edge`, `ticket-suggestion`), `-plugin-registry` loading — any problem refuses the WHOLE file |
-| `toggles.go` | the three levels, their values, `-plugin-journal` (the arc journal's write discipline), `Effective` — decision 10's fold — and `Settled`, the one condition under which a caller may stop computing a session's `V` |
+| `toggles.go` | the three levels, their values, `-plugin-journal` (the arc journal's write discipline), and `Effective` — decision 10's fold, the ONE spelling of it |
 | `outputs.go` | the output envelope, each type's in-tree body schema (`DecodeBody` — ONE check, for the write path and for the renderer), `Stamp` (the pod's id, clock, plugin NAME and VERSION — never the body's) |
 | `pending.go` | decision 13's stateless pending query |
 | `service.go` | `Service`: one object the worker listener's plugin routes (`internal/worker/plugin.go`) and the browser's toggle forms (`internal/ui/plugins.go`) both decide from |
@@ -18,28 +18,36 @@ plugin's own credential.
 ## The fold, and who may set each level
 
 ON iff every scope in the session's WHOLE visibility set `V` is a scope the authority still holds AND
-is `allowed` or `on`; AND every scope is `on` OR an arc that COVERS the session is `on`; AND no arc
-that covers it is `off`; AND its owner has not opted out. An empty `V`, `*` and an unknown name are OFF.
+is `allowed` or `on`; AND every scope is `on` OR an arc that speaks for the session is `on`; AND no arc
+that speaks for it is `off`; AND its owner has not opted out. An empty `V`, `*` and an unknown name are OFF.
 
-An arc **covers** a session when BOTH hold — and this sentence is exactly what `Effective` and
-`State.ArcsCovering` enforce:
+Which arcs **speak for** a session — exactly what `Effective` over `ArcsFor` enforces:
 
-1. the session (or one of its child sessions) is in the **member snapshot** the arc's latest toggle
-   record carries — the session ids the arc listed AT THE MOMENT an `admin` of the arc's home set that
-   value (`Record.Members`, written by `internal/ui`'s `handlePluginArc` from the registration the
-   authority had just answered with); and
-2. the session's `V` holds the arc's HOME scope.
+- only an arc whose HOME scope is in the session's `V` (an arc homed elsewhere says nothing, `on` or `off`);
+- for **`on`**: the arcs that list the session (or one of its child sessions) NOW — the arc registry
+  as it reads at the moment of the decision;
+- for **`off`**: those, AND every arc whose veto SNAPSHOTTED the session — the member ids the arc
+  listed when an `admin` of its home set it `off` (`Record.Members`, written by `internal/ui`'s
+  `handlePluginArc`; `State.ArcsVetoing`). Removing a session from an `off` arc lifts nothing.
 
-So a member a writer of the home ADDS after the admin's act is not covered, and a member a writer
-REMOVES stays covered (an `off` veto cannot be lifted by re-registering the arc): the arc registry as
-it reads now is not an input to any plugin decision, and `Service` is not handed the arc journal at
-all. Covering a member added since takes an admin saving the toggle again; the arc page lists which
-members a toggle covers and which it does not. A record with no snapshot covers nobody.
+🔴 **The residual, stated (an agent decision, recorded in the plan under decision 10 / T14, open to
+operator review).** `on` is read live so that per-arc summaries stay continuous as an arc grows
+(operator decision O5). Arc membership is whatever an arc `PUT` names, and any WRITER of the home
+scope may `PUT` — so **a writer of an `on` arc's home scope, who is not an admin, can enrol a
+session in the plugin by adding it to the arc, provided the session touched that home scope and
+every other scope in its `V` is `allowed` or `on`.** That is what `allowed` consents to: an arc
+turning the plugin on for sessions that touched the scope. A scope left `off` is never overridden,
+and "touched the home" is itself a claim a writer of the home can make (a trailer naming the
+session). A snapshot for `on` too was built first and withdrawn for the reason above.
+
+The arc toggle POST is bound to what the admin saw: the form carries a digest of the member list its
+page rendered, and a POST whose digest is not the CURRENT list's saves nothing (409) — an `on` from a
+tab opened before a writer added a session does not land.
 
 | level | values (default first) | set by |
 |---|---|---|
 | scope | `off`, `allowed`, `on` | `admin` on the scope (`control.Resolve`) |
-| arc | `unset`, `on`, `off` | `admin` on the arc's HOME scope — not the right to `PUT` it; the record snapshots the arc's members |
+| arc | `unset`, `on`, `off` | `admin` on the arc's HOME scope — not the right to `PUT` it; an `off` record snapshots the arc's members; the POST must carry the digest of the member list its page showed |
 | session | `unset`, `off` — `on` is refused 400 and journals nothing | the transcript's OWNER arm (un-narrowed `(Kind, ID)`) |
 
 `TestFoldCase01…09` and `TestASessionLevelOnIsRefusedAndJournalsNothing` are the ten cases, each red
@@ -73,16 +81,16 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
 
 ## What it cannot see
 
-- **Cost:** the pending query decides every stored root, and deciding one walks the WHOLE store for
-  its write trailers (decision 3's trap forbids a narrower walk) unless `Settled` says the STORED half
-  of `V` is OFF for every superset too. ⚠ "The stored half is OFF" alone was the skip until S6, under a
-  comment calling the fold monotone, and it is not: an arc counts only when its home is in `V`, so a
-  scope the walk ADDS can be the home of an ON arc — a session whose arc home only the walk finds was
-  answered OFF until an unrelated page view recorded the scope. `Settled` is OFF-for-good only: an
-  unconsented, unknown or `*` scope already in the set; the owner's opt-out; an `off` arc covering the
-  session whose home is already in the set; or a scope merely `allowed` with NO `on` arc covering the
-  session at all. `TestSettledIsOffForEverySuperset` checks it against `Effective` by exhaustion.
-  Unmeasured at scale; the S4 walk measurement is the nearest number.
+- **Cost:** deciding a session walks the WHOLE store for its write trailers (decision 3's trap forbids
+  a narrower walk): ONE walk per pending query however many roots, one per transcript read, and none
+  while no scope consents to the plugin (`State.AnyConsent`). ⚠ There is NO shortcut on the stored
+  half of `V`, and there was one until S6: the walk was skipped when the fold already refused the
+  stored half, under a comment calling the fold monotone. It is not — an arc counts only when its home
+  is in `V`, so a scope the walk ADDS can be the home of an `on` arc — and a session whose arc home
+  only the walk finds was answered OFF until an unrelated page view recorded the scope. A correct skip
+  needs a second spelling of the fold ("OFF for every superset"); it was written, and deleted in
+  favour of asking the one fold over the whole set. Unmeasured at scale; the S4 walk measurement is
+  the nearest number.
 - **One worker per plugin** (decision 13): two receive the same items.
 - **A stolen plugin token** reads every transcript its plugin is ON for (T6) — and can fill the
   instance's transcript quota with outputs only up to the plugin's SHARE: one stored line is at most
@@ -90,18 +98,19 @@ under its own `plugins-*` row in `tests/control_mutants.py`.
   all plugins' at most 1/5, each refused 507 past it — so capture keeps at least 80% (T12).
 - **An arc speaks only for sessions whose `V` holds its home** (#270 round 1; the plan's decision 10
   named no such limit): an unrelated scope's admin cannot turn a plugin ON or OFF by listing a session
-  in their own arc. And only for the members it listed when an admin set it (S6) — see "covers" above.
-  ⚠ What that leaves: the snapshot is whatever the arc listed at that moment, so an admin who sets a
-  toggle without reading the member list consents to whatever a writer had already put there. The arc
-  page shows the list beside the form; nothing forces it to be read.
-- **A rollback loses arc toggles.** A build older than `Record.Members` refuses a line carrying it
-  (unknown key) and counts it `Skipped`: an arc `on` reads `unset` (fail closed), and an arc `off`
-  veto is lost until the toggle is saved again.
+  in their own arc. The `on` residual is stated above.
+- **A rollback loses arc vetoes.** A build older than `Record.Members` refuses an `off` line carrying
+  it (unknown key) and counts it `Skipped`, so that arc reads as its PREVIOUS value — possibly `on`.
+  An `on` or `unset` record carries no snapshot and reads the same on either build.
 - **The output caps count from a running total** (S6): stored output bytes are counted off the disk
   once, when the archive opens, then moved by each append and each deletion. ⚠ A file written into a
   session directory by anything but the archive is not in the totals until a restart.
 - **The 507 says which limit** in the operator's log (S6): the plugin's own share, all plugins'
   share, or the INSTANCE quota. The 507 BODY does not — it carries the limit's byte count only.
+- **One unreadable `outputs.jsonl` does not stop the store opening**: its bytes are counted whole, at
+  the file's on-disk size, against NO plugin — they weigh on all plugins' shared 20% and on the quota.
+- **A deleted session takes no output**: a deletion is final for its root (`archive.gone`), so no
+  upload can re-create the session a plugin would attach to.
 - **Consent is keyed by the folded scope NAME**, not a control id — the store's own name=directory rule.
   A scope deleted and recreated under the same name inherits its predecessor's toggle; `known` neutralises
   only a name the authority no longer holds at all.

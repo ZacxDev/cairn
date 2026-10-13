@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"github.com/ZacxDev/cairn/internal/arcs"
 	"github.com/ZacxDev/cairn/internal/transcript"
 )
 
@@ -22,6 +24,8 @@ type Service struct {
 	// Transcripts is the transcript store's read side; nil means none — every session is "not
 	// stored" and every plugin read is refused.
 	Transcripts *transcript.Store
+	// Arcs reads the arc registry; nil means none is configured, and no arc lists any session.
+	Arcs func() (arcs.Snapshot, error)
 	// Known reports whether the authority still holds a scope of that STORE name ([Effective]).
 	Known func(scope string) bool
 	// Now is the pod clock.
@@ -43,33 +47,64 @@ func (s *Service) now() time.Time {
 	return s.Now()
 }
 
-// decider binds ONE journal read into the gate [transcript.Store.ForPlugin] asks.
-func (s *Service) decider(plugin string) (transcript.Gate, error) {
-	st, err := s.Journal.Read()
-	if err != nil {
-		return transcript.Gate{}, err
+// arcSnapshot reads the arc registry once per decision.
+func (s *Service) arcSnapshot() (arcs.Snapshot, error) {
+	if s.Arcs == nil {
+		return arcs.Snapshot{}, nil
 	}
-	return s.deciderOver(st, plugin), nil
+	return s.Arcs()
 }
 
-// deciderOver is the gate over one folded journal.
-//
-// 🔴 IT READS NO ARC REGISTRY. Which arcs speak for a session is the member snapshot each arc
-// toggle carries ([State.ArcsCovering]); the live registration — whatever a writer of the home last
-// `PUT` — is not an input to any plugin decision.
-func (s *Service) deciderOver(st State, plugin string) transcript.Gate {
+// ArcsListing is every registered arc naming one of `ids` as a member NOW, sorted.
+func ArcsListing(snap arcs.Snapshot, ids []string) []arcs.Key {
+	var out []arcs.Key
+	for k, reg := range snap.Latest {
+		if slices.ContainsFunc(reg.Members, func(m arcs.Member) bool { return slices.Contains(ids, m.Session) }) {
+			out = append(out, k)
+		}
+	}
+	sortKeys(out)
+	return out
+}
+
+// ArcsFor is every arc that speaks for a session — [Subject.Arcs]: the arcs listing one of `ids`
+// NOW (what an `on` is read against, and an `off` too), and the arcs whose `off` veto snapshotted
+// one of them ([State.ArcsVetoing]) — so a veto outlives the member's removal from the arc. Sorted,
+// each arc once.
+func ArcsFor(st State, plugin string, snap arcs.Snapshot, ids []string) []arcs.Key {
+	out := ArcsListing(snap, ids)
+	for _, k := range st.ArcsVetoing(plugin, ids) {
+		if !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	sortKeys(out)
+	return out
+}
+
+// decider binds ONE journal read and ONE arc read into the `on` predicate [transcript.Store.ForPlugin]
+// asks.
+func (s *Service) decider(plugin string) (func(*transcript.Meta, []string) bool, error) {
+	st, err := s.Journal.Read()
+	if err != nil {
+		return nil, err
+	}
+	return s.deciderOver(st, plugin)
+}
+
+func (s *Service) deciderOver(st State, plugin string) (func(*transcript.Meta, []string) bool, error) {
+	snap, err := s.arcSnapshot()
+	if err != nil {
+		return nil, err
+	}
 	known := s.Known
 	if known == nil {
 		known = func(string) bool { return false }
 	}
-	subject := func(meta *transcript.Meta, v []string) Subject {
+	return func(meta *transcript.Meta, v []string) bool {
 		ids := append([]string{meta.Root}, meta.Children...)
-		return Subject{Root: meta.Root, V: v, Arcs: st.ArcsCovering(plugin, ids)}
-	}
-	return transcript.Gate{
-		On:      func(meta *transcript.Meta, v []string) bool { return Effective(st, plugin, subject(meta, v), known) },
-		Settled: func(meta *transcript.Meta, v []string) bool { return Settled(st, plugin, subject(meta, v), known) },
-	}
+		return Effective(st, plugin, Subject{Root: meta.Root, V: v, Arcs: ArcsFor(st, plugin, snap, ids)}, known)
+	}, nil
 }
 
 // Open returns the session's [transcript.View] when `plugin` is ON for it, and [ErrForbidden]
@@ -83,11 +118,11 @@ func (s *Service) deciderOver(st State, plugin string) transcript.Gate {
 // nothing: the deleted session is gone from its pending list, and every refusal already means "stop
 // working on this session". The plan's clause is amended to say so.
 func (s *Service) Open(plugin, root string) (*transcript.View, error) {
-	gate, err := s.decider(plugin)
+	on, err := s.decider(plugin)
 	if err != nil {
 		return nil, err
 	}
-	v, err := s.Transcripts.ForPlugin(root, gate)
+	v, err := s.Transcripts.ForPlugin(root, on)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +167,11 @@ func (s *Service) Pending(e Entry, limit int) ([]PendingItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	views, err := s.Transcripts.ForPlugins(roots, s.deciderOver(st, e.Name), func(root string, err error) {
+	on, err := s.deciderOver(st, e.Name)
+	if err != nil {
+		return nil, err
+	}
+	views, err := s.Transcripts.ForPlugins(roots, on, func(root string, err error) {
 		s.log(fmt.Sprintf("plugins: session %s is left out of the pending query: %v", root, err))
 	})
 	if err != nil {

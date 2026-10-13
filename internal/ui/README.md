@@ -5228,7 +5228,10 @@ clauses (k) and (l).
   through `store.RefURL`'s template and then `safeHref`, after `plugins.DecodeBody` validated it
   (alphanumeric: no scheme, no `/`, no markup). A stored body that does not validate against this
   build's schema is shown as its stored text in a `<pre>` and nothing in it is linked. A locator
-  naming a stored record links this surface's own raw-record row.
+  naming a stored record links this surface's own raw-record row. Bidirectional CONTROL characters
+  (U+202A–202E, U+2066–2069, U+200E/F, U+061C) are dropped from every rendered piece of plugin text
+  and from the model name — escaping does not cover them, and an override would reorder how the
+  page's own `derived` label is displayed. The stored bytes are untouched.
 - **Only a plugin's LATEST summary is shown**; earlier ones are counted ("N earlier summaries are
   stored and not shown") — each summary is written over the plugin's previous one. An edge or a
   suggestion a plugin re-derives with an identical body is shown once. At most 60 blocks render.
@@ -5257,7 +5260,9 @@ clauses (k) and (l).
 |---|---|
 | `TestAnOutputIsShownToExactlyTheViewersOfItsTranscript` — equal viewer SETS on the page, byte-identical refused pages, the row on four lists | `plugins-output-rendered-without-predicate` |
 | `TestTheOwnerDeletesATranscriptAndEverythingDerivedGoesWithIt` | `plugins-delete-keeps-outputs`, `transcript-delete-skips-the-owner-arm` |
-| `TestAnArcToggleSnapshotsItsMembersAndThePageSaysWhoIsCovered` | `plugins-arc-toggle-snapshot-not-taken` |
+| `TestAnArcVetoSnapshotsItsMembersAndThePageSaysWhoIsStillVetoed` | `plugins-arc-toggle-snapshot-not-taken` |
+| `TestAnArcToggleFromAStaleTabIsNotSaved` | `plugins-arc-toggle-saved-from-a-stale-page` |
+| `TestBidiControlsInPluginTextAreNotRendered` | `ui-plugin-text-bidi-controls-rendered` |
 
 `TestAnOutputRendersAsALabelledClaim`, `TestAnOutputsTextIsNeverInterpreted` (its control: the plugin
 API REFUSES the `javascript:` id the page renders inert) and
@@ -5266,10 +5271,10 @@ API REFUSES the `javascript:` id the page renders inert) and
 
 ## What these guards still cannot see
 
-- **A deleted session that keeps growing on its host.** The capture agent still holds its offset, so
-  its next upload is answered 409 naming an empty position, which it cannot resume from: the session
-  is refused and logged on every run, and is NOT re-uploaded. Deleted stays deleted; the log line
-  repeats until the session stops growing.
+- **A deleted session that keeps growing on its host** is NOT re-created: a deletion is final for
+  its root (`archive.gone`), the uploader's next request is answered 410 `deleted`, and the capture
+  agent marks the session and never reads or sends it again (it says so once). ⚠ That includes a
+  session RETENTION swept: a host that still has its files does not re-ship it.
 - **What a plugin already sent to a model provider** (T7) — the form says so.
 - **The session-level toggle records** for a deleted session stay in `-plugin-journal` (who, when,
   no content).
@@ -5292,20 +5297,23 @@ the session page. The fold and the levels are `internal/plugins/README.md`'s.
 ## The binding rules
 
 - **Who may toggle is per level and never a form field.** Scope: `admin` on the scope. Arc: `admin` on
-  the HOME scope — not the right to `PUT` the arc. An arc toggle speaks for a session only when BOTH
-  hold (`plugins.Effective` over `plugins.State.ArcsCovering`): the session is in the MEMBER SNAPSHOT
-  the toggle's journal record carries — the session ids the arc listed when that admin set it, which
-  `handlePluginArc` reads off the registration the authority had just answered with and never off the
-  form — AND the session's visibility set holds the arc's HOME scope. So an arc homed outside a
-  session's `V` (an unrelated scope's admin listing a session they saw) says nothing about it, `on` or
-  `off`; and a member a WRITER of the home adds after the admin's act is not covered, while one a
-  writer removes stays covered — the arc registry as it reads now is not an input to any plugin
-  decision. Covering a member added since takes an admin saving the toggle again, and the ARC PAGE
-  says so: under each toggle that is `on` or `off` it lists the members it covers and, in a warning,
-  the members added since that it does NOT (`arcCoverage`). Inside those limits an `on` arc runs the
-  plugin where every scope in `V` is at least `allowed`; it never runs one on a session any of whose
-  scopes is `off`. (Until S6 membership was read LIVE: a writer of an `on` arc's home added sessions
-  to it with no admin act, and removing one from an `off` arc lifted the veto — #270's audit.)
+  the HOME scope — not the right to `PUT` the arc. An arc speaks only for sessions whose visibility
+  set holds its HOME scope (`plugins.Effective`). `on` is read against the arc's members as they are
+  NOW; `off` against them AND the members the arc listed when the veto was saved, which
+  `handlePluginArc` snapshots into the journal record from the registration the authority had just
+  answered with — so removing a session from an `off` arc lifts nothing, and the arc page lists the
+  sessions a veto still covers although the arc no longer lists them (`arcCoverage`).
+  ⚠ **The residual, stated on `/plugins` and on both toggle blocks in these words:** because `on` is
+  live, anyone who can WRITE to an `on` arc's home scope can add a session to the arc, and the plugin
+  then runs on it with no admin acting again — when the session touched the arc's home scope and
+  every other scope it touched is `allowed` or `on`. That is what `allowed` consents to. A scope left
+  `off` is never overridden. (An agent decision under the plan's decision 10 / T14, open to operator
+  review: a snapshot for `on` was built and withdrawn so per-arc summaries stay continuous as an arc
+  grows, O5.)
+- **An arc toggle is saved only over the member list its page showed.** The form carries
+  `members=<digest of the rendered list>`; a POST whose digest is not the current list's — a tab left
+  open while a writer changed the arc — journals nothing and answers 409 with a sentence saying to
+  reload. For every value: `on` is read against the live list, so the admin must have seen it.
   Session: the transcript's owner arm (`transcript.Store.OwnedBy`), and only `off`/`unset`: an `on` is
   a 400 decided BEFORE any authority is asked, so it is the same bytes for the owner and a stranger.
 - **One refusal** (`pluginToggleRefusal`, 403) for a target that does not exist, cannot be read, or is

@@ -37,6 +37,10 @@ const (
 
 func (w *Worker) handleWithdraw(rw http.ResponseWriter, r *http.Request, row TokenRow) {
 	root := r.PathValue("root")
+	// For the LOG LINE only: was anything stored under the root when the request arrived? A repeat
+	// (the idempotent `true`) deletes nothing and must not be logged as a deletion. Not a decision
+	// input — the archive decides under the root's lock.
+	held, _ := w.cfg.Archive.ReadMeta(root)
 	deleted, err := w.cfg.Archive.Withdraw(uploader(row), root)
 	if err != nil {
 		w.cfg.Log("worker: a withdrawal failed: " + err.Error())
@@ -49,8 +53,10 @@ func (w *Worker) handleWithdraw(rw http.ResponseWriter, r *http.Request, row Tok
 		writeJSON(rw, http.StatusOK, NotWithdrawnBody)
 		return
 	}
-	// Who and which root — the journal holds the same fact; never content.
-	w.cfg.Log("worker: session " + root + " withdrawn by its uploader " + row.Owner.String() + " on " + row.Host +
-		" (decision 16): its transcript, plugin outputs and ticket edges are deleted")
+	if held != nil {
+		// Who and which root — the journal holds the same fact; never content.
+		w.cfg.Log("worker: session " + root + " withdrawn by its uploader " + row.Owner.String() + " on " + row.Host +
+			" (decision 16): its transcript, plugin outputs and ticket edges are deleted")
+	}
 	writeJSON(rw, http.StatusOK, WithdrawnBody)
 }

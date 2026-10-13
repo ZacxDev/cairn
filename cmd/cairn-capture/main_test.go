@@ -222,14 +222,12 @@ func TestRunUsageRefusals(t *testing.T) {
 		"unconfigured alias":              {"--run", "-host", "host-a", "-worker", "client=http://127.0.0.1:9", "-capture-token-file", "client=" + tokenFile},
 		"token for no worker":             {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile, "-capture-token-file", "client=" + tokenFile},
 		// -allow-plaintext-host (S6): an EXACT host for ONE instance's worker, and it must be used.
-		"plaintext: a different host":         {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "other.example.invalid"},
-		"plaintext: a suffix of the host":     {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "example.invalid"},
-		"plaintext: a prefix of the host":     {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "mesh-host"},
-		"plaintext: host with its port":       {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "mesh-host.example.invalid:8443"},
-		"plaintext: a URL, not a host":        {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", meshWorker},
-		"plaintext: for another instance":     {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "client=mesh-host.example.invalid"},
-		"plaintext: unused, the URL is https": {"--run", "-host", "host-a", "-worker", "https://mesh-host.example.invalid", "-capture-token-file", tokenFile, "-allow-plaintext-host", "mesh-host.example.invalid"},
-		"plaintext: unused, loopback":         {"--run", "-host", "host-a", "-worker", "http://127.0.0.1:9", "-capture-token-file", tokenFile, "-allow-plaintext-host", "127.0.0.1"},
+		"plaintext: a different host":     {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "other.example.invalid"},
+		"plaintext: a suffix of the host": {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "example.invalid"},
+		"plaintext: a prefix of the host": {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "mesh-host"},
+		"plaintext: host with its port":   {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "mesh-host.example.invalid:8443"},
+		"plaintext: a URL, not a host":    {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", meshWorker},
+		"plaintext: for another instance": {"--run", "-host", "host-a", "-worker", meshWorker, "-capture-token-file", tokenFile, "-allow-plaintext-host", "client=mesh-host.example.invalid"},
 	} {
 		var errb bytes.Buffer
 		if code := run(args, &bytes.Buffer{}, &errb, env); code != exitUsage {
@@ -253,12 +251,12 @@ func TestAPlaintextWorkerIsAcceptedOnlyByItsExactOptInAndSaidEveryRun(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := endpoints(base, routing); err == nil {
+	if _, _, _, err := endpoints(base, routing); err == nil {
 		t.Fatal("CONTROL: plain http to a non-loopback host was accepted with no opt-in")
 	}
 	base.plaintext = []string{"mesh-host.example.invalid"}
-	eps, plain, err := endpoints(base, routing)
-	if err != nil || len(eps) != 1 || len(plain) != 1 {
+	eps, plain, unused, err := endpoints(base, routing)
+	if err != nil || len(eps) != 1 || len(plain) != 1 || len(unused) != 0 {
 		t.Fatalf("with the exact opt-in: %d endpoint(s), %d plaintext, %v", len(eps), len(plain), err)
 	}
 	for alias, u := range plain {

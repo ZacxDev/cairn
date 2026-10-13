@@ -18,16 +18,13 @@ func outputLine(plugin string, kib int) []byte {
 	return []byte(`{"plugin":"` + plugin + `","body":"` + strings.Repeat("y", kib<<10) + `"}`)
 }
 
-// TestARefusedOutputWriteRescansNothing — #270's audit, closed in S6. The caps are checked against a
-// RUNNING TOTAL: the archive counts stored outputs off the disk ONCE, when it opens, and never again.
-// RED before the fix: every write that would cross a cap re-read EVERY session's `outputs.jsonl`
-// before refusing (the in-memory totals only ever grew, so they were re-derived on each refusal) —
-// one whole-archive scan per refused write, for as long as a plugin sat at its cap.
-//
-// And the totals stay TRUE without rescanning: a deleted session's outputs come out of them (the
-// next write is accepted), and a restart counts what is on disk (the next write is refused where it
-// should be).
-func TestARefusedOutputWriteRescansNothing(t *testing.T) {
+// TestTheOutputTotalsFollowDeletionsAndARestart — #270's audit, closed in S6. The caps are checked
+// against a RUNNING TOTAL that the archive counts off the disk once, when it opens (`outputUsage` has
+// that ONE caller; as first built, every write that would cross a cap re-read every session's
+// `outputs.jsonl` before refusing). The totals stay TRUE without rescanning: a deleted session's
+// outputs come out of them — the next write is accepted — and a restart counts what is on disk, so
+// the next write is refused exactly where it should be.
+func TestTheOutputTotalsFollowDeletionsAndARestart(t *testing.T) {
 	const quota = 400 << 10 // one plugin's share is 20 KiB
 	g := newRig(t, quota)
 	for _, root := range []string{"s-0001", "s-0002"} {
@@ -35,31 +32,24 @@ func TestARefusedOutputWriteRescansNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if g.a.outputScans != 1 {
-		t.Fatalf("opening the archive counted the outputs %d times, want once", g.a.outputScans)
-	}
-	// Two 9 KiB lines fit the 20 KiB share; the third does not.
+	// Two 9 KiB lines fit the 20 KiB share; the third does not, however often it is tried.
 	for i := 0; i < 2; i++ {
 		if err := g.a.AppendOutput("s-0001", "summary", outputLine("summary", 9)); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
 	var q *QuotaError
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 3; i++ {
 		err := g.a.AppendOutput("s-0002", "summary", outputLine("summary", 9))
 		if !errors.As(err, &q) || q.Share != SharePlugin || q.Quota != quota/OutputPluginShareDivisor {
 			t.Fatalf("refused write %d: %v — want the plugin's share (%d bytes)", i, err, quota/OutputPluginShareDivisor)
 		}
 	}
-	if g.a.outputScans != 1 {
-		t.Fatalf("50 refused writes rescanned every session's outputs %d time(s); the count is taken once, at open",
-			g.a.outputScans-1)
-	}
 	// Another plugin is not refused by this one's share (the totals are per plugin).
 	if err := g.a.AppendOutput("s-0002", "clickup", outputLine("clickup", 9)); err != nil {
 		t.Fatalf("another plugin was refused by the first one's share: %v", err)
 	}
-	// A DELETION takes exactly that session's outputs out of the totals — no rescan.
+	// A DELETION takes exactly that session's outputs out of the totals.
 	if ok, err := g.a.Delete("s-0001", ReasonOwnerDelete, nil); err != nil || !ok {
 		t.Fatalf("delete: %v %v", ok, err)
 	}
@@ -70,9 +60,6 @@ func TestARefusedOutputWriteRescansNothing(t *testing.T) {
 	}
 	if err := g.a.AppendOutput("s-0002", "summary", outputLine("summary", 9)); !errors.As(err, &q) {
 		t.Fatalf("the share is not enforced after a deletion: %v", err)
-	}
-	if g.a.outputScans != 1 {
-		t.Fatalf("a deletion rescanned the archive (%d scans)", g.a.outputScans)
 	}
 	// A RESTART counts what is on disk: `summary` is at its share, `clickup` is not.
 	red, err := redact.New(redact.SelfTestKey(99), nil)
@@ -253,5 +240,110 @@ func TestAWithdrawalIsOwnerAndHostBoundAndIdempotent(t *testing.T) {
 	}
 	if deleted, _ := g.a.Withdraw(ownerA, "s-0002"); deleted {
 		t.Fatal("a root retention removed for ANOTHER owner was answered true")
+	}
+}
+
+// TestADeletionIsFinalForItsRoot is `Archive.gone` (#273's audit, F2) at the archive, per reason and
+// across a restart. Every deletion of a COMMITTED session — the owner's, a withdrawal, retention —
+// is final for its root: its own uploader is refused `ErrDeleted` on records, blobs and frames,
+// anybody else the uniform `ErrNotOwner`, and nothing is created. A directory no upload ever
+// committed (`retention-uncommitted`) held no session, and its root may still begin.
+func TestADeletionIsFinalForItsRoot(t *testing.T) {
+	g := newRig(t, 1<<30)
+	for _, root := range []string{"s-owner", "s-withdrawn", "s-swept"} {
+		if _, err := g.a.AppendRecords(ownerA, up(root, "", "100"), "main", recs(0, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A directory with no meta: created, never committed.
+	uncommitted := filepath.Join(g.dir, "sessions", "s-uncommitted")
+	if err := os.MkdirAll(uncommitted, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(uncommitted, clock0, clock0); err != nil { // its clock is its own mtime
+		t.Fatal(err)
+	}
+	if ok, err := g.a.Delete("s-owner", ReasonOwnerDelete, nil); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if ok, err := g.a.Withdraw(ownerA, "s-withdrawn"); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	g.clk.Add(91 * 24 * time.Hour)
+	if swept, err := g.a.Sweep(); err != nil || len(swept) != 2 {
+		t.Fatalf("sweep: %v %v — want s-swept and s-uncommitted", swept, err)
+	}
+	check := func(a *Archive, when string) {
+		t.Helper()
+		for _, root := range []string{"s-owner", "s-withdrawn", "s-swept"} {
+			if _, err := a.AppendRecords(ownerA, up(root, "", "100"), "subagent:late01", recs(0, 1)); !errors.Is(err, ErrDeleted) {
+				t.Errorf("%s: a new stream of %s: %v, want ErrDeleted", when, root, err)
+			}
+			if _, err := a.PutBlob(ownerA, up(root, "", "v1"), "toolu_new.txt", []byte("synthetic\n")); !errors.Is(err, ErrDeleted) {
+				t.Errorf("%s: a new blob of %s: %v, want ErrDeleted", when, root, err)
+			}
+			framed := up(root, "", "100")
+			framed.Frame = &Frame{Index: 0, Count: 2}
+			if _, err := a.AppendRecords(ownerA, framed, "main", []Record{{Src: "0", Rec: []byte(`{"a":`)}}); !errors.Is(err, ErrDeleted) {
+				t.Errorf("%s: a first frame of %s: %v, want ErrDeleted", when, root, err)
+			}
+			for name, who := range map[string]Uploader{"another host": hostB, "another owner": ownerB} {
+				if _, err := a.AppendRecords(who, up(root, "", "100"), "main", recs(0, 1)); !errors.Is(err, ErrNotOwner) {
+					t.Errorf("%s: %s uploading %s: %v, want the uniform ErrNotOwner", when, name, root, err)
+				}
+			}
+			if m, _ := a.ReadMeta(root); m != nil {
+				t.Errorf("%s: %s is stored again", when, root)
+			}
+			if _, err := os.Stat(filepath.Join(g.dir, "sessions", root)); !os.IsNotExist(err) {
+				t.Errorf("%s: %s's directory exists again (%v)", when, root, err)
+			}
+		}
+	}
+	check(g.a, "in the process that deleted them")
+	red, err := redact.New(redact.SelfTestKey(99), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Open(Config{Dir: g.dir, Retention: 90 * 24 * time.Hour, Quota: 1 << 30, Recheck: red, Now: g.clk.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(again, "after a restart")
+	// The uncommitted directory's root, and one never seen, may begin.
+	for _, root := range []string{"s-uncommitted", "s-fresh"} {
+		if _, err := again.AppendRecords(ownerA, up(root, "", "100"), "main", recs(0, 1)); err != nil {
+			t.Errorf("a first upload of %s was refused: %v", root, err)
+		}
+	}
+}
+
+// TestOneUnreadableOutputsFileDoesNotStopTheStoreOpening: a session whose `outputs.jsonl` cannot be
+// scanned (here, one line past the bound) is counted at its on-disk size against no plugin — the
+// archive OPENS, the bytes still weigh on the all-plugins share, and the session can be deleted.
+func TestOneUnreadableOutputsFileDoesNotStopTheStoreOpening(t *testing.T) {
+	const quota = 4 << 20 // all plugins' share is ~819 KiB
+	g := newRig(t, quota)
+	if _, err := g.a.AppendRecords(ownerA, up("s-0001", "", "100"), "main", recs(0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(g.dir, "sessions", "s-0001", "outputs.jsonl")
+	if err := os.WriteFile(broken, []byte(strings.Repeat("x", 800<<10)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	red, err := redact.New(redact.SelfTestKey(99), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := Open(Config{Dir: g.dir, Retention: 90 * 24 * time.Hour, Quota: quota, Recheck: red, Now: g.clk.Now})
+	if err != nil {
+		t.Fatalf("one unreadable outputs.jsonl refused the whole store: %v", err)
+	}
+	var q *QuotaError
+	if err := a.AppendOutput("s-0001", "summary", outputLine("summary", 30)); !errors.As(err, &q) || q.Share != ShareOutputs {
+		t.Fatalf("the unreadable file's bytes are not counted against all plugins' share: %v", err)
+	}
+	if ok, err := a.Delete("s-0001", ReasonOwnerDelete, nil); !ok || err != nil {
+		t.Fatalf("the session with the unreadable file cannot be deleted: %v %v", ok, err)
 	}
 }

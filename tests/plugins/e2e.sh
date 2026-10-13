@@ -68,8 +68,11 @@
 #       its transcript, its summary and its edge; the deletion is journaled with no content; the
 #       plugin's next transcript read is its ONE 403 body — byte-identical to a never-stored id's
 #       (🔴 NOT the plan's literal 404: a distinct answer for "was stored, now deleted" would tell any
-#       plugin token which session ids ever held a transcript); and R, who can SEE E's transcript
-#       and does not own it, is refused and deletes nothing;
+#       plugin token which session ids ever held a transcript); R, who can SEE E's transcript and
+#       does not own it, is refused and deletes nothing; and NOTHING LANDS AFTERWARDS — a stream sent
+#       from its start and a new blob, by the uploader that held it, are each 410 `deleted`, and a
+#       session the real agent shipped, whose owner then deleted it and which went on growing, is not
+#       re-created by the agent's next run (it logs the deletion once) and gets no request after that;
 #   (m) a shipped prefix is withdrawn when routing changes — a session WROTE `alpha-notes` and the
 #       real agent ships its prefix to the personal instance; a summary and an edge are derived from
 #       it; then it READS `beta-notes` (the client instance's). The next run sends ONE request naming
@@ -231,8 +234,8 @@ PY
     "i-pending-is-empty-until-a-toggle-then-exactly-the-every-scope-on-sessions"
   # (j) The per-session toggle check dropped from the plugin's read: any stored transcript is served.
   sabotage j-transcript-read-ignores-the-toggle internal/plugins/service.go \
-    $'\tv, err := s.Transcripts.ForPlugin(root, gate)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
-    $'\tv, err := s.Transcripts.ForPlugin(root, transcript.Gate{On: func(*transcript.Meta, []string) bool { return gate.On != nil }})\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
+    $'\tv, err := s.Transcripts.ForPlugin(root, on)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
+    $'\tv, err := s.Transcripts.ForPlugin(root, func(*transcript.Meta, []string) bool { return on != nil })\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tif v == nil {\n\t\treturn nil, ErrForbidden' \
     "j-a-plugin-is-refused-one-403-off-session-and-undeclared-type"
   # (k) Outputs rendered without the source predicate: every listed session with an output gets its
   #     derived line, so a reader of ONE scope a session wrote reads the summary of the rest of it.
@@ -990,7 +993,58 @@ l_owner_code="$(browser_post a /session/delete --data-urlencode "session=$vis_d"
 plugin_get "/plugin/v1/transcript?session=$vis_d"
 l_read_code="$code"; l_read_body="$body"
 l_page_after="$(curl -sS -H "Authorization: Bearer $(head -n1 "$work/cred-a")" "$ui_url/session?session=$vis_d")"
-echo "clause l: a non-owner's delete $l_stranger_code, the owner's $l_owner_code, the plugin's next read $l_read_code"
+# 🔴 AND NOTHING LANDS AFTER THE DELETE. By hand, as the uploader that held it: a stream sent from its
+# start, and a new blob — the two uploads a root with no `meta.json` used to ACCEPT as "a first
+# upload", re-creating the directory. Each must be the 410 that tells the agent to stop for good.
+post "/capture/v1/sessions/$vis_d/streams/subagent:late01/records" "$(rec_body "clause l: sent after the delete")"
+l_late_stream="$code $body"
+post "/capture/v1/sessions/$vis_d/blobs/toolu_e2elate.txt" "$(blob_body "clause l: sent after the delete")"
+l_late_blob="$code $body"
+# …and across REAL agent runs: the agent ships a session, its owner deletes it, the session goes on
+# (a new record AND a new persisted tool result), and the next two runs leave nothing on the instance.
+world6="$work/world6"
+l_root="e2e00000-0000-4000-8000-0000000000bb"
+python3 - "$world6" "$l_root" <<'PY' || couldnt "clause (l)'s agent world could not be written"
+import json, os, sys
+root, sid = sys.argv[1], sys.argv[2]
+proj = os.path.join(root, "projects", "-work-alpha")
+os.makedirs(proj, exist_ok=True)
+os.makedirs(os.path.join(root, "ledger"), exist_ok=True)
+with open(os.path.join(proj, sid + ".jsonl"), "w") as f:
+    for i, (kind, text) in enumerate((("user", "clause l: a session its owner will delete"), ("assistant", "noted"))):
+        f.write(json.dumps({"type": kind, "sessionId": sid, "uuid": f"00000000-0000-4000-8000-{i:012d}",
+            "timestamp": "2000-01-01T00:00:%02dZ" % i, "message": {"role": kind, "content": text}}) + "\n")
+PY
+start_relay run-l1 --upstream "$pod"
+capture "$work/bin/cairn-capture" "$work/home7" "$world6/projects" "$world6/ledger" "$relay_url"
+l1_rc=$?
+stop_relay
+[[ $l1_rc -eq 0 && -s "$tdir/sessions/$l_root/stream-main.jsonl.gz" ]] ||
+  couldnt "clause (l)'s agent run (exit $l1_rc) did not ship its session: $(cat "$work/home7/run.log")"
+l_agent_delete="$(browser_post a /session/delete --data-urlencode "session=$l_root")"
+[[ $l_agent_delete == 303 ]] || couldnt "the owner's delete of the agent-shipped session answered $l_agent_delete"
+python3 - "$world6" "$l_root" <<'PY' || couldnt "clause (l)'s later records could not be written"
+import json, os, sys
+root, sid = sys.argv[1], sys.argv[2]
+proj = os.path.join(root, "projects", "-work-alpha")
+with open(os.path.join(proj, sid + ".jsonl"), "a") as f:
+    f.write(json.dumps({"type": "user", "sessionId": sid, "uuid": "00000000-0000-4000-8000-000000000009",
+        "timestamp": "2000-01-01T00:00:09Z", "message": {"role": "user", "content": "clause l: written after the delete"}}) + "\n")
+os.makedirs(os.path.join(proj, sid, "tool-results"), exist_ok=True)
+with open(os.path.join(proj, sid, "tool-results", "toolu_e2elate2.txt"), "w") as f:
+    f.write("clause l: a tool result persisted after the delete\n")
+PY
+start_relay run-l2 --upstream "$pod"
+capture "$work/bin/cairn-capture" "$work/home7" "$world6/projects" "$world6/ledger" "$relay_url"
+l2_rc=$?
+stop_relay
+l_after_run2="$( [[ -e "$tdir/sessions/$l_root" ]] && echo present || echo absent )"
+start_relay run-l3 --upstream "$pod"
+capture "$work/bin/cairn-capture" "$work/home7" "$world6/projects" "$world6/ledger" "$relay_url"
+l3_rc=$?
+stop_relay
+l3_requests="$(path_requests "$work/run-l3.log" "$l_root")"
+echo "clause l: a non-owner's delete $l_stranger_code, the owner's $l_owner_code, the plugin's next read $l_read_code; after the delete a new stream [$l_late_stream], a new blob [$l_late_blob]; the agent's next run left the session $l_after_run2 and the run after sent $l3_requests request(s) for it"
 # The directory is gone — and with it the summary and the edge; the fact is journaled with no content;
 # the plugin's next read is its ONE refusal, the bytes a never-stored id got in (j) (deliberately not
 # a 404: that would say which ids were ever stored); the non-owner's attempt deleted nothing.
@@ -1001,7 +1055,12 @@ assert l-the-owners-delete-takes-the-transcript-its-outputs-and-its-edges eval '
   [[ $l_read_code == 403 && "$l_read_body" == "$forbidden" && "$l_read_body" == "$j_absent_body" ]] &&
   ! grep -qF "id=\"transcript\"" <<<"$l_page_after" && ! grep -qF "${k_text[$vis_d]}" <<<"$l_page_after" &&
   [[ $l_stranger_code == 403 && "$l_stranger_body" == "no such transcript, or it is not yours to delete" ]] &&
-  [[ -s "$tdir/sessions/$vis_e/meta.json" ]] && grep -qF "\"type\":\"summary\"" "$tdir/sessions/$vis_e/outputs.jsonl"'
+  [[ -s "$tdir/sessions/$vis_e/meta.json" ]] && grep -qF "\"type\":\"summary\"" "$tdir/sessions/$vis_e/outputs.jsonl" &&
+  [[ "$l_late_stream" == "410 {\"refused\":\"deleted\"}" && "$l_late_blob" == "410 {\"refused\":\"deleted\"}" ]] &&
+  [[ ! -e "$tdir/sessions/$vis_d" ]] &&
+  [[ $l2_rc == 0 && $l_after_run2 == absent && ! -e "$tdir/sessions/$l_root" ]] &&
+  grep -qF "DELETED $l_root" "$work/home7/run.log" && [[ "$(grep -cF "DELETED $l_root" "$work/home7/run.log")" == 1 ]] &&
+  [[ $l3_rc == 0 && $l3_requests == 0 ]]'
 
 # --- (m) a shipped prefix is withdrawn when routing changes ------------------------------------------
 # The session WROTE `alpha-notes` (its ledger says so), so run 1 ships it to the personal instance.
