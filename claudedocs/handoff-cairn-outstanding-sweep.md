@@ -48,31 +48,25 @@ its arc and is updated by the lane that owns it.
   predecessors revoked.
 - **Since then:** the first REAL DM digest landed in the DM scope; this workbench host is switched; the docs
   pass merged (#282) and the repo description/topics were updated.
-- **New receiver source for the personal agent's conversations: MERGED INERT** (deployment repo PR #1010,
-  squash `1e71381`). A read-only poller over the agent's transcript archive bucket: count + sanitized title +
-  link only, never message text (structurally — the decoder has no text field; a sentinel test covers every
-  outbound byte). Deployed pod rolled once onto the SAME 0.2.0 image: ready, 0 restarts, routes unchanged,
-  `/healthz` ok — the new env is ignored until a release image is pinned. 15 new tests; mutant battery 100/0
-  (re-run independently); round-1 audit: no 🔴, nine 🟡 —
-  all FIXED in #1011 (squash `d44e48c`; 75 tests, mutants 115/0 re-run independently; also bounds both
-  poll intervals and makes the flaky ClickUp shared-secret mutant deterministic); its delta audit: no 🔴,
-  seven 🟡 batched below. #1011 changed no manifest — the pod was not restarted.
-- Not verified: the new source against the REAL bucket (no reader credential yet) or the pod→store network
-  path; the relay's first real request and an
+- **New receiver source for the personal agent's conversations: LIVE and PROVEN end to end.** Image 0.3.0
+  (deployment repo #1010, #1011, #1013, #1016 code; #1012 its own read-only archive identity, proven HEAD 200 /
+  PUT 403; #1015 go-live). Every thread routes to a NEW scope `muse` (operator decision), count + title + link
+  only. The first REAL batch landed: memo "6 new turns in … thread …" via the receiver credential, after the
+  10-minute window. `/healthz` shows the poller's last-good time every minute (credential + network proven).
+  Each merge followed an audit round with no 🔴; mutant batteries re-run independently each time.
+- **Credentials for `muse`:** scope created in the operator's project; the receiver credential and BOTH host
+  agent credentials re-issued with it, each proven (probe 201 / send+read+retract per host), predecessors
+  revoked; deployed receiver token digest-checked. The client routing row merged and BOTH hosts were switched
+  with the ship script on one sha (the laptop's unpushed one-line text-expander commit went through its own PR
+  first, then the laptop rebased cleanly onto main).
+- Not verified: the relay's first real request and an
   end-to-end relayed memo; a real-browser read of a stored transcript; a second signed-in principal being
   refused a transcript; the second host's hook/client beyond the ship script's report and a store-path match.
 
 ## Next steps (ranked)
 1. DONE — webhook receiver go-live: all three sources live, ClickUp proven end to end (State now). Kept as a
    numbered row so ranks 2–8 keep their claim ids. forcing: user — operator asked to go all the way to live
-2. New receiver SOURCE (the personal agent's conversations) — CODE MERGED INERT (deployment repo #1010). Left,
-   in order: (a) DONE (#1011); (b) OPERATOR: provision a
-   separate read-only identity for the archive bucket (the existing provisioning script is hardcoded to the
-   bridge's names — write a sibling that attaches the existing read policy) and store it as the optional sops
-   Secret the Deployment already references; (c) tag a release and pin it; `/healthz` must then show the
-   poller's last-good time with ZERO routes — that is the credential + network proof; (d) OPERATOR: choose
-   routes (per thread, main chat, or catch-all) and scopes; re-issue the receiver credential if a scope is new;
-   bump `config-revision`. Recipe: the deployment repo's receiver handoff §5c.
+2. DONE — new receiver source (the personal agent's conversations): live, first real memo delivered (State now).
    forcing: user — operator asked for it at handoff
 3. Arm transcript capture on the SECOND host, fully and without stopping to ask: `cairn-capture --dry-run`
    there (its first `--run` finalises its own holds), mint its capture token, raise the transcript quota,
@@ -263,10 +257,7 @@ systemctl --user is-active cairn-capture.timer                                 #
 - 🟡 Docs-pass leftovers: a `flake.nix` comment (~1362–1372) says `cairn-ui` makes no outgoing TLS connection
   (false: the OIDC backend fetches keys); four `cairn-server` refusal messages still say "the path this pod
   reads its journal from"; the scopeuse linearity test is load-sensitive.
-- 🟡 Agent-conversation receiver source, delta audit of #1011 (no 🔴; fix as ONE batch before or with the
-  release): a permanently missing transcript of a known thread logs one line per thread per poll forever, and
-  an unreadable meta does a full transcript read + log per poll (log once per id; count it); a thread past the
-  500-row cap at head with no transcript yet is anchored silently while an in-window one announces all —
-  the two paths disagree; `muse_index_overflow_total` adds the whole overflow every poll (make it a gauge);
-  the route sort runs per ClickUp request instead of once in `NewRouter`; `window_seconds` is still unbounded
-  (huge value → negative Duration in the batcher).
+- 🟡 Agent-conversation receiver source, last audit round (#1016, no 🔴): one test file still carries an
+  audit-round name; a one-field per-thread struct could be a plain map; after purging the BRIDGE profile the
+  shared read policy is gone too, so re-provisioning the receiver's profile then refuses (rc 8) and the hint
+  does not say why. All cosmetic or hint-level.
