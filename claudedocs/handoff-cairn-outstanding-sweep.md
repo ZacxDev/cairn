@@ -23,11 +23,13 @@ its arc and is updated by the lane that owns it.
 - **Deployed:** cairn `b888b2d` on both pods (wave 3), carrying every slice of the sweep. Memo live probe 6/6
   exit 0 against the ARMED pod. Tooling repo `63ee919c` shipped to both hosts (cairn client and `cairn-capture`
   at `b888b2d`).
-- **Transcript capture is ARMED on the personal instance, for ONE host.** 213 sessions stored after the first
-  armed pass (dry run on that host: 845 sessions, 634 held — accepted by the operator — 211 to ship); one
-  incremental timer upload observed since. Pod memory peaked at 18Mi during the pass (limit 768Mi). Redaction
-  spot-check on stored bytes: the capture token's prefix 0 times; no literal bearer token. Details and every
-  rollback: `claudedocs/handoff-cairn-transcripts.md`. Plugins: none registered.
+- **Transcript capture is ARMED on the personal instance, for BOTH hosts.** First host as before (its timer's
+  incremental uploads are now observed). Second host: tooling gate changed to enable the timer there too (still
+  fail-closed per host), quota raised for two hosts, its own capture token minted straight into place; full dry run
+  171 sessions, 137 held (80%, the first host's accepted share was 75%), first armed pass shipped 34 with 0 refused;
+  redaction spot-check on its stored bytes: token prefix 0, no bearer followed by a token-length value (content
+  control: 14,870 `tool_use` lines); its timer's passes upload incrementally. Details: the deployment repo's capture
+  handoff and `claudedocs/handoff-cairn-transcripts.md`.
 - **All lanes DONE and merged:** transcripts+plugins (#258, #260, #261, #266, #268, #269, #270, #271, #272,
   #273, #274, #275, #276); scope refs S3–S5 (#250, #255, #259) with the source journal live on a DEDICATED
   volume (#264); audit-refs "could not check" (#267); scope-mail fixes and the `refused` status (#251, #257);
@@ -68,11 +70,8 @@ its arc and is updated by the lane that owns it.
    numbered row so ranks 2–8 keep their claim ids. forcing: user — operator asked to go all the way to live
 2. DONE — new receiver source (the personal agent's conversations): live, first real memo delivered (State now).
    forcing: user — operator asked for it at handoff
-3. Arm transcript capture on the SECOND host, fully and without stopping to ask: `cairn-capture --dry-run`
-   there (its first `--run` finalises its own holds), mint its capture token, raise the transcript quota,
-   enable its timer (the tooling repo gates the timer on a server-mode flag — change the gate or start it by
-   hand), verify stored sessions and the redaction counts as on the first host. forcing: user — operator: arm
-   it fully
+3. DONE — transcript capture armed on the second host (State now).
+   forcing: user — operator: arm it fully
 4. Transcript backup: DESIGN, then ask before building — it must honour 90-day retention and owner deletion
    (the existing job stages through a small scratch volume and would outlive both) and fit a 20 GB store.
    forcing: user — operator: design, then ask
