@@ -84,10 +84,10 @@ against the wrong artefact. The pod is `cairn-store-go`.
 ⚠ **"EVERY" WOULD ALSO BE WRONG, AND AN EARLIER DRAFT OF THIS WARNING SAID IT.** The
 control-journal section below is written for the **Go** server explicitly (*"Only the Go
 server reads this"*). 🔴 **But this paragraph used to call its `kubectl exec … cairn-server
--create-user` procedures "correct as written", and they were not**: `kubectl exec` into a
-running pod cannot reach a deployed control journal, because the store pod is not the one that
-mounts it and the UI image carries no `cairn-server`. Every operator mode now runs through ONE
-recipe, [*Running an operator mode against a deployed journal*](#running-an-operator-mode-against-a-deployed-journal).
+-create-user` procedures "correct as written", and that holds only where the store pod itself
+mounts the journal**: where only `cairn-ui` does, `kubectl exec` into a running pod reaches no
+journal — the store pod has none and the UI image carries no `cairn-server`. Which pod to use
+in each case is ONE section, [*Running an operator mode against a deployed journal*](#running-an-operator-mode-against-a-deployed-journal).
 A warning wider than the hazard tells a reader to distrust a correct procedure; a warning
 narrower than it hands them a broken one. Both are the same defect as a false claim.
 
@@ -1286,32 +1286,29 @@ pod is not reading.
 
 ### The operator modes
 
-Every mode below appends to the file `$CAIRN_CONTROL_JOURNAL` names and exits; none serves.
-`cairn-server -h` is the authority on their flags — this table names them and does not restate
-them. Two modes on one command line are refused (exit 78), never ranked.
-
-| mode | what it appends | more |
-|---|---|---|
-| `-create-user` | a user, a NEW project they own, and that project's scopes, in one batch | below; `internal/control/README.md` § *The user-creation path* |
-| `-rename-user` | one `user-renamed`: the operator-written display name | below |
-| `-set-member` | one `member-set`: a user put in a project at a role, or their role changed | `internal/control/member_set.go` (`SetMember`, `refuseOrphaning`) |
-| `-create-scope` | one `scope-created` in an EXISTING project | below; `internal/control/README.md` § *Adding a scope to an existing project* |
-| `-remove-member` | one `member-removed`; revokes nothing, and lists what still reaches | below; `internal/control/README.md` § *Taking a user out of a project* |
-| `-issue-credential` | one credential (only its SHA-256 digest), optionally narrowed by scope id and verb; the token is emitted ONCE | `internal/control/README.md` § *The credential-issuing path* and § *Verb narrowing* |
-| `-revoke-credential` | one `credential-revoked`, printing the label it cut off | `internal/control/README.md` § *The credential-issuing path* |
-
-`-routes` is the eighth mode and writes nothing: it prints the route ledger (`internal/api`).
+Every writing mode appends to the file `$CAIRN_CONTROL_JOURNAL` names and exits; none serves.
+The ONE list of them, with where each is documented, is the top-level
+[`README.md` § *Operator modes*](../README.md#operator-modes); `cairn-server -h` is the authority
+on their flags. Two modes on one command line are refused (exit 78), never ranked.
 
 ### Running an operator mode against a deployed journal
 
-🔴 **`kubectl exec` INTO A RUNNING POD CANNOT DO THIS.** The journal lives on whatever volume the
-**browser surface** (`cairn-ui -control-journal`) keeps its state on; a store pod that serves only
-the HTTP API need not set `CAIRN_CONTROL_JOURNAL` or mount that volume, and the UI image does not
-contain `cairn-server` (`flake.nix`'s `mkGoUIImage`: `contents = [ goUI ] ++ goServerTools`). So
-in the store pod every writing mode refuses for want of the variable (exit 78, measured for all
-seven) — or, handed a path there, `-create-user` creates a NEW journal at it and exits 0 while
-nothing ever reads it.
-What works is a **one-off pod on the STORE image that mounts the UI's journal volume**:
+A mode must run where `$CAIRN_CONTROL_JOURNAL` names the SAME file the running surfaces read.
+Which pod that is depends on which pods mount the journal:
+
+- **The store pod mounts it** (it was given a session backend and `CAIRN_CONTROL_JOURNAL`, the
+  first row of the table above): `kubectl exec` into the store pod works — the store image
+  carries `cairn-server`, and the variable is already set there.
+- 🔴 **Only `cairn-ui` mounts it** (`-control-journal` on the volume the browser surface keeps
+  its state on — the measured deployment): **`kubectl exec` into a running pod reaches no
+  journal.** The store pod sets no `CAIRN_CONTROL_JOURNAL`, so every writing mode there refuses
+  for want of it (exit 78 — measured for all seven modes by running the binary without the
+  variable) — or, handed a path, `-create-user` creates a
+  NEW journal at it and exits 0 while nothing ever reads it — and the UI image does not contain
+  `cairn-server` (`flake.nix`'s `mkGoUIImage`: `contents = [ goUI ] ++ goServerTools`).
+
+For the second case, what works is a **one-off pod on the STORE image that mounts the UI's journal
+volume**:
 
 ```yaml
 # operator-pod.yaml — every <…> is yours; nothing here names a real deployment
@@ -1375,7 +1372,8 @@ What each line of that is load-bearing for:
   so an agent that retries a fresh token in a loop can lock its own host out before the token is
   valid. Wait out the interval, then try once.
 
-The procedures below show only the `cairn-server …` part; run each inside this pod.
+The procedures below show only the `cairn-server …` part; run each in whichever pod the list above
+names for your deployment.
 
 ```sh
 # create a user, their project, the owner membership and their scopes, in one batch
@@ -1497,7 +1495,7 @@ Fail-closed, in both directions, and the two directions look nothing alike:
 The repair is by hand, and the journal is plain JSONL — one event per line:
 
 ```sh
-# inside the operator pod above: the store pod need not mount the journal at all
+# in the pod that mounts the journal (see *Running an operator mode against a deployed journal*)
 sh -c 'tail -c 2000 "$CAIRN_CONTROL_JOURNAL"'
 # a TORN last line is the expected damage: the volume filled mid-append, so the bytes
 # before the newline landed and the rest did not. Truncate the partial line; every

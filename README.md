@@ -20,15 +20,16 @@ to write to concurrently, this is what it does.
 |---|---|---|
 | **the store** — `cairn-server` | scoped markdown entries over HTTP: per-token scope allowlists, attributed appends, `If-Match` replaces, and a snapshot route each host syncs a **read-through cache** from | [*The server*](#the-server); [`server/README.md`](server/README.md) |
 | **the client** — `cairn` | one Go binary: sync, recall, search, attributed writes, diagnostics. A Python client (`#cairn`) still ships as the **oracle** the Go one is diffed against | [*The client*](#the-client--cairn) |
-| **scope memos** | short notices an agent sends to a scope, which every OTHER agent session on that scope sees once, fenced as untrusted data | [*Scope memos*](#scope-memos--messages-between-agent-sessions) |
+| **scope memos** | short notices an agent sends to a scope, which every agent session on that scope sees once, fenced as untrusted data | [*Scope memos*](#scope-memos--messages-between-agent-sessions) |
 | **the browser surface** — `cairn-ui` | browse and search entries, sign in (credential form, or GitHub through the operator's GoTrue), share scopes, team links, the memos tab, sessions and arcs | [*The browser surface*](#the-browser-surface--cairn-ui); [`internal/ui/README.md`](internal/ui/README.md) |
 | **transcripts** — `cairn-capture` | opt-in, redacted capture of agent session transcripts, uploaded to `cairn-ui` and read there or with `cairn transcript`; unarmed until the operator arms it | [*Transcripts, capture and plugins*](#transcripts-capture-and-plugins) |
 | **the plugin API** | out-of-process programs that read transcripts and write back derived records (two examples ship in `plugins/`) | [`internal/plugins/README.md`](internal/plugins/README.md); [`plugins/README.md`](plugins/README.md) |
 | **the Helm chart** — `charts/cairn` | the store and the UI, with the known manifest mistakes refused at render time | [`charts/cairn/README.md`](charts/cairn/README.md) |
 
-⚠ **"One binary" is true per role, not for the project.** `nix build` produces four Go binaries
-— `cairn`, `cairn-server`, `cairn-ui`, `cairn-capture` — plus the Python oracle client and
-pod. An agent host needs only `cairn` (and `cairn-capture` if it uploads transcripts).
+⚠ **"One binary" is true per role, not for the project.** The flake packages six Go programs
+— `cairn`, `cairn-server`, `cairn-ui`, `cairn-capture`, and the two example plugins
+`cairn-summary` and `cairn-clickup` — plus the Python oracle client and pod. An agent host
+needs only `cairn` (and `cairn-capture` if it uploads transcripts).
 
 ## Why a swarm needs more than a shared file
 
@@ -82,32 +83,9 @@ bucket, a git repo or an NFS mount:
   produced it — `live`, `cached` (with age and revision), `scope-empty`, or
   🔴 **`store-unreachable, no cache`, which exits `3` and must never be read as
   the third**: `scope-empty` and an unreachable store both "print no entries"
-  and one of them is a lie. ⚠ **Exit `3` is wider than that one state.** A read
-  whose cache exists but cannot be fully read — a scope directory or an entry
-  file at mode `000` — exits `3` with `index entry unreadable: under <root> (…) —
-  the store was not fully read`. 🔴 **The exit code, not the output, is what says
-  whether the report is complete**, and what you see beside it depends on the
-  verb — measured on BOTH clients, byte-identical, over a mode-`000` scope
-  directory and a mode-`000` entry file, each run naming one `--scope`:
-
-  | verb | exit | stdout | the `cached` banner |
-  |---|---|---|---|
-  | `recall` | `3` | **0 bytes** | **not printed, on either stream** |
-  | `search` | `3` | **0 bytes** | **not printed, on either stream** |
-  | `validate` | `3` | 0 bytes **for the single scope those runs named** — see below | on **stderr** |
-
-  🔴 **The `validate` stdout cell is not a general claim.** `validate` prints its
-  per-scope line inside its loop, so with no `--scope` every scope processed before
-  the unreadable one has already printed: measured over a readable 9-entry scope plus
-  an unreadable one, the unreadable scope sorting **after** gave exit `3` with 2,030
-  bytes of stdout, sorting **before** gave exit `3` with 0. **At exit `3` stdout is a
-  PARTIAL report whose length depends on how far the walk got.** ⚠ Unmeasured, and
-  not asserted either way: `search --all-scopes` over a partially-unreadable store
-  (that flag refuses `--cache`).
-
-  The banner column's cause is ordering rather than policy — the reads print their
-  banner *after* the reader returns, so the raise pre-empts it, while `validate`
-  prints its banner first. **For a read, the ABSENCE of the banner is the signal.**
+  and one of them is a lie. 🔴 **The exit code, not the output, is what says whether
+  the report is complete** — exit `3` also covers a cache that exists but cannot be fully
+  read, and what is printed beside it then depends on the verb (§ [*Exit codes*](#exit-codes-because-the-caller-is-usually-a-program)).
   Orthogonally a read names the **scope's status**, so a `cached` read can still
   report `scope-absent` (no such scope here — also what a scope your token cannot
   see looks like) or `scope-unreadable`. An agent that cannot tell "nothing is
@@ -257,8 +235,9 @@ the Go client.
 | `memo-send`, `memo-check`, `memo-read`, `memo-retract` | scope memos — § [*Scope memos*](#scope-memos--messages-between-agent-sessions) | *Go* |
 | `transcript skeleton\|records\|tool` | read a stored session transcript | *Go* |
 
-Every scope-taking verb accepts `--repo P` instead of `--scope X`, deriving the scope from
-the repository. Global options: `--cache PATH`, `--timeout SECONDS`.
+Every verb that takes `--scope` except `sync` also accepts `--repo P` instead, deriving the
+scope from the repository (`sync --repo` is a usage error, exit 2; `routes` and `doctor` take
+neither). Global options: `--cache PATH`, `--timeout SECONDS`.
 
 ### Exit codes, because the caller is usually a program
 
@@ -282,6 +261,31 @@ write outcomes are **disjoint**, so a supervisor cannot read silence as success:
 to retry**: fix the mode, or `cairn sync` to replace the cache. `cairn validate` over that
 state exits `3` itself with 0 bytes on stdout (measured on both clients), so it diagnoses
 nothing the failing read did not already say.
+
+🔴 **What an unreadable cache prints beside its `3` depends on the verb, so the exit code — not
+the output — is what says whether a report is complete.** The read names the failure
+(`index entry unreadable: under <root> (…) — the store was not fully read`); measured on BOTH
+clients, byte-identical, over a mode-`000` scope directory and a mode-`000` entry file, each run
+naming one `--scope`:
+
+| verb | exit | stdout | the `cached` banner |
+|---|---|---|---|
+| `recall` | `3` | **0 bytes** | **not printed, on either stream** |
+| `search` | `3` | **0 bytes** | **not printed, on either stream** |
+| `validate` | `3` | 0 bytes **for the single scope those runs named** — see below | on **stderr** |
+
+🔴 **The `validate` stdout cell is not a general claim.** `validate` prints its
+per-scope line inside its loop, so with no `--scope` every scope processed before
+the unreadable one has already printed: measured over a readable 9-entry scope plus
+an unreadable one, the unreadable scope sorting **after** gave exit `3` with 2,030
+bytes of stdout, sorting **before** gave exit `3` with 0. **At exit `3` stdout is a
+PARTIAL report whose length depends on how far the walk got.** ⚠ Unmeasured, and
+not asserted either way: `search --all-scopes` over a partially-unreadable store
+(that flag refuses `--cache`).
+
+The banner column's cause is ordering rather than policy — the reads print their
+banner *after* the reader returns, so the raise pre-empts it, while `validate`
+prints its banner first. **For a read, the ABSENCE of the banner is the signal.**
 
 `doctor` prints its own set on every run — `0` every check measured and fine, `9` a
 problem, `10` *no problem measured, but at least one check could not look*, which is not a
@@ -496,7 +500,9 @@ folded tag, because a refusal there would make the entry **malformed** — out o
 `--ref` and `--search`, **and unwritable**, since the write routes resolve their target through
 that index — so closing the reader would make every entry already carrying an off-vocabulary tag
 unreadable and unrepairable at once. `POST …/bullets` (`append`) is not gated and must not be: it
-never touches front matter. `kind:` stays its own closed set (`service`/`process`/`org`/`doc`) —
+never touches front matter. ⚠ **If you SCRIPT writes**, a 422 `entry-shape` body can carry this
+vocabulary sentence beside `the index loader would reject these bytes: …` — branch on the
+`X-Store-Status` header, not on the prose. `kind:` stays its own closed set (`service`/`process`/`org`/`doc`) —
 a different axis.
 
 **Filtering:** `cairn recall --tag <name>` and `cairn search … --tag <name>`; over HTTP
@@ -556,8 +562,8 @@ A digest prints the index plus **one** featured body in full, so one oversized e
 cost of the whole read; the badge names the bar. It is advisory — nothing refuses, no exit code
 moved — and an entry at or under the ceiling renders exactly as before. The threshold is one
 constant per renderer (`NuanceBulletCeiling` / `NUANCE_BULLET_CEILING`), pinned equal by
-`tests/test_nuance_bullet_ceiling.py`; where 30 comes from is the [`CHANGELOG.md`](CHANGELOG.md)
-row for #168.
+`tests/test_nuance_bullet_ceiling.py`. Where 30 comes from — the measured cost curve and firing
+rate — is `NuanceBulletCeiling`'s doc comment in `internal/report/text.go`.
 
 ### Citation ids
 
@@ -576,8 +582,10 @@ Both ids are the real values for those bytes. The id is the first 8 hex of `sha2
 bullet's own lines joined with `\n` — so the second bullet's continuation line is part of it. It
 is **not scoped** (identical bullets anywhere share an id) and it **moves** with any byte of the
 bullet, the write trailer included; line terminators are normalised. It exists so "was this
-recalled bullet used?" can be a match rather than a guess — the why, and the measured cost (about
-1–3% of a read's bytes; `--list` is unchanged), are the [`CHANGELOG.md`](CHANGELOG.md) row for #175.
+recalled bullet used?" can be a match rather than a guess — the why, and how that rationale decays,
+are `CitationID`'s doc comment in `internal/store/journal.go`. The measured cost (about 1–3% of a
+read's bytes; `--list` is unchanged) has no home beside the code, so it stays the
+[`CHANGELOG.md`](CHANGELOG.md) row for #175.
 
 ⚠ **If you PARSE a printed body:**
 
@@ -663,23 +671,27 @@ operating runbook (seeding, byte-identity verification, rotation, rate limiting)
 
 ### Operator modes
 
-`cairn-server` is also the control journal's operator tool. Each mode below appends to the file
-`$CAIRN_CONTROL_JOURNAL` names and exits; `cairn-server -h` is the authority on their flags.
+`cairn-server` is also the control journal's operator tool. Each writing mode below appends to the
+file `$CAIRN_CONTROL_JOURNAL` names and exits; `cairn-server -h` is the authority on their flags.
 
-| mode | what it does |
-|---|---|
-| `-create-user` | a user, a new project they own, and that project's scopes |
-| `-set-member` | put a user in a project at a role, or change their role |
-| `-rename-user` | set a user's operator-written display name |
-| `-create-scope` | add ONE scope to an existing project |
-| `-remove-member` | take ONE user out of ONE project — revokes nothing, and lists what still reaches |
-| `-issue-credential` | mint a bearer token for a principal, optionally narrowed by scope id and verb; emitted once |
-| `-revoke-credential` | revoke one issued credential |
-| `-routes` | print the route ledger (writes nothing) |
+This is the ONE list of the modes; `server/README.md` links here rather than keeping a second.
 
-🔴 **Run them against a deployed journal through a one-off pod, never `kubectl exec`** — the
-recipe, and why a running pod cannot reach the journal, is
-[`server/README.md`](server/README.md) § *Running an operator mode against a deployed journal*.
+| mode | what it does | documented in |
+|---|---|---|
+| `-create-user` | a user, a new project they own, and that project's scopes | [`server/README.md`](server/README.md) § *The control journal*; [`internal/control/README.md`](internal/control/README.md) § *The user-creation path* |
+| `-set-member` | put a user in a project at a role, or change their role | `internal/control/member_set.go` (`SetMember`, `refuseOrphaning`) |
+| `-rename-user` | set a user's operator-written display name | [`server/README.md`](server/README.md) § *The control journal*; `internal/control/user_display.go` |
+| `-create-scope` | add ONE scope to an existing project | [`server/README.md`](server/README.md) § *The control journal*; [`internal/control/README.md`](internal/control/README.md) § *Adding a scope to an existing project* |
+| `-remove-member` | take ONE user out of ONE project — revokes nothing, and lists what still reaches | [`server/README.md`](server/README.md) § *The control journal*; [`internal/control/README.md`](internal/control/README.md) § *Taking a user out of a project* |
+| `-issue-credential` | mint a bearer token for a principal, optionally narrowed by scope id and verb; emitted once | [`internal/control/README.md`](internal/control/README.md) § *The credential-issuing path* and § *Verb narrowing* |
+| `-revoke-credential` | revoke one issued credential | [`internal/control/README.md`](internal/control/README.md) § *The credential-issuing path* |
+| `-routes` | print the route ledger (writes nothing) | `internal/api` (`DeclaredRoutes`) |
+
+🔴 **Run each where `$CAIRN_CONTROL_JOURNAL` names the file the running surfaces read.** Where
+the store pod mounts the journal, that is `kubectl exec` into the store pod; where only
+`cairn-ui` mounts it, `kubectl exec` reaches no journal — the store pod has none and the UI image
+has no `cairn-server` — and the answer is a one-off pod on the store image mounting the UI's
+volume: [`server/README.md`](server/README.md) § *Running an operator mode against a deployed journal*.
 ⚠ **A new credential is honoured only after the listener's ~30 s journal refresh**, and an early
 try counts toward the per-client lockout. The model the modes write — users, projects, roles,
 grants, narrowing — is [`internal/control/README.md`](internal/control/README.md).
@@ -982,7 +994,11 @@ guards the programmatic loader (`from_mapping` / `EntryFromMapping`), which is a
 validate pass. **A refused entry is MALFORMED**: it leaves the index — *named* in the report's
 malformed block rather than vanishing — and becomes **unwritable** (`append`/`put` answer **404
 `ref-unknown`**), while `/snapshot` still ships its bytes. The check is
-`grep -rl '^tags:' <your cache root>`; the remedy is to make the value a list. And since
+`grep -rl '^tags:' <your cache root>`; the remedy is to make the value a list. **How likely that is,
+measured and not a guarantee:** across three stores on one machine — two live client caches and
+one frozen pre-cutover mirror — 0 of 591 entries carried a `tags:` or `tag:` key at #146, with a
+positive control in the same run (the same reader found 5 front-matter keys on a sample entry).
+That says nothing about **your** store. And since
 [#160](https://github.com/ZacxDev/cairn/pull/160) a `PUT` that re-sends an entry carrying an
 off-vocabulary tag is refused (422) — edit the tag in the same body; `append` is unaffected.
 
