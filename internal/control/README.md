@@ -821,7 +821,9 @@ Both session backends were inert in every deployment that could exist.
 ⚠ **AND `FileStore.Model` RE-READS THE JOURNAL ON EVERY CALL, BECAUSE THE WRITER IS A
 DIFFERENT PROCESS.** It used to serve a process-local projection invalidated only by that
 value's own appends — correct for a single owner and wrong for this shape, where
-`kubectl exec … cairn-server -create-user` writes and the server reads. A pod reading
+`cairn-server -create-user` writes from ANOTHER process (a one-off operator pod — `kubectl
+exec` into a running pod cannot reach a deployed journal; `server/README.md` § *Running an
+operator mode against a deployed journal*) and the server reads. A pod reading
 through the short-circuit would materialize once at startup and never see a provisioned
 user: the journal correct, the command successful, the sign-in still refused.
 
