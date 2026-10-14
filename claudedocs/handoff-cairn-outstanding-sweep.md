@@ -36,32 +36,33 @@ its arc and is updated by the lane that owns it.
 - **External memo senders:** the personal agent's bridge reads and sends memos (credential live, one read
   proven 200); the task board RELAYS memos to its agents with one read-only credential for 13 scopes — relay
   ON, but its token has made NO request yet (no agent with a task was running); the webhook receiver is
-  LIVE for two of its three sources — see the next bullet.
-- **Webhook receiver: the chat-pipeline source and ClickUp are LIVE; Discord is NOT.** Three routes (two chat
-  conversations to one scope, one ClickUp list webhook to a second), one `webhooks@receiver` credential (verbs
-  `write`, exactly those two scopes; one probe memo per scope answered 201, was read back and retracted; its
-  one-scope predecessor is revoked). The pod's start line reads `clickup=1 discord=0 signal=2` and its health
-  reports the credential readable. Everything else — ids, commits, rollbacks — is in the deployment repo's
-  receiver handoff, updated in the same session.
-- **Discord changed shape on the operator's answer:** they want EVERY DM they receive, not a command. The
-  built Discord source is an interactions endpoint and an application can never read a user's DMs, so NO
-  application was created. A browser-fed DM source is IN FLIGHT (a background agent: a watcher over the
-  browser bridge in the tooling repo + a signed receiver endpoint with an explicit catch-all route in the
-  deployment repo; two PRs, nothing merged or deployed when this was written).
-- Not verified: a memo produced by a REAL chat message or a REAL signed ClickUp delivery (none had arrived
-  minutes after go-live); the relay's first real request and an end-to-end relayed memo; a real-browser read of a stored
+  LIVE for ALL THREE of its sources — see the next bullet.
+- **Webhook receiver: all three sources LIVE.** Chat pipeline (two conversations) to one scope, one ClickUp
+  list to a second, and every received 1:1 Discord DM to a NEW scope via a browser-fed watcher on the
+  laptop (timer every 5 min, mesh-only path, no message text; receiver image 0.2.0). One `webhooks@receiver`
+  credential (verbs `write`, exactly those three scopes; each predecessor revoked). Proven end to end: a
+  REAL chat message became a memo; a signed DM probe became a memo (retracted); the first timed DM pass
+  posted a real batch. ClickUp had SUSPENDED itself after 100 failed deliveries — none ever reached the
+  private cluster gateway; a Cloudflare skip rule for the two signed hook paths was added and the webhook
+  reactivated, but no real ClickUp delivery has been observed since. Ids, commits and rollbacks: the
+  deployment repo's receiver handoff.
+- **New cairn-server operator commands, merged and used live:** `-create-scope` (#279, created the DM scope)
+  and `-remove-member` (#280, removed a synthetic test member from the operator's project before DM names
+  could land there). Both host agent credentials were re-issued to include the new scope (a narrowed
+  credential cannot see a scope created after it) and their predecessors revoked.
+- Not verified: a REAL ClickUp delivery accepted after the Cloudflare rule; the first real DM memo read in
+  the scope (posted, inside its 10-min batch window at handoff); this workbench host's `home-manager switch`
+  (its routing table lacks the new scope until then — the laptop is switched); the relay's first real request and an end-to-end relayed memo; a real-browser read of a stored
   transcript; a second signed-in principal being refused a transcript; the second host's hook/client beyond
   the ship script's report and a store-path match.
 
 ## Next steps (ranked)
-1. Webhook receiver go-live, REMAINDER (the chat pipeline and ClickUp are done): the Discord DM source.
-   IN FLIGHT: two PRs on branch `feat/discord-dm-source` (deployment repo: `containers/memo-webhooks/`; tooling
-   repo: `scripts/browser-bridge/`). Audit them, merge on a 🔴-free round, build the receiver image, then ASK
-   the operator which ONE scope all DMs feed (unanswered), add the catch-all route + the shared secret, RE-ISSUE
-   the credential for all three scopes (it cannot be widened — replace, prove, confirm the deployed digest, then
-   revoke the old), enable the watcher on the host whose browser is signed in. Also confirm the first real memo
-   from each live source.
-   forcing: user — operator chose the browser-fed DM source and "one scope for all DMs"
+1. Webhook receiver go-live, REMAINDER — only ClickUp's first real delivery is unproven. Check:
+   Loki `{namespace="nebula"} |= "/hooks/clickup" != "curl/"` shows a non-curl line, the webhook's
+   `health.fail_count` stays 0, and a memo appears in the ClickUp route's scope. If deliveries still never
+   arrive, the next probe is Cloudflare Security Events for the host (needs a token with zone analytics
+   read). Also run `home-manager switch` on this workbench host.
+   forcing: user — operator gave the receiver order and asked to go all the way to live
 2. New receiver SOURCE: the personal agent's conversations, which are already shipped into the private cluster. Find
    where they land, add a read-only source to the receiver the same way the chat pipeline was added
    (count unrouted, never forward attachments, summary + link), tests with negative controls, deploy inert
@@ -160,6 +161,23 @@ its arc and is updated by the lane that owns it.
   application setup, and one question to the operator showed the wanted input (all DMs) is outside anything an
   application receives. via: command
 
+- **Operator decisions this session (paraphrased):** DMs to a NEW scope (`inbox`), so build `-create-scope`;
+  remove the synthetic test member, so build `-remove-member`; receiver path mesh-only, not public; trim
+  per-DM routes, the link field and the receiver-side group check; no-browser is quiet; accept that the
+  watcher may mark DMs read; re-issue both host credentials to read the new scope; add the Cloudflare skip
+  rule. via: command
+- **A credential narrowed at issue never sees a scope created later** — `inbox` was invisible to both host
+  credentials until they were re-issued with it. via: measurement
+- **A proxied public webhook host silently blocks cloud senders** — ClickUp suspended its webhook at 100
+  failures with ZERO requests reaching the private cluster gateway, while a residential curl through the same host
+  answered 401 from the receiver. The zone already had the same skip rule for another service's API.
+  via: measurement
+- **Operator-run journal commands go in a one-off pod on the store image mounting the UI volume with
+  `CAIRN_CONTROL_JOURNAL` set** — not `kubectl exec`: the store pod sets no journal env and the UI image
+  has no `cairn-server`. via: command
+- **The client honours `CAIRN_ROUTES=<file>`** — enough to read a new scope before a `home-manager switch`
+  lands its routing row. via: command
+
 ## How to verify
 ```bash
 bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input           # SUMMARY … exit=0
@@ -195,3 +213,13 @@ systemctl --user is-active cairn-capture.timer                                 #
 - 🟡 Webhook receiver: an UNREADABLE token file is reported exactly like an absent one (the read error is
   swallowed); a ClickUp webhook id in a route trips the deployment repo's secret scan, so every new ClickUp
   route needs its own baseline entry.
+- 🟡 `-create-user`/`-set-member`/`-remove-member` runbooks in `server/README.md` say `kubectl exec`, which
+  cannot reach the deployed journal (see Gotchas). `-create-user -scopes` applies no name rule (accepts
+  `..`); unchecked whether anything can climb out of the store with it.
+- 🟡 Small open audit notes: the scope-created writer ledger skips every non-function declaration in
+  `journal.go`; `-remove-member` prints "nothing was written" even after an Append I/O error; open legacy
+  invitations are not re-checked against the inviter's current authority until they lapse.
+- 🟡 Discord DM watcher: whether opening a DM marks it read is unmeasured (accepted); a status containing
+  parentheses in a DM label makes it read as not-a-DM; an older ClickUp mutant survives ~1 run in 7 (map
+  order); the deployment repo's pre-push gate intermittently reports a guard that "could not run".
+- 🟡 The Cloudflare account token file on the workbench is mode 644.
