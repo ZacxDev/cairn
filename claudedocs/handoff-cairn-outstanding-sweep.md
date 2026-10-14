@@ -50,9 +50,11 @@ its arc and is updated by the lane that owns it.
   and `-remove-member` (#280, removed a synthetic test member from the operator's project before DM names
   could land there). Both host agent credentials were re-issued to include the new scope (a narrowed
   credential cannot see a scope created after it) and their predecessors revoked.
-- Not verified: a REAL ClickUp delivery accepted after the Cloudflare rule; the first real DM memo read in
-  the scope (posted, inside its 10-min batch window at handoff); this workbench host's `home-manager switch`
-  (its routing table lacks the new scope until then — the laptop is switched); the relay's first real request and an end-to-end relayed memo; a real-browser read of a stored
+- **Since then:** the first REAL DM digest landed in the DM scope; this workbench host is switched (reads that
+  scope with no override); the docs pass merged (#282: README restructure + gaps, operator one-off-pod runbook,
+  17 CHANGELOG rows, stale comments) and the repo description/topics were updated.
+- Not verified: a REAL ClickUp delivery accepted after the Cloudflare rule — 0 non-curl `/hooks/clickup` lines
+  in the 3 h to 2026-10-14T17:56Z (the same query matched 1 curl line over 12 h, so it can see the path); the relay's first real request and an end-to-end relayed memo; a real-browser read of a stored
   transcript; a second signed-in principal being refused a transcript; the second host's hook/client beyond
   the ship script's report and a store-path match.
 
@@ -61,7 +63,7 @@ its arc and is updated by the lane that owns it.
    Loki `{namespace="nebula"} |= "/hooks/clickup" != "curl/"` shows a non-curl line, the webhook's
    `health.fail_count` stays 0, and a memo appears in the ClickUp route's scope. If deliveries still never
    arrive, the next probe is Cloudflare Security Events for the host (needs a token with zone analytics
-   read). Also run `home-manager switch` on this workbench host.
+   read).
    forcing: user — operator gave the receiver order and asked to go all the way to live
 2. New receiver SOURCE: the personal agent's conversations, which are already shipped into the private cluster. Find
    where they land, add a read-only source to the receiver the same way the chat pipeline was added
@@ -178,6 +180,10 @@ its arc and is updated by the lane that owns it.
 - **The client honours `CAIRN_ROUTES=<file>`** — enough to read a new scope before a `home-manager switch`
   lands its routing row. via: command
 
+- **A timing test can redden a docs-only PR's `nix` job**: `TestMemoScopesIsLinearOnUnterminatedBlocks`
+  measured 25.6× growth for 8× input on a loaded runner (bound between 8× and 64×); re-running the same
+  commit passed. Re-run before debugging the diff. via: measurement
+
 ## How to verify
 ```bash
 bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input           # SUMMARY … exit=0
@@ -223,3 +229,6 @@ systemctl --user is-active cairn-capture.timer                                 #
   parentheses in a DM label makes it read as not-a-DM; an older ClickUp mutant survives ~1 run in 7 (map
   order); the deployment repo's pre-push gate intermittently reports a guard that "could not run".
 - 🟡 The Cloudflare account token file on the workbench is mode 644.
+- 🟡 Docs-pass leftovers: a `flake.nix` comment (~1362–1372) says `cairn-ui` makes no outgoing TLS connection
+  (false: the OIDC backend fetches keys); four `cairn-server` refusal messages still say "the path this pod
+  reads its journal from"; the scopeuse linearity test is load-sensitive.
