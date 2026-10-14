@@ -208,6 +208,18 @@ its arc and is updated by the lane that owns it.
 - **The receiver BATCHES**: deliveries show up as `events_queued` at once, the memo only after the per-scope
   10-minute window from the FIRST event. An empty scope read right after a 200 is not a failure. via: measurement
 
+- **`cairn memo-read` LISTS retracted memos**, each followed by a `retracted by … at …` line — a probe still in the
+  listing after `memo-retract` printed `memo retracted` is not a failed retract. via: measurement
+- **`cairn memo-send` takes `--ttl` as a duration (`10m`, `72h`, `3d`), not seconds, and needs exactly one of
+  `--body`/`--body-file`** — both refuse at exit 2 before anything is sent. via: command
+- **The discriminating control for "does this credential reach scope X"** is the OLD credential's send to X being
+  REFUSED (`[no-write]`, exit 6) beside the new one's send landing and reading back `via <label>`. A `memo-read`
+  answering exit 0 with nothing cannot separate "empty scope" from "unreachable". via: measurement
+- **An empty receiver read right after a webhook's 200 is not a failure** — the receiver batches per scope and the
+  memo lands one window (10 min) after the FIRST event; `events_queued` moves at once. via: measurement
+- **A long watcher that calls `~/.nix-profile/bin/<tool>` dies mid-run when a `home-manager switch` swaps the
+  profile** — it then spins and reports a false "nothing happened"; call the system profile's binary. via: measurement
+
 ## How to verify
 ```bash
 bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input           # SUMMARY … exit=0
