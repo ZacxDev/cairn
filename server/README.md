@@ -83,9 +83,13 @@ against the wrong artefact. The pod is `cairn-store-go`.
 
 ⚠ **"EVERY" WOULD ALSO BE WRONG, AND AN EARLIER DRAFT OF THIS WARNING SAID IT.** The
 control-journal section below is written for the **Go** server explicitly (*"Only the Go
-server reads this"*) and its `kubectl exec … cairn-server -create-user` procedures are
-correct as written. A warning wider than the hazard tells a reader to distrust a correct
-procedure, which is the same defect as a false claim.
+server reads this"*). 🔴 **But this paragraph used to call its `kubectl exec … cairn-server
+-create-user` procedures "correct as written", and that holds only where the store pod itself
+mounts the journal**: where only `cairn-ui` does, `kubectl exec` into a running pod reaches no
+journal — the store pod has none and the UI image carries no `cairn-server`. Which pod to use
+in each case is ONE section, [*Running an operator mode against a deployed journal*](#running-an-operator-mode-against-a-deployed-journal).
+A warning wider than the hazard tells a reader to distrust a correct procedure; a warning
+narrower than it hands them a broken one. Both are the same defect as a false claim.
 
 **So: check each procedure, do not assume either way.** The HTTP contract transfers by
 construction (`tests/conformance/`, `tests/dualrun/`); anything touching the *filesystem,
@@ -1270,7 +1274,7 @@ path above is untouched by it and keeps resolving against the token file.
 | set, with **no** session backend configured | **refuses to start** — a journal nobody reads answers nothing while looking healthy |
 | a session backend configured with this **unset** | **refuses to start** — the backends would otherwise resolve against the token-file projection, which holds no user any identity provider can name, so a verified sign-in authenticates and then reads nothing |
 | unset, no session backend | exactly today's deployment, unchanged |
-| written by | `cairn-server -create-user` (see below), never by a route — nothing on a read path creates a user |
+| written by | the `cairn-server` operator modes (table below), never by a pod route — nothing on a read path creates a user. `cairn-ui` appends to the same file when its `-control-journal` names it (shares, invitations, team links) |
 | re-read by | the timer only. **Not** `SIGHUP`: that signal is the token file's, and it says so when it fires |
 
 🔴 **IT MUST SIT ON A PERSISTENT VOLUME.** The file IS the user database. An `emptyDir`
@@ -1280,9 +1284,100 @@ browser sign-in. `cairn-server -create-user` **creates the file if it is absent*
 typo'd path does not fail: it silently starts a second, empty journal that the running
 pod is not reading.
 
+### The operator modes
+
+Every writing mode appends to the file `$CAIRN_CONTROL_JOURNAL` names and exits; none serves.
+The ONE list of them, with where each is documented, is the top-level
+[`README.md` § *Operator modes*](../README.md#operator-modes); `cairn-server -h` is the authority
+on their flags. Two modes on one command line are refused (exit 78), never ranked.
+
+### Running an operator mode against a deployed journal
+
+A mode must run where `$CAIRN_CONTROL_JOURNAL` names the SAME file the running surfaces read.
+Which pod that is depends on which pods mount the journal:
+
+- **The store pod mounts it** (it was given a session backend and `CAIRN_CONTROL_JOURNAL`, the
+  first row of the table above): `kubectl exec` into the store pod works — the store image
+  carries `cairn-server`, and the variable is already set there.
+- 🔴 **Only `cairn-ui` mounts it** (`-control-journal` on the volume the browser surface keeps
+  its state on — the measured deployment): **`kubectl exec` into a running pod reaches no
+  journal.** The store pod sets no `CAIRN_CONTROL_JOURNAL`, so every writing mode there refuses
+  for want of it (exit 78 — measured for all seven modes by running the binary without the
+  variable) — or, handed a path, `-create-user` creates a
+  NEW journal at it and exits 0 while nothing ever reads it — and the UI image does not contain
+  `cairn-server` (`flake.nix`'s `mkGoUIImage`: `contents = [ goUI ] ++ goServerTools`).
+
+For the second case, what works is a **one-off pod on the STORE image that mounts the UI's journal
+volume**:
+
+```yaml
+# operator-pod.yaml — every <…> is yours; nothing here names a real deployment
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cairn-operator
+  namespace: <ns>
+spec:
+  restartPolicy: Never
+  # nodeName: <the UI pod's node>   # see "ReadWriteOnce" below
+  containers:
+    - name: op
+      image: ghcr.io/<owner>/cairn-store-go:sha-<40-hex commit>   # the STORE image: it has cairn-server
+      command: ["sleep", "900"]                                    # busybox; you exec the modes into it
+      env:
+        - name: CAIRN_CONTROL_JOURNAL
+          value: /state/<journal file>       # EXACTLY the path cairn-ui's -control-journal reads
+      volumeMounts:
+        - { name: state, mountPath: /state }
+        - { name: out, mountPath: /out }
+  volumes:
+    - name: state
+      persistentVolumeClaim: { claimName: <the UI's state claim> }
+    - name: out
+      emptyDir: { medium: Memory }           # a token written here never touches a disk
+```
+
+```sh
+kubectl apply -f operator-pod.yaml
+kubectl -n <ns> wait --for=condition=Ready pod/cairn-operator
+kubectl -n <ns> exec cairn-operator -- cairn-server -create-user …          # or any mode in the table
+kubectl -n <ns> exec cairn-operator -- cairn-server -issue-credential \
+  -principal usr_… -token-out /out/token                                     # never to stdout
+kubectl -n <ns> exec cairn-operator -- cat /out/token | <your secret store's stdin>
+kubectl -n <ns> delete pod cairn-operator                                    # the in-memory token dies with it
+```
+
+What each line of that is load-bearing for:
+
+- **The STORE image, not the UI's.** Both run as the same uid (`serverUid` in `flake.nix`), so the
+  journal's ownership is unchanged by the write.
+- 🔴 **The path must be the one `cairn-ui` reads.** `-create-user` creates the file when it is absent,
+  so a wrong path is not an error: it is a second journal nobody reads, and every command "works".
+  Check the target first — `kubectl -n <ns> exec cairn-operator -- sh -c 'tail -c 400
+  "$CAIRN_CONTROL_JOURNAL"'` should print the records you expect.
+- **ReadWriteOnce means one NODE, not one pod.** The pod can mount the claim only where it is already
+  attached, i.e. on the UI pod's node; if your scheduler does not put it there, set `nodeName`. Both
+  processes may append at once: every append is one `write(2)` under an exclusive `flock`
+  (`internal/control/filestore.go`), so `cairn-ui` keeps running.
+- **`-token-out` to the in-memory `emptyDir`, never stdout.** The token exists once — the journal holds
+  only its digest — and a token printed to a terminal is a token in every transcript of that terminal.
+  `-token-out` creates the file at mode 0600 and refuses if it exists.
+- ⚠ **`-create-user` and `-create-scope` warn when a scope name already exists as a directory under
+  `-store`** — a check this pod cannot make, because it does not mount the store volume (a second
+  ReadWriteOnce claim, usually on another node). Check the store root by hand before naming a scope.
+- 🔴 **A new credential is honoured only after the listener's next authority refresh** — 30 s
+  (`refreshInterval` in `cmd/cairn-ui/main.go`; `api.AuthorityRefreshInterval` on the pod), and every
+  writing mode prints *"picks this up within 30s"*. **A request made before then is a 401, and a 401
+  counts toward the per-client lockout** (default 5 failures → 900 s, `internal/netid/limiter.go`),
+  so an agent that retries a fresh token in a loop can lock its own host out before the token is
+  valid. Wait out the interval, then try once.
+
+The procedures below show only the `cairn-server …` part; run each in whichever pod the list above
+names for your deployment.
+
 ```sh
 # create a user, their project, the owner membership and their scopes, in one batch
-kubectl exec -n <ns> deploy/<name> -- cairn-server -create-user \
+cairn-server -create-user \
   -provider supabase -subject <the IdP's own id> -email <display only> \
   -project <project name> -scopes <name>,<name>
 ```
@@ -1296,7 +1391,7 @@ the browser's "signed in as" render — is the journal's answer: an operator-wri
 with `-display-name`, or later with one `user-renamed` record:
 
 ```sh
-kubectl exec -n <ns> deploy/<name> -- cairn-server -rename-user \
+cairn-server -rename-user \
   -rename-user-id usr_… -rename-display-name <name>
 ```
 
@@ -1331,7 +1426,7 @@ record, nothing else. `-create-user` cannot do it — it creates a new user and 
 every time it runs.
 
 ```sh
-kubectl exec -n <ns> deploy/<name> -- cairn-server -create-scope \
+cairn-server -create-scope \
   -scope-project prj_… -scope-name <name>
 # stdout, exit 0:  cairn-control: scope-created scope=scp_… name=<name> project=prj_… epoch=<n>
 ```
@@ -1362,7 +1457,7 @@ journal picks the record up on its next refresh.
 `-set-member`'s two id flags and takes no role (`-member-role` beside it is refused).
 
 ```sh
-kubectl exec -n <ns> deploy/<name> -- cairn-server -remove-member \
+cairn-server -remove-member \
   -member-project prj_… -member-user usr_…
 # stdout, exit 0:  cairn-control: member-removed project=prj_… user=usr_… role=<was> epoch=<n>
 ```
@@ -1400,7 +1495,8 @@ Fail-closed, in both directions, and the two directions look nothing alike:
 The repair is by hand, and the journal is plain JSONL — one event per line:
 
 ```sh
-kubectl exec -n <ns> deploy/<name> -- sh -c 'tail -c 2000 "$CAIRN_CONTROL_JOURNAL"'
+# in the pod that mounts the journal (see *Running an operator mode against a deployed journal*)
+sh -c 'tail -c 2000 "$CAIRN_CONTROL_JOURNAL"'
 # a TORN last line is the expected damage: the volume filled mid-append, so the bytes
 # before the newline landed and the rest did not. Truncate the partial line; every
 # complete line before it replays.

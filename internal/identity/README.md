@@ -453,8 +453,8 @@ anything.** Wiring your IdP does not make cairn multi-tenant-by-SSO. Specificall
 - **SSO group or role membership is NOT a scope grant.** Nothing in this repository reads a
   `groups` claim, maps a role onto a project, or derives membership from a token. Project
   membership and scope shares live in the control journal and are written by
-  `cairn-server -create-user`, `-set-member` and `-issue-credential`, or through
-  `cairn-ui`'s share flow.
+  `cairn-server`'s operator modes (the top-level `README.md` § *Operator modes* lists them), or
+  through `cairn-ui`'s share flow and team links.
 - **so you still manage grants**, per user, after they exist. The IdP decides who may ask;
   cairn decides what the answer is.
 - **and a configured journal is not optional once a verifier is armed.** An armed verifier

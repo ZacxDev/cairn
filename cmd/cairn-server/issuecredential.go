@@ -15,8 +15,10 @@ package main
 // endpoint." A route that mints bearer tokens is the highest-value target this pod could
 // possibly grow, and it would have to move the route ledger, the conformance corpus, the
 // construction-time check and `checks.go-server-declares-its-routes` together — for a
-// capability whose one caller is a human with `exec` into the pod. `api.DeclaredRoutes()`
-// is unchanged by this file, which is the checkable half of that sentence.
+// capability whose one caller is an operator with a shell beside the journal — the store pod
+// where it mounts the journal, else a one-off pod on the store image (`server/README.md` §
+// *Running an operator mode against a deployed journal*). `api.DeclaredRoutes()` is
+// unchanged by this file, which is the checkable half of that sentence.
 //
 // 🔴 AND IT IS NOT A ROTATION TOOL ON ITS OWN. It issues; `-revoke-credential`
 // (`revokecredential.go`) revokes. A rotation is issue-new, deliver it, then revoke-old —

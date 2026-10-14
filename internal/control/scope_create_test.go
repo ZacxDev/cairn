@@ -292,11 +292,13 @@ func TestTheScopeNameClassIsThePathComponentClass(t *testing.T) {
 //
 // 🔴 ANY USE OF THE IDENTIFIER, NOT THE `Kind: EventScopeCreated` LITERAL, BECAUSE THE FIRST
 // DRAFT MATCHED ONLY THAT SHAPE AND AN ASSIGNMENT (`e.Kind = …`) OR A KIND PASSED AS AN
-// ARGUMENT WALKED STRAIGHT PAST IT. The exemptions are exactly the declaration (journal.go's
-// `const` block and `AllEventKinds`) and journal.go's `case` lists, where the kind is
-// dispatched on rather than built. A package-level `var` elsewhere is reported as
-// `(package-level)`. ⚠ What it still cannot see: the string `"scope-created"` spelled as a
-// literal `EventKind`, and a hand-written JSON line — neither uses the identifier.
+// ARGUMENT WALKED STRAIGHT PAST IT. The exemptions are EVERY non-function declaration in
+// journal.go — which covers the kind's own `const` block and `AllEventKinds`, but is wider
+// than them: a package-level `var`, `type` or `const` IN journal.go that used the kind would
+// be skipped too — and journal.go's `case` lists, where the kind is dispatched on rather
+// than built. A package-level declaration in any OTHER file is reported as `(package-level)`.
+// ⚠ What it still cannot see: the string `"scope-created"` spelled as a literal `EventKind`,
+// and a hand-written JSON line — neither uses the identifier.
 //
 // ⚠ STRUCTURAL, SO IT TYPE-CHECKS PAST A WRONG ARGUMENT: a writer calling the check with
 // `nil` satisfies it. The behavioural halves are
@@ -355,8 +357,10 @@ func assertWriterLedger(t *testing.T, kind, check string, want map[string]bool) 
 			if fn, isFunc := decl.(*ast.FuncDecl); isFunc {
 				owner = fn.Name.Name
 			} else if isJournal {
-				// The kind's own `const` declaration and `AllEventKinds` — the
-				// declaration this ledger is about, not a use of it.
+				// EVERY non-function declaration in journal.go, not only the kind's own
+				// `const` declaration and `AllEventKinds` (the declaration this ledger is
+				// about, not a use of it) — any other package-level declaration there is
+				// skipped by this same branch.
 				continue
 			}
 			builds, checks := false, false

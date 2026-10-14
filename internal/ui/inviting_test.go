@@ -641,7 +641,8 @@ func TestRedeemForJoinsAPrincipalTheControlPlaneAlreadyHolds(t *testing.T) {
 //
 // 🔴 THE REFUSAL IS NOT POLITENESS. `Redeem`/`RedeemFor` write a bare `member-set`, and
 // `Model.apply` calls `setMembership` UNCONDITIONALLY — it never consults `refuseOrphaning`,
-// which exists only on the operator's `PlanMemberSet` path and whose whole job is to refuse
+// which only the operator's writers call (`internal/control`'s `SetMember` and `RemoveMember`)
+// and whose whole job is to refuse
 // demoting a project's last owner. So without this check an `admin` could mint a `member`
 // invitation into their own project, have the sole OWNER redeem it, and leave the project
 // with nobody who may delete it or change its membership.

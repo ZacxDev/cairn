@@ -7,9 +7,11 @@ package main
 // endpoint." A creation endpoint is the highest-value target this pod could grow — it
 // mints principals — and putting it on the HTTP surface would require the route ledger,
 // the conformance corpus, the construction-time check and `checks.go-server-declares-its-routes`
-// to move together, for a capability that has exactly one caller: a human with `exec`
-// into the pod. So it is a flag mode that exits, reached the same way the documented
-// token rotation is (`kubectl exec … -- sh -c 'kill -HUP 1'`), and it adds nothing to the
+// to move together, for a capability that has exactly one caller: an operator with a shell
+// beside the journal. So it is a flag mode that exits — run where `$CAIRN_CONTROL_JOURNAL`
+// names the journal the running surfaces read: a store pod that mounts it, or else a
+// one-off pod on the store image mounting the volume that holds it (`server/README.md` §
+// *Running an operator mode against a deployed journal*) — and it adds nothing to the
 // internet-reachable surface. `api.DeclaredRoutes()` is unchanged by this file, which is
 // the checkable half of that sentence.
 //

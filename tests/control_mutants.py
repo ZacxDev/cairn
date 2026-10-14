@@ -2817,8 +2817,8 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestRedeemForRefusesSomebodyTheProjectAlreadyHolds",
         why="deleting the already-a-member refusal as a UX nicety. It is not one: `Redeem` "
         "writes a bare `member-set` and `Model.apply` calls `setMembership` UNCONDITIONALLY — "
-        "it never consults `refuseOrphaning`, which lives only on the operator's "
-        "`PlanMemberSet` path. So an `admin` could mint a `member` invitation into their own "
+        "it never consults `refuseOrphaning`, which only the operator's writers call "
+        "(`control.SetMember`, `control.RemoveMember`). So an `admin` could mint a `member` invitation into their own "
         "project, have the sole OWNER redeem it, and leave the project with no owner at all.",
     ),
     # ---- ROUND 2's FINDING: the guard above shipped on ONE of the two writers ----------

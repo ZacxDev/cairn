@@ -114,8 +114,9 @@ func (s *FileStore) now() time.Time {
 // DELETED RATHER THAN DOCUMENTED. This method served a process-local projection
 // invalidated only by THIS VALUE'S own appends, and the comment above it claimed that was
 // "correct for the deployed shape — one pod owns the file". Measured: the deployed shape
-// has TWO processes — the pod reads, `cairn-server -create-user` writes through
-// `kubectl exec` — so a pod reading through the short-circuit would materialize the
+// has TWO processes — the pod reads, `cairn-server -create-user` writes from another one
+// (an `exec` into the pod where that pod mounts the journal, else a one-off operator pod:
+// `server/README.md`) — so a pod reading through the short-circuit would materialize the
 // journal once at startup and never see a provisioned user. The journal correct, the
 // command successful, the sign-in still refused.
 //
