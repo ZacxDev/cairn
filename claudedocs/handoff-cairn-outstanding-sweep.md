@@ -53,7 +53,10 @@ its arc and is updated by the lane that owns it.
   link only, never message text (structurally — the decoder has no text field; a sentinel test covers every
   outbound byte). Deployed pod rolled once onto the SAME 0.2.0 image: ready, 0 restarts, routes unchanged,
   `/healthz` ok — the new env is ignored until a release image is pinned. 15 new tests; mutant battery 100/0
-  (re-run independently); one audit round: no 🔴, nine 🟡 batched below.
+  (re-run independently); round-1 audit: no 🔴, nine 🟡 —
+  all FIXED in #1011 (squash `d44e48c`; 75 tests, mutants 115/0 re-run independently; also bounds both
+  poll intervals and makes the flaky ClickUp shared-secret mutant deterministic); its delta audit: no 🔴,
+  seven 🟡 batched below. #1011 changed no manifest — the pod was not restarted.
 - Not verified: the new source against the REAL bucket (no reader credential yet) or the pod→store network
   path; the relay's first real request and an
   end-to-end relayed memo; a real-browser read of a stored transcript; a second signed-in principal being
@@ -63,7 +66,7 @@ its arc and is updated by the lane that owns it.
 1. DONE — webhook receiver go-live: all three sources live, ClickUp proven end to end (State now). Kept as a
    numbered row so ranks 2–8 keep their claim ids. forcing: user — operator asked to go all the way to live
 2. New receiver SOURCE (the personal agent's conversations) — CODE MERGED INERT (deployment repo #1010). Left,
-   in order: (a) fix the source's 🟡 batch (Defects) in ONE PR before any release; (b) OPERATOR: provision a
+   in order: (a) DONE (#1011); (b) OPERATOR: provision a
    separate read-only identity for the archive bucket (the existing provisioning script is hardcoded to the
    bridge's names — write a sibling that attaches the existing read policy) and store it as the optional sops
    Secret the Deployment already references; (c) tag a release and pin it; `/healthz` must then show the
@@ -260,13 +263,10 @@ systemctl --user is-active cairn-capture.timer                                 #
 - 🟡 Docs-pass leftovers: a `flake.nix` comment (~1362–1372) says `cairn-ui` makes no outgoing TLS connection
   (false: the OIDC backend fetches keys); four `cairn-server` refusal messages still say "the path this pod
   reads its journal from"; the scopeuse linearity test is load-sensitive.
-- 🟡 Agent-conversation receiver source (#1010 audit, round 1, no 🔴): the S3 "signed" test cannot see a wrong
-  signature (fake checks only the credential prefix — wire it to recompute the signature); dedupe by message
-  id is untested (replay lands at the same index); a malformed `meta.json` blocks its thread forever instead of
-  falling back to the transcript; past 500 index rows the NEWEST threads are dropped silently (keep the last
-  500 or count overflow); a vanished-then-restored transcript re-announces its whole history as one count; the
-  poll interval is unbounded (1 s accepted; an overflowing value panics the ticker — `signal_poll_seconds`
-  shares it); a failed meta upload delays announcements until that thread's next capture (undocumented);
-  the title-scrub test passes via the later whole-summary scrub; the §5c rollback omits the pod restart.
-- 🟡 Receiver mutant `shared-secret-first-wins` (pre-existing on trunk) survives ~1 run in 2: routes are read
-  from a randomly ordered map — make `TestClickUpRoutesSharingASecretPickByWebhookID` order-independent.
+- 🟡 Agent-conversation receiver source, delta audit of #1011 (no 🔴; fix as ONE batch before or with the
+  release): a permanently missing transcript of a known thread logs one line per thread per poll forever, and
+  an unreadable meta does a full transcript read + log per poll (log once per id; count it); a thread past the
+  500-row cap at head with no transcript yet is anchored silently while an in-window one announces all —
+  the two paths disagree; `muse_index_overflow_total` adds the whole overflow every poll (make it a gauge);
+  the route sort runs per ClickUp request instead of once in `NewRouter`; `window_seconds` is still unbounded
+  (huge value → negative Duration in the batcher).
