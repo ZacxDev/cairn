@@ -36,19 +36,32 @@ its arc and is updated by the lane that owns it.
 - **External memo senders:** the personal agent's bridge reads and sends memos (credential live, one read
   proven 200); the task board RELAYS memos to its agents with one read-only credential for 13 scopes — relay
   ON, but its token has made NO request yet (no agent with a task was running); the webhook receiver is
-  public and reads the chat pipeline, but sends NOTHING: no routes, no credential.
-- Not verified: the relay's first real request and an end-to-end relayed memo; a real-browser read of a stored
+  LIVE for two of its three sources — see the next bullet.
+- **Webhook receiver: the chat-pipeline source and ClickUp are LIVE; Discord is NOT.** Three routes (two chat
+  conversations to one scope, one ClickUp list webhook to a second), one `webhooks@receiver` credential (verbs
+  `write`, exactly those two scopes; one probe memo per scope answered 201, was read back and retracted; its
+  one-scope predecessor is revoked). The pod's start line reads `clickup=1 discord=0 signal=2` and its health
+  reports the credential readable. Everything else — ids, commits, rollbacks — is in the deployment repo's
+  receiver handoff, updated in the same session.
+- **Discord changed shape on the operator's answer:** they want EVERY DM they receive, not a command. The
+  built Discord source is an interactions endpoint and an application can never read a user's DMs, so NO
+  application was created. A browser-fed DM source is IN FLIGHT (a background agent: a watcher over the
+  browser bridge in the tooling repo + a signed receiver endpoint with an explicit catch-all route in the
+  deployment repo; two PRs, nothing merged or deployed when this was written).
+- Not verified: a memo produced by a REAL chat message or a REAL signed ClickUp delivery (none had arrived
+  minutes after go-live); the relay's first real request and an end-to-end relayed memo; a real-browser read of a stored
   transcript; a second signed-in principal being refused a transcript; the second host's hook/client beyond
   the ship script's report and a store-path match.
 
 ## Next steps (ranked)
-1. Webhook receiver go-live, in the operator's order: **Signal first** (two active conversations are listed
-   by id in the deployment repo's receiver handoff — ASK the operator which scope each feeds, add the routes,
-   then issue `webhooks@receiver` send-only for exactly those scopes, wait a full 30 s refresh, prove with ONE
-   request); **then Discord, set up through the browser bridge** (a DEDICATED application: interactions URL,
-   public key, the two commands — setting them replaces whatever the app had); **then ClickUp** (one webhook
-   per list, secret into the sources secret). Each new route's scope must be added to the credential.
-   forcing: user — operator gave this order
+1. Webhook receiver go-live, REMAINDER (the chat pipeline and ClickUp are done): the Discord DM source.
+   IN FLIGHT: two PRs on branch `feat/discord-dm-source` (deployment repo: `containers/memo-webhooks/`; tooling
+   repo: `scripts/browser-bridge/`). Audit them, merge on a 🔴-free round, build the receiver image, then ASK
+   the operator which ONE scope all DMs feed (unanswered), add the catch-all route + the shared secret, RE-ISSUE
+   the credential for all three scopes (it cannot be widened — replace, prove, confirm the deployed digest, then
+   revoke the old), enable the watcher on the host whose browser is signed in. Also confirm the first real memo
+   from each live source.
+   forcing: user — operator chose the browser-fed DM source and "one scope for all DMs"
 2. New receiver SOURCE: the personal agent's conversations, which are already shipped into the private cluster. Find
    where they land, add a read-only source to the receiver the same way the chat pipeline was added
    (count unrouted, never forward attachments, summary + link), tests with negative controls, deploy inert
@@ -130,6 +143,23 @@ its arc and is updated by the lane that owns it.
 - **Receiver credentials are narrowed to their routes' scopes**, so every added route means re-issuing or
   widening the credential — batch the routes per source before issuing. via: code
 
+- **Operator decisions at receiver go-live (paraphrased):** both active chat conversations feed ONE scope, a
+  third low-traffic one stays unrouted, no excerpts; ClickUp = one list on the shared workspace, to a second
+  scope; Discord = every received DM into one scope via a browser-fed source (build approved); one
+  secret-scan baseline entry for the ClickUp webhook id (it is a route key, not a credential). via: command
+- **A narrowed credential cannot be widened** — `cairn-server` has `-issue-credential` and
+  `-revoke-credential` and nothing between, so each new routed scope is a replace-prove-swap-revoke cycle.
+  via: code
+- **The receiver pod could not read its own token**: a Secret volume mounts root-owned and at mode 0400 a
+  non-root pod without `fsGroup` gets "Permission denied", which the receiver reports exactly like "no token".
+  Two throwaway pods on the same Secret (sizes only) separated the cases; `fsGroup` fixed it. via: measurement
+- **Time the 30 s credential wait from the issue line's own timestamp.** A probe sent 14 s after issuance
+  answered 401 (one lockout strike); the same token answered 201 from a fresh pod at 73 s. via: measurement
+- **`memo-retract --id` takes the bare number**, not the `m-<n>` that `memo-read` prints. via: command
+- **Check what a "configure it" step can actually see before configuring it**: the Discord step was written as
+  application setup, and one question to the operator showed the wanted input (all DMs) is outside anything an
+  application receives. via: command
+
 ## How to verify
 ```bash
 bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input           # SUMMARY … exit=0
@@ -162,3 +192,6 @@ systemctl --user is-active cairn-capture.timer                                 #
   investigated.
 - 🟡 A deployment-repo image-node test is red on its trunk from another session's workload.
 - 🟡 Nothing in CI notices a self-test sabotage that stops applying.
+- 🟡 Webhook receiver: an UNREADABLE token file is reported exactly like an absent one (the read error is
+  swallowed); a ClickUp webhook id in a route trips the deployment repo's secret scan, so every new ClickUp
+  route needs its own baseline entry.
