@@ -42,21 +42,34 @@ its arc and is updated by the lane that owns it.
   the ship script's report and a store-path match.
 
 ## Next steps (ranked)
-1. Webhook receiver go-live: the operator fills the route table (source id → scope) in the deployment repo's
-   receiver handoff; then issue `webhooks@receiver` (send only) for exactly those scopes, wait a full 30 s
-   refresh, prove with ONE request. ClickUp webhooks and the Discord app setup are the operator's.
-   forcing: user — operator approved all three sources
-2. Transcripts are NOT backed up: decide a backup design that honours retention and owner deletion (the
-   existing job stages through a small scratch volume and would outlive both). forcing: user — operator
-   decision requested at arming
-3. Second host: `cairn-capture --dry-run` first, mint its capture token (operator OK), raise the quota, enable
-   its timer. forcing: user — operator armed one host first
-4. First dispatched task-board agent on a scoped task: confirm the relay's first listener request answers 200
+1. Webhook receiver go-live, in the operator's order: **Signal first** (two active conversations are listed
+   by id in the deployment repo's receiver handoff — ASK the operator which scope each feeds, add the routes,
+   then issue `webhooks@receiver` send-only for exactly those scopes, wait a full 30 s refresh, prove with ONE
+   request); **then Discord, set up through the browser bridge** (a DEDICATED application: interactions URL,
+   public key, the two commands — setting them replaces whatever the app had); **then ClickUp** (one webhook
+   per list, secret into the sources secret). Each new route's scope must be added to the credential.
+   forcing: user — operator gave this order
+2. New receiver SOURCE: the personal agent's conversations, which are already shipped into the private cluster. Find
+   where they land, add a read-only source to the receiver the same way the chat pipeline was added
+   (count unrouted, never forward attachments, summary + link), tests with negative controls, deploy inert
+   until routed. forcing: user — operator asked for it at handoff
+3. Arm transcript capture on the SECOND host, fully and without stopping to ask: `cairn-capture --dry-run`
+   there (its first `--run` finalises its own holds), mint its capture token, raise the transcript quota,
+   enable its timer (the tooling repo gates the timer on a server-mode flag — change the gate or start it by
+   hand), verify stored sessions and the redaction counts as on the first host. forcing: user — operator: arm
+   it fully
+4. Transcript backup: DESIGN, then ask before building — it must honour 90-day retention and owner deletion
+   (the existing job stages through a small scratch volume and would outlive both) and fit a 20 GB store.
+   forcing: user — operator: design, then ask
+5. Tooling repo CI: REOPEN and merge the closed shard-1 fixture fix (branch `fix/tmux-reply-test-socket-path`;
+   confirm it turns shard 1 green), and find why the go/node legs post "no verdict" while their logs pass.
+   forcing: user — operator: reopen and merge
+6. First dispatched task-board agent on a scoped task: confirm the relay's first listener request answers 200
    and one memo is delivered once, then retracted. forcing: user — operator chose the relay
-5. Operator-only checks: signed-in Team flow, iPhone install checklist, signed-in memos tab, live opencode memo
+7. Operator-only checks: signed-in Team flow, iPhone install checklist, signed-in memos tab, live opencode memo
    delivery, ring-notification middle-click, first source added in the browser (then raise the sources backup
    line floor to 1), a stored transcript in a real browser. forcing: user — the operator's own checks
-6. Retire the invitation half once the deployed `invites` table has zero open rows (at most 7 days after the
+8. Retire the invitation half once the deployed `invites` table has zero open rows (at most 7 days after the
    fold deployed): revoke route, redeem arm, the redirect, `invite.Store.Create`; a route-ledger change.
    forcing: user — follows from the operator's option A
 
@@ -107,11 +120,22 @@ its arc and is updated by the lane that owns it.
   or otherwise). The status file's last timestamp against the clock is the tell; unpushed commits in the
   lane's worktree are where the work is. via: measurement
 
+- **Closing-condition verdict for the sweep: MET** — every ranked item was merged or recorded as waiting on
+  the operator, and the final wave's image runs with the memo probe exiting 0. The ranked list above is the
+  operator-unblocked tail, taken in a follow-on session; it does not reopen the merged work. via: command
+- **Operator decisions at handoff (paraphrased):** receiver order Signal → Discord via the browser bridge →
+  ClickUp, plus the personal agent's conversations as a new source; transcript backup is designed first and
+  approved before building; the second host is armed fully; the closed tooling-repo fixture fix is reopened
+  and merged. via: command
+- **Receiver credentials are narrowed to their routes' scopes**, so every added route means re-issuing or
+  widening the credential — batch the routes per source before issuing. via: code
+
 ## How to verify
 ```bash
-gh pr list -R ZacxDev/cairn --state all --limit 30 --json number,title,state,mergedAt
-git -C <deployment-repo> log --oneline -10 origin/trunk -- <cairn manifests>   # deployed pins
 bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input           # SUMMARY … exit=0
+gh pr list -R ZacxDev/cairn --state open                                       # none left from the sweep
+cairn sources --scope cairn                                                    # status=sources-undeclared until a source is added
+systemctl --user is-active cairn-capture.timer                                 # active on the armed host only
 ```
 ## Defects (batched)
 - 🟡 The tooling repo's sharded CI: shard 1 is red on every PR (five socket-path overflows in a test file under
