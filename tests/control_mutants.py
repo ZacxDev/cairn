@@ -6832,6 +6832,168 @@ MUTANTS: tuple[Mutant, ...] = (
         "and every call on a host with a read-only state directory then changes its stderr, which the "
         "parity gate diffs byte for byte and an agent's tool output carries.",
     ),
+    # `cairn-server -create-scope` / `control.CreateScope`: the second writer of
+    # `scope-created`. One row per refusal, each on the narrowest expression that decides it.
+    Mutant(
+        name="create-scope-accepts-a-project-the-journal-does-not-hold",
+        path="internal/control/scope_create.go",
+        old="\tif _, known := current.Projects[req.ProjectID]; !known {",
+        new="\tif _, known := current.Projects[req.ProjectID]; !known && false {",
+        killer="TestCreateScopeRefusesAProjectTheJournalDoesNotHold",
+        extra_killers=("TestEveryCreateScopeRefusalWritesNOTHING",),
+        why="`apply` refuses the same event under the lock, so the early check reads as "
+        "redundant. It is what carries `ErrNoSuchProject`: without it the command cannot tell "
+        "a missing project from any other refused batch, and the operator who typed a project "
+        "NAME — what `-create-user`'s `-project` takes — is not shown the ids.",
+    ),
+    Mutant(
+        name="create-scope-accepts-a-name-outside-the-path-component-class",
+        path="internal/control/scope_create.go",
+        old="\tif !scopeDirectoryName.MatchString(name) {",
+        new="\tif false {",
+        killer="TestCreateScopeRefusesANameOutsideThePathComponentClass",
+        extra_killers=("TestEveryCreateScopeRefusalWritesNOTHING",),
+        why="`-create-user -scopes` applies no class at all, so matching it reads as "
+        "consistency. `quarry.inbox` and `..` then land in an append-only journal as scopes the "
+        "pod's URL router refuses by name, with nothing that renames one.",
+    ),
+    Mutant(
+        name="create-scope-class-widened-to-admit-a-dot",
+        path="internal/control/scope_create.go",
+        old="var scopeDirectoryName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)",
+        new="var scopeDirectoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)",
+        killer="TestTheScopeNameClassIsThePathComponentClass",
+        extra_killers=(
+            "TestCreateScopeRefusesANameOutsideThePathComponentClass",
+            "TestEveryCreateScopeRefusalWritesNOTHING",
+        ),
+        why="the class is a RESTATEMENT of `authz.SafePathComponent` — this package does not "
+        "import `internal/authz` — and a dot is what the fold keeps, so `quarry.notes` looks "
+        "harmless. The no-dot rule is what makes `..` impossible by construction.",
+    ),
+    Mutant(
+        name="create-scope-accepts-a-name-that-folds-to-nothing",
+        path="internal/control/scope_create.go",
+        old="\tif store.NormalizeRef(name) == \"\" {",
+        new="\tif store.NormalizeRef(name) == \"\" && false {",
+        killer="TestCreateScopeRefusesANameThatFoldsToNothing",
+        extra_killers=("TestEveryCreateScopeRefusalWritesNOTHING",),
+        why="the class clause above looks like it covers this. It does not: `-` and `___` are "
+        "inside the class and fold to the empty string, a scope every reader narrows to no "
+        "directory — and `validate` accepts them, because the name is not empty.",
+    ),
+    Mutant(
+        name="create-scope-checks-no-name-against-the-journal",
+        path="internal/control/scope_create.go",
+        # The wrong OPERAND rather than a deleted call, as on `ProvisionUser`'s row: the
+        # ledger row below is the deleted call.
+        old="\tif err := checkScopeNamesAreFree(current, []string{req.Name}); err != nil {",
+        new="\tif err := checkScopeNamesAreFree(current, nil); err != nil {",
+        killer="TestCreateScopeRefusesANameTheJournalAlreadyFoldsTo",
+        extra_killers=("TestEveryCreateScopeRefusalWritesNOTHING",),
+        why="the tenancy boundary `checkScopeNamesAreFree` exists for, at the SECOND writer. "
+        "`apply` accepts a name that folds onto a scope in another project, so a second "
+        "project's members would read and write the first's directory.",
+    ),
+    Mutant(
+        name="create-scope-never-calls-the-name-check",
+        path="internal/control/scope_create.go",
+        old="\tif err := checkScopeNamesAreFree(current, []string{req.Name}); err != nil {\n"
+        "\t\treturn ScopeCreated{}, err\n\t}\n",
+        new="",
+        killer="TestEveryWriterOfScopeCreatedChecksTheNameIsFree",
+        extra_killers=("TestCreateScopeRefusesANameTheJournalAlreadyFoldsTo",),
+        why="the ledger's SHRINK-of-coverage direction: a writer of `scope-created` that does "
+        "not call the one function holding the fold. `apply`'s own name rule is raw and per "
+        "project, so nothing below this line notices.",
+    ),
+    Mutant(
+        name="a-third-writer-of-scope-created-appears-unledgered",
+        path="cmd/cairn-server/createscope.go",
+        old="func renderProjects(m control.Model) string {",
+        new="func aThirdWriter(project control.ID) control.Event {\n"
+        "\treturn control.Event{Kind: control.EventScopeCreated, ProjectID: project}\n}\n\n"
+        "func renderProjects(m control.Model) string {",
+        killer="TestEveryWriterOfScopeCreatedChecksTheNameIsFree",
+        why="the ledger's GROW direction, from a package OUTSIDE `internal/control`: the next "
+        "surface that creates a scope builds the event where it stands and appends it, and "
+        "the fold — which is not in `apply` — is skipped with every test green.",
+    ),
+    Mutant(
+        name="create-scope-with-no-journal-falls-through",
+        path="cmd/cairn-server/createscope.go",
+        old="\tif journal == \"\" {\n\t\t// REFUSED rather than defaulted",
+        new="\tif false {\n\t\t// REFUSED rather than defaulted",
+        killer="TestCreateScopeWithNoJournalConfiguredRefusesRatherThanDefaulting",
+        why="the refusal that names the variable to set. Without it the operator is handed "
+        "whatever opening an empty path says, which names no remedy.",
+    ),
+    Mutant(
+        name="create-scope-does-not-require-a-name",
+        path="cmd/cairn-server/createscope.go",
+        old="\tif project == \"\" || name == \"\" {",
+        new="\tif project == \"\" {",
+        killer="TestEveryCreateScopeRefusalWritesNOTHING",
+        why="`control.CreateScope` refuses an empty name anyway, so the flag check reads as "
+        "duplication — and the operator who forgot a flag is then told about a character class.",
+    ),
+    Mutant(
+        name="create-scope-does-not-require-a-project",
+        path="cmd/cairn-server/createscope.go",
+        old="\tif project == \"\" || name == \"\" {",
+        new="\tif name == \"\" {",
+        killer="TestEveryCreateScopeRefusalWritesNOTHING",
+        why="the other half: an absent `-scope-project` reported as a project with the id "
+        "`\"\"` that the journal does not hold.",
+    ),
+    Mutant(
+        name="create-scope-relays-a-missing-project-without-the-ids",
+        path="cmd/cairn-server/createscope.go",
+        old="\t\tcase errors.Is(err, control.ErrNoSuchProject):",
+        # `&& false` rather than a bare `false`: this is the file's only use of `errors`, so
+        # dropping the call dies at the build instead of at the guard.
+        new="\t\tcase errors.Is(err, control.ErrNoSuchProject) && false:",
+        killer="TestEveryCreateScopeRefusalWritesNOTHING",
+        why="a sentinel is a guard only where something branches on it. The branch is what "
+        "prints the journal's project ids beside their names — the remedy for the mistake the "
+        "flag invites.",
+    ),
+    Mutant(
+        name="create-scope-skips-the-store-root-warning",
+        path="cmd/cairn-server/createscope.go",
+        old="\twarnScopesThatAlreadyExistOnDisk(storeRoot, []string{name}, errOut)",
+        new="\twarnScopesThatAlreadyExistOnDisk(storeRoot, nil, errOut)",
+        killer="TestCreateScopeCallsOutADirectoryThatAlreadyAnswersToTheName",
+        why="the half of the name check only this program can make: a directory already under "
+        "the store root that the new record would hand to every member of the project.",
+    ),
+    Mutant(
+        name="create-scope-missing-from-the-mode-ledger",
+        path="cmd/cairn-server/main.go",
+        old="\t\t{\"-create-scope\", *createScope.enabled},\n",
+        new="",
+        killer="TestTheBinaryActuallyDispatchesCreateScope",
+        why="the copy that gets forgotten is the new one: `-routes -create-scope` then prints "
+        "the route ledger, exits 0 and creates nothing.",
+    ),
+    Mutant(
+        name="create-scope-never-dispatched",
+        path="cmd/cairn-server/main.go",
+        old="\tif *createScope.enabled {",
+        new="\tif false {",
+        killer="TestTheBinaryActuallyDispatchesCreateScope",
+        why="flags registered, ledger entry present, and the mode falls through to SERVING — "
+        "which every in-process test of `runCreateScope` is blind to.",
+    ),
+    Mutant(
+        name="create-scope-flag-count-in-prose-goes-stale",
+        path="cmd/cairn-server/main.go",
+        old="`-create-scope`'s three (counts",
+        new="`-create-scope`'s two (counts",
+        killer="TestTheRegisteredFlagCountInProseMatchesTheCode",
+        why="proves the new mode is IN the flag-count gate: a mode absent from that test's "
+        "table is one whose prose count nothing checks.",
+    ),
 )
 
 

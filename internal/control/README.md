@@ -264,6 +264,14 @@ python3 tests/control_mutants.py --show    # print each edit without running it
 
 🔴 **THE CURRENT COUNT IS NOT WRITTEN IN THIS FILE.** It is `len(MUTANTS)`, which every run prints on its `SUMMARY mutants=<N> …` line (and `--show` enumerates); a present-tense copy here made every change that adds a row edit this paragraph, so any two such changes conflicted, and `tests/test_control_mutant_count_is_pinned.py` now refuses one coming back. What follows is the RECORD of runs, each at the size it was measured at.
 
+**At 562 mutants DECLARED** (`cairn-server -create-scope`, on its own branch; COUNTED by loading
+`MUTANTS`) — it added fifteen rows, the `create-scope-*` ones and
+`a-third-writer-of-scope-created-appears-unledgered`, every killer already inside `PKGS`. A PARTIAL
+measurement: those fifteen run alone through this harness's own `main` (positive control GREEN,
+`mutants=15 killed=15 survived=0 misattributed=0 harness-errors=0 stale-extras=0`), after the first
+run scored one HARNESS ERROR — a `case false:` edit that left `errors` unused and died at the build.
+⚠ No whole-battery run on this tree is recorded here; the `mutants` CI job is that measurement.
+
 **At 383 mutants DECLARED** (the team-link fragment change, #232, after `main`'s 378 was merged into it; COUNTED by loading the merged `MUTANTS` tuple, not added up) — it added five rows, `ui-join-reusable-team-link-accepted-via-query`, `ui-start-row-drops-the-query-borne-mark`, `ui-query-borne-classification-fails-open`, `ui-minted-link-travels-in-the-query` and `ui-join-script-not-allowlisted`, and re-aimed four whose anchors moved (`ui-start-row-reads-the-invite-from-the-url-query`, `ui-join-page-offers-a-form-with-no-token`, `ui-join-page-gains-authenticated-navigation`, `ui-pwa-script-not-allowlisted`); on its own branch it was at 344, over a base of 339. ⚠ NO whole-battery run of that change is recorded here — the operator skipped local gates, so the `go` CI job is that measurement.
 
 **At 353 mutants DECLARED** (S3 of the transcripts/plugins plan, on its own branch) — the S3 marker-shield fix added one row (`redact-marker-drops-the-whole-span`, adding `internal/redact` to its own `pkgs`), killed by `TestAMarkerDoesNotShieldASecretBesideIt` alone in a hand mutation of that one package, with no battery run (the same operator instruction as below). Before it, at 352: S3 of the transcripts plan added 13 rows (`transcript-*`/`worker-*`, each adding `internal/worker` and `internal/transcript/archive` to its own `pkgs`; `PKGS` unmoved), each killed by its named test in a hand mutation of one focused package — ⚠ NO battery run was made for them on this tree (operator instruction: local gates skipped, CI is the gate), so the `go` job on that PR is their first whole-battery measurement.
@@ -785,8 +793,9 @@ Both session backends were inert in every deployment that could exist.
    silent name-resolution mechanism inside the model), it would put the reader's fold into
    a model that must know nothing about the reader, and it would silently widen
    `scope-renamed` and `scope-moved`, which nothing emits and no test pins. So a
-   `scope-created` appended by a writer that does not come through `ProvisionUser` is
-   still checked raw. `TestApplyRefusesTwoScopesWithONENameInONEProject` asserts both
+   `scope-created` appended by a writer that does not call `checkScopeNamesAreFree` is
+   still checked raw — `ProvisionUser` and `CreateScope` are the two that do, and
+   `TestEveryWriterOfScopeCreatedChecksTheNameIsFree` fails when that set moves. `TestApplyRefusesTwoScopesWithONENameInONEProject` asserts both
    halves of that — the raw refusal and the folded acceptance — so the residual cannot
    drift silently.
 
@@ -817,6 +826,42 @@ it.
 
 ⚠ **AND THE POD'S CACHE HAS ONE TRIGGER: THE TIMER.** A SIGHUP channel was registered for
 it and removed — see the trigger note above.
+
+## Adding a scope to an existing project — `CreateScope`
+
+`CreateScope` (`scope_create.go`) appends ONE `scope-created` record naming a project the
+journal already holds. `cairn-server -create-scope -scope-project prj_… -scope-name <name>` is
+its only caller. It exists because `ProvisionUser` was the only writer of that event and
+writes it only beside a new user and a new project, so a project's scope set was frozen at
+provisioning and the remedy was a hand-appended line.
+
+| refusal | where the rule lives | sentinel |
+|---|---|---|
+| the project id is not in the journal | an EARLY refusal here; `apply` refuses the same event under the lock | `ErrNoSuchProject` |
+| the name is empty or outside `[A-Za-z0-9_-]` | **only here** — `checkScopeNameIsADirectoryName` | `ErrScopeNameUnusable` |
+| the name folds to nothing (`-`, `___`) | **only here**, second clause of the same function | `ErrScopeNameUnusable` |
+| the name folds onto any scope in the journal | `checkScopeNamesAreFree`, `ProvisionUser`'s own function | `ErrScopeNameTaken` |
+
+🔴 **THE CLASS RULE IS A GUARD AT THIS PATH, NOT AN INVARIANT, AND `-create-user` DOES NOT
+APPLY IT.** `Event.validate` asks only for a non-empty `display_name`; a class rule there would
+govern REPLAY and refuse whole any journal already holding a name `-create-user -scopes`
+accepted. The class is `authz.SafePathComponent` restated — this package does not import
+`internal/authz` — and `TestTheScopeNameClassIsThePathComponentClass` pins the two together.
+⚠ It says nothing about LENGTH.
+
+🔴 **IT WIDENS EVERY MEMBER'S AUTHORITY AND NO NARROWED CREDENTIAL'S.** A member's role verbs
+cover every scope their project owns, so each member reaches the new scope through any
+credential that is not scope-narrowed; a narrowing is a list of scope ids fixed at issue.
+`TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential` pins both, plus a user in
+another project who must not reach it.
+
+⚠ **What it cannot see** is `checkScopeNamesAreFree`'s own list, unchanged: a directory
+already under the store root (the command warns; this package holds no path), a concurrent
+writer — the model is read outside `Append`'s `flock` — and a hand-edited journal.
+
+The battery's rows for it are the `create-scope-*` ones and
+`a-third-writer-of-scope-created-appears-unledgered`: one per refusal above, the mode's
+dispatch and ledger entries, and both directions of the writer ledger.
 
 ## The credential-issuing path — and the sentence it made false
 
