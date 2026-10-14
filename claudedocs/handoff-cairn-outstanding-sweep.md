@@ -36,34 +36,38 @@ its arc and is updated by the lane that owns it.
 - **External memo senders:** the personal agent's bridge reads and sends memos (credential live, one read
   proven 200); the task board RELAYS memos to its agents with one read-only credential for 13 scopes — relay
   ON, but its token has made NO request yet (no agent with a task was running); the webhook receiver is
-  LIVE for ALL THREE of its sources — see the next bullet.
-- **Webhook receiver: all three sources LIVE.** Chat pipeline (two conversations) to one scope, one ClickUp
-  list to a second, and every received 1:1 Discord DM to a NEW scope via a browser-fed watcher on the
-  laptop (timer every 5 min, mesh-only path, no message text; receiver image 0.2.0). One `webhooks@receiver`
-  credential (verbs `write`, exactly those three scopes; each predecessor revoked). Proven end to end: a
-  REAL chat message became a memo; a signed DM probe became a memo (retracted); the first timed DM pass
-  posted a real batch. ClickUp had SUSPENDED itself after 100 failed deliveries — none ever reached the
-  private cluster gateway; a Cloudflare skip rule for the two signed hook paths was added and the webhook
-  reactivated, but no real ClickUp delivery has been observed since. Ids, commits and rollbacks: the
-  deployment repo's receiver handoff.
+  LIVE for two of its three sources — see the next bullet.
+- **Webhook receiver: chat pipeline and Discord DMs LIVE; ClickUp BLOCKED, root cause MEASURED.** Chat
+  pipeline (two conversations) to one scope, every received 1:1 Discord DM to a third scope via a browser-fed
+  watcher (unchanged). ClickUp: the webhook was reactivated after the CDN skip rule went in, then
+  SUSPENDED ITSELF AGAIN (`fail_count` 100) about an hour later. The CDN's own firewall events (read
+  with the account token, which now has zone analytics read) show ~97 ClickUp deliveries in the
+  last ~10 minutes before suspension, every one `source: botFight` → `managed_challenge` → 403. In the same
+  window the CDN logged our own probes as MATCHED by the skip rule (`action: skip`), so the rule works and
+  simply cannot reach the zone's free-plan bot-fight mode. Nothing was changed; the fix is an operator choice
+  (rank 1). Values, ids and rollbacks: the deployment repo's receiver handoff.
 - **New cairn-server operator commands, merged and used live:** `-create-scope` (#279, created the DM scope)
-  and `-remove-member` (#280, removed a synthetic test member from the operator's project before DM names
-  could land there). Both host agent credentials were re-issued to include the new scope (a narrowed
-  credential cannot see a scope created after it) and their predecessors revoked.
-- **Since then:** the first REAL DM digest landed in the DM scope; this workbench host is switched (reads that
-  scope with no override); the docs pass merged (#282: README restructure + gaps, operator one-off-pod runbook,
-  17 CHANGELOG rows, stale comments) and the repo description/topics were updated.
-- Not verified: a REAL ClickUp delivery accepted after the Cloudflare rule — 0 non-curl `/hooks/clickup` lines
-  in the 3 h to 2026-10-14T17:56Z (the same query matched 1 curl line over 12 h, so it can see the path); the relay's first real request and an end-to-end relayed memo; a real-browser read of a stored
-  transcript; a second signed-in principal being refused a transcript; the second host's hook/client beyond
-  the ship script's report and a store-path match.
+  and `-remove-member` (#280). Both host agent credentials were re-issued to include the new scope and their
+  predecessors revoked.
+- **Since then:** the first REAL DM digest landed in the DM scope; this workbench host is switched; the docs
+  pass merged (#282) and the repo description/topics were updated.
+- Not verified: a REAL ClickUp delivery accepted (blocked, above); the relay's first real request and an
+  end-to-end relayed memo; a real-browser read of a stored transcript; a second signed-in principal being
+  refused a transcript; the second host's hook/client beyond the ship script's report and a store-path match.
+- Claim `cairn-outstanding-sweep-1` (rank 1) is HELD by this host's base clone; release it when rank 1 closes
+  or is abandoned (`claim-work --release cairn-outstanding-sweep-1`).
 
 ## Next steps (ranked)
-1. Webhook receiver go-live, REMAINDER — only ClickUp's first real delivery is unproven. Check:
-   Loki `{namespace="nebula"} |= "/hooks/clickup" != "curl/"` shows a non-curl line, the webhook's
-   `health.fail_count` stays 0, and a memo appears in the ClickUp route's scope. If deliveries still never
-   arrive, the next probe is Cloudflare Security Events for the host (needs a token with zone analytics
-   read).
+1. Webhook receiver go-live, REMAINDER — ClickUp is blocked by the CDN zone's bot-fight mode, which no skip
+   rule can bypass on the free plan. OPERATOR CHOICE (asked, unanswered): (a) RECOMMENDED — turn bot-fight
+   mode OFF for the zone in the dashboard (zone-wide: every proxied host loses it; each receiver still
+   authenticates; the account token gets "Authentication error" on `bot_management`, so it cannot do this);
+   (b) make the hook host DNS-only — first find the real origin and prove it serves a publicly valid cert for
+   the host (the prod node refused :443 from the workbench); (c) a paid plan, whose super-bot-fight phase
+   the existing rule already skips. THEN: `PUT status=active` on the webhook, and check Loki
+   `{namespace="nebula"} |= "/hooks/clickup" != "curl/"` shows an `axios/` line, `health.fail_count` stays
+   0, and a memo appears in the ClickUp route's scope. The same bot-fight mode probably also challenges the
+   other skip-ruled service's server-to-server callers — unmeasured.
    forcing: user — operator gave the receiver order and asked to go all the way to live
 2. New receiver SOURCE: the personal agent's conversations, which are already shipped into the private cluster. Find
    where they land, add a read-only source to the receiver the same way the chat pipeline was added
@@ -77,8 +81,9 @@ its arc and is updated by the lane that owns it.
 4. Transcript backup: DESIGN, then ask before building — it must honour 90-day retention and owner deletion
    (the existing job stages through a small scratch volume and would outlive both) and fit a 20 GB store.
    forcing: user — operator: design, then ask
-5. Tooling repo CI: REOPEN and merge the closed shard-1 fixture fix (branch `fix/tmux-reply-test-socket-path`;
-   confirm it turns shard 1 green), and find why the go/node legs post "no verdict" while their logs pass.
+5. Tooling repo CI: REOPEN and merge the closed shard-1 fixture fix (branch `fix/tmux-reply-test-socket-path`
+   — `/resume` reports it GONE locally; check the remote before assuming it was deleted; confirm it turns
+   shard 1 green), and find why the go/node legs post "no verdict" while their logs pass.
    forcing: user — operator: reopen and merge
 6. First dispatched task-board agent on a scoped task: confirm the relay's first listener request answers 200
    and one memo is delivered once, then retracted. forcing: user — operator chose the relay
@@ -183,6 +188,25 @@ its arc and is updated by the lane that owns it.
 - **A timing test can redden a docs-only PR's `nix` job**: `TestMemoScopesIsLinearOnUnterminatedBlocks`
   measured 25.6× growth for 8× input on a loaded runner (bound between 8× and 64×); re-running the same
   commit passed. Re-run before debugging the diff. via: measurement
+
+- **A CDN skip rule does NOT bypass free-plan bot-fight mode — RETRACTS the earlier "fixed by a skip rule".**
+  The rule skips the super-bot-fight phase, which only exists on paid plans; the firewall events name
+  `botFight` as the source of every ClickUp 403, while the same rule demonstrably matched our probes.
+  via: measurement
+- **"A cloud sender is blocked" was too broad**: unsigned POSTs from a datacenter (Hetzner) IP with three
+  user agents all reached the receiver (401, no `cf-mitigated`); bot-fight mode flags ClickUp's AWS
+  `axios/0.24.0` traffic specifically. A datacenter curl passing proves nothing about a particular sender.
+  via: measurement
+- **Prove the non-curl Loki filter can see a line before trusting its zero** — a POST with UA `ClickUp` from
+  the workbench appeared as 1 line in 15 min; real deliveries 0 in 48 h. The PROD gateway's nginx (the hop
+  before the private cluster) showed the same 0, which is what placed the drop at the CDN edge. via: measurement
+- **The three sops-held CDN tokens in the deployment repo are ONE DNS-only token** (zones read only; no
+  rulesets, settings, analytics). The account token in the workbench's home is the one that reads rulesets
+  and now zone analytics too; it still cannot read `bot_management`. The analytics GraphQL
+  endpoint is `/client/v4/graphql`, and the free plan refuses the `clientASNDescription` field. via: command
+- **The ClickUp webhook can be read without printing the token**: the `clickup` skill's `accounts.json`
+  (`bot` account) → `GET /team/<id>/webhook`, filter by endpoint. `date_suspended` is epoch MILLISECONDS.
+  via: command
 
 ## How to verify
 ```bash
