@@ -6961,11 +6961,66 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="create-scope-skips-the-store-root-warning",
         path="cmd/cairn-server/createscope.go",
-        old="\twarnScopesThatAlreadyExistOnDisk(storeRoot, []string{name}, errOut)",
+        old="\twarnScopesThatAlreadyExistOnDisk(storeRoot, []string{made.Scope.Name}, errOut)",
         new="\twarnScopesThatAlreadyExistOnDisk(storeRoot, nil, errOut)",
         killer="TestCreateScopeCallsOutADirectoryThatAlreadyAnswersToTheName",
         why="the half of the name check only this program can make: a directory already under "
-        "the store root that the new record would hand to every member of the project.",
+        "the store root that the new record hands to every member and every project grantee.",
+    ),
+    Mutant(
+        name="create-scope-warns-about-the-directory-before-the-refusals",
+        path="cmd/cairn-server/createscope.go",
+        # The shape this mode SHIPPED with: the warning ahead of `CreateScope`, as in
+        # `runCreateUser`. Added, not moved, so the edit is one insertion.
+        old="\tmade, err := control.CreateScope(",
+        new="\twarnScopesThatAlreadyExistOnDisk(storeRoot, []string{name}, errOut)\n"
+        "\tmade, err := control.CreateScope(",
+        killer="TestCreateScopeCallsOutADirectoryThatAlreadyAnswersToTheName",
+        why="`-create-user` warns before its write, so matching it reads as consistency — and "
+        "every refused re-run (a taken name, an unknown project) then tells the operator a "
+        "directory is being handed over by a command that wrote nothing.",
+    ),
+    Mutant(
+        name="create-scope-help-text-gets-a-backquoted-placeholder",
+        path="cmd/cairn-server/createscope.go",
+        old="append ONE scope-created record",
+        new="append ONE `scope-created` record",
+        killer="TestTheBinaryActuallyDispatchesCreateScope",
+        why="backquotes read as code formatting, and `flag.PrintDefaults` takes the first "
+        "backquoted word as the flag's placeholder: `-h` then reads `-create-scope scope-created`.",
+    ),
+    Mutant(
+        name="a-new-scope-does-not-reach-a-PROJECT-grantee",
+        path="internal/control/resolve.go",
+        old="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {",
+        new="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n"
+        "\t\t\t\tif m.Scopes[scopeID].CreatedAt.After(g.GrantedAt) {\n"
+        "\t\t\t\t\tcontinue\n\t\t\t\t}",
+        killer="TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential",
+        why="the audience `-create-scope` names. Freezing a project grant to the scopes that "
+        "existed when it was granted is a plausible policy, and it would make this command's "
+        "stderr line — every project grantee reaches the new scope — false. The fixture creates "
+        "the scope an hour AFTER the grant so this clause is reached.",
+    ),
+    Mutant(
+        name="a-project-grantee-reaches-a-new-scope-with-more-than-its-verbs",
+        path="internal/control/resolve.go",
+        old="\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs)",
+        new="\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs.Union(NewVerbSet(VerbWrite)))",
+        killer="TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential",
+        why="the grantee arm's SECOND half: a read grant must stay read on the new scope. An "
+        "arm asserting only `read=true` passes a resolver that hands every project grantee write.",
+    ),
+    Mutant(
+        name="an-ASSIGNMENT-shaped-writer-of-scope-created-appears-unledgered",
+        path="cmd/cairn-server/createscope.go",
+        old="func renderProjects(m control.Model) string {",
+        new="func anAssignedWriter(project control.ID) control.Event {\n"
+        "\tvar e control.Event\n\te.Kind = control.EventScopeCreated\n\te.ProjectID = project\n"
+        "\treturn e\n}\n\nfunc renderProjects(m control.Model) string {",
+        killer="TestEveryWriterOfScopeCreatedChecksTheNameIsFree",
+        why="the shape the ledger's first draft could not see: it matched the composite literal "
+        "`Kind: EventScopeCreated` only, so a writer that assigns the field walked past it.",
     ),
     Mutant(
         name="create-scope-missing-from-the-mode-ledger",

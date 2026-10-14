@@ -1345,11 +1345,14 @@ kubectl exec -n <ns> deploy/<name> -- cairn-server -create-scope \
 - Exit **78** = nothing was written, the reason is on stderr.
 
 🔴 **WHAT IT DOES NOT DO.** It creates **no directory** under `-store` — the record is
-authority, not storage; an existing directory of that name is warned about exactly as above.
-It issues **no credential**: every member of the project reaches the new scope at their role
-through any credential that is not scope-narrowed, and a credential narrowed to other scopes
-does not, so narrowing one to it is a new `-issue-credential -narrow-scopes scp_…
--narrow-verbs …`. And it does not rename or remove a scope — nothing does.
+authority, not storage; an existing directory of that name is warned about as above, but
+AFTER the record is written, so a refused re-run prints no such warning.
+It issues **no credential**: every member of the project reaches the new scope at their role,
+AND every holder of a live grant on the PROJECT — a share, a team link — reaches it at that
+grant's verbs, through any credential that is not scope-narrowed. A project grant covers the
+project's scopes as they are when it is read, so creating a scope widens every such grant. A
+credential narrowed to other scopes does not, so narrowing one to it is a new
+`-issue-credential -narrow-scopes scp_… -narrow-verbs …`. And it does not rename or remove a scope — nothing does.
 
 `scope-created` is an event kind every build already replays, so only the binary that RUNS the
 command has to carry `-create-scope`; an older `cairn-server` or `cairn-ui` reading the same

@@ -64,6 +64,9 @@ func TestCreateScopeWritesOneRecordAndSaysWhatItDidNOTDo(t *testing.T) {
 	said := errOut.String()
 	for _, want := range []string{
 		"created NO directory",
+		// The WHOLE audience, not only members: project grants expand over new scopes.
+		"is now reached by every member of project " + string(a.Project) + " at their role AND by " +
+			"every holder of a live grant on that PROJECT",
 		"-issue-credential -narrow-scopes " + found[1],
 		"picks this up within " + refreshInterval.String(),
 	} {
@@ -170,6 +173,22 @@ func TestCreateScopeCallsOutADirectoryThatAlreadyAnswersToTheName(t *testing.T) 
 	if _, held := scopeNamed(modelOf(t, journal), "quarry-inbox"); !held {
 		t.Fatal("the warning replaced the write")
 	}
+
+	// 🔴 A REFUSED RE-RUN SAYS NOTHING ABOUT HANDING THE DIRECTORY OVER — the warning used to
+	// run before `CreateScope` and printed for every refusal. Both refusals are reached with
+	// the directory still on disk, so only the ORDER can keep them quiet.
+	for _, flags := range []*createScopeFlags{
+		createScopeFlagsFor(string(a.Project), "Quarry_Inbox"), // now taken, by fold
+		createScopeFlagsFor("prj_notinthisjournal", "quarry-inbox"),
+	} {
+		var rout, rerr bytes.Buffer
+		if rc := runCreateScope(env, root, flags, &rout, &rerr); rc != exitConfig {
+			t.Fatalf("the re-run was not refused: rc=%d\n%s", rc, rerr.String())
+		}
+		if strings.Contains(rerr.String(), "already exists as") {
+			t.Errorf("a REFUSED run still warned that it hands the directory over:\n%s", rerr.String())
+		}
+	}
 }
 
 // TestTheBinaryActuallyDispatchesCreateScope runs the real `main`: everything above calls
@@ -203,6 +222,14 @@ func TestTheBinaryActuallyDispatchesCreateScope(t *testing.T) {
 	}
 	if _, held := scopeNamed(modelOf(t, journal), "quarry-inbox"); !held {
 		t.Error("the child reported success and the journal holds no such scope")
+	}
+	// `-h` renders the FIRST backquoted word of a flag's help as its placeholder; an earlier
+	// draft printed `-scope-name _` and `-create-scope scope-created`.
+	_, help := run("-h")
+	for _, want := range []string{"  -scope-name name\n", "  -scope-project prj_…\n", "  -create-scope\n"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("`-h` does not render %q:\n%s", want, help)
+		}
 	}
 	// Two modes at once is a refusal, and the scope was NOT created.
 	code, body = run("-routes", "-create-scope", "-scope-project", string(a.Project), "-scope-name", "quarry-outbox")

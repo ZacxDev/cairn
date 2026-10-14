@@ -40,20 +40,23 @@ type createScopeFlags struct {
 func registerCreateScopeFlags() *createScopeFlags {
 	return &createScopeFlags{
 		enabled: flag.Bool("create-scope", false,
-			"CREATE ONE SCOPE in an EXISTING project: append ONE `scope-created` record to the "+
+			// ⚠ NO BACKQUOTES IN THIS TEXT OR AT THE HEAD OF `-scope-name`'s: `flag.PrintDefaults`
+			// prints the FIRST backquoted word as the flag's placeholder, so a quoted
+			// `scope-created` here rendered `-create-scope scope-created` under `-h`.
+			"CREATE ONE SCOPE in an EXISTING project: append ONE scope-created record to the "+
 				"control journal named by $"+EnvControlJournal+", print its id, and exit. Every member "+
-				"of that project reaches the new scope at their role; a credential narrowed to other "+
-				"scopes does not. It creates NO directory under -store. Requires -scope-project and "+
-				"-scope-name"),
+				"of that project reaches the new scope at their role, and every holder of a live grant "+
+				"on the PROJECT at that grant's verbs; a credential narrowed to other scopes does not. "+
+				"It creates NO directory under -store. Requires -scope-project and -scope-name"),
 		project: flag.String("scope-project", "",
 			"the owning project's id (`prj_…`), as -create-user printed it. NOT its name: "+
 				"-create-user's -project takes a name because it creates one; project names are not "+
 				"unique, so an existing project is addressed by id"),
 		name: flag.String("scope-name", "",
-			"the new scope's display name — ONE per run, stored exactly as typed. It is the "+
+			"the new scope's display `name` — ONE per run, stored exactly as typed. It is the "+
 				"DIRECTORY name under the store root and the name a client passes as --scope: "+
-				"[A-Za-z0-9_-] only, and unique across the WHOLE journal once folded (lowercase, `_` "+
-				"to `-`). The journal is append-only and nothing renames a scope"),
+				"[A-Za-z0-9_-] only, and unique across the WHOLE journal once folded (lowercase, _ "+
+				"to -). The journal is append-only and nothing renames a scope"),
 	}
 }
 
@@ -110,9 +113,6 @@ func runCreateScope(env map[string]string, storeRoot string, f *createScopeFlags
 		return exitConfig
 	}
 
-	// BEFORE the write, for `runCreateUser`'s reason: afterwards there is no undo.
-	warnScopesThatAlreadyExistOnDisk(storeRoot, []string{name}, errOut)
-
 	made, err := control.CreateScope(ctx, store, control.NewScope{ProjectID: project, Name: name})
 	if err != nil {
 		switch {
@@ -143,6 +143,14 @@ func runCreateScope(env map[string]string, storeRoot string, f *createScopeFlags
 		"cairn-control: scope-created scope=%s name=%s project=%s epoch=%d",
 		made.Scope.ID, made.Scope.Name, made.Project, made.Epoch)))
 
+	// ⚠ AFTER THE WRITE, UNLIKE `runCreateUser`, AND THE TRADE IS THE OPPOSITE ONE. Run before
+	// `CreateScope`, the warning printed for every refused re-run too — a taken name, an unknown
+	// project — so an operator was told a directory was being handed over by a command that then
+	// wrote nothing. Here it reports a write that HAS happened, which is the only case where it
+	// is true; the cost is that it cannot stop the write. (`-create-user` keeps its order: a
+	// batch of several names is where seeing the warning first can change the command line.)
+	warnScopesThatAlreadyExistOnDisk(storeRoot, []string{made.Scope.Name}, errOut)
+
 	// 🔴 WHAT IT DID NOT DO, SAID OUT LOUD, because each is a thing an operator would
 	// otherwise assume from "created".
 	warn(fmt.Sprintf(
@@ -150,10 +158,13 @@ func runCreateScope(env map[string]string, storeRoot string, f *createScopeFlags
 			"in a directory of that name under the store root (-store), and creating the record never "+
 			"creates it: until one exists, scope %q holds no entries", made.Scope.Name))
 	warn(fmt.Sprintf(
-		"subsystem-store-api: every member of project %s now reaches %q at their role. A credential "+
-			"NARROWED to other scopes does not, and no credential was issued: a narrowing lists scope "+
-			"ids fixed at issue. Issue one with -issue-credential -narrow-scopes %s -narrow-verbs …",
-		made.Project, made.Scope.Name, made.Scope.ID))
+		"subsystem-store-api: %q is now reached by every member of project %s at their role AND by "+
+			"every holder of a live grant on that PROJECT (a share, a team link) at that grant's verbs — "+
+			"a project grant covers the project's scopes as they are when it is read, including this "+
+			"one. A credential NARROWED to other scopes does not, and no credential was issued: a "+
+			"narrowing lists scope ids fixed at issue. Issue one with -issue-credential -narrow-scopes "+
+			"%s -narrow-verbs …",
+		made.Scope.Name, made.Project, made.Scope.ID))
 	warn(fmt.Sprintf(
 		"subsystem-store-api: the running server picks this up within %s; any other program reading "+
 			"this journal does so on its own refresh", refreshInterval))

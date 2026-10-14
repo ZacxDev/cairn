@@ -271,6 +271,13 @@ measurement: those fifteen run alone through this harness's own `main` (positive
 `mutants=15 killed=15 survived=0 misattributed=0 harness-errors=0 stale-extras=0`), after the first
 run scored one HARNESS ERROR — a `case false:` edit that left `errors` unused and died at the build.
 ⚠ No whole-battery run on this tree is recorded here; the `mutants` CI job is that measurement.
+Its audit round 1 took it to **567**: five rows — the grantee arm's two
+(`a-new-scope-does-not-reach-a-PROJECT-grantee`, `…-with-more-than-its-verbs`), the
+assignment-shaped writer the widened ledger now sees, the warning-order and help-placeholder rows —
+and the same fifteen-plus-five run alone read `mutants=20 killed=20 survived=0 misattributed=0
+harness-errors=0 stale-extras=0`, positive control GREEN. The three rows aimed at the WIDENED
+guards were also run against the round-0 test file and left it GREEN, which is what makes them
+regression coverage for the widening rather than for the guards it replaced.
 
 **At 383 mutants DECLARED** (the team-link fragment change, #232, after `main`'s 378 was merged into it; COUNTED by loading the merged `MUTANTS` tuple, not added up) — it added five rows, `ui-join-reusable-team-link-accepted-via-query`, `ui-start-row-drops-the-query-borne-mark`, `ui-query-borne-classification-fails-open`, `ui-minted-link-travels-in-the-query` and `ui-join-script-not-allowlisted`, and re-aimed four whose anchors moved (`ui-start-row-reads-the-invite-from-the-url-query`, `ui-join-page-offers-a-form-with-no-token`, `ui-join-page-gains-authenticated-navigation`, `ui-pwa-script-not-allowlisted`); on its own branch it was at 344, over a base of 339. ⚠ NO whole-battery run of that change is recorded here — the operator skipped local gates, so the `go` CI job is that measurement.
 
@@ -849,19 +856,26 @@ accepted. The class is `authz.SafePathComponent` restated — this package does 
 `internal/authz` — and `TestTheScopeNameClassIsThePathComponentClass` pins the two together.
 ⚠ It says nothing about LENGTH.
 
-🔴 **IT WIDENS EVERY MEMBER'S AUTHORITY AND NO NARROWED CREDENTIAL'S.** A member's role verbs
-cover every scope their project owns, so each member reaches the new scope through any
-credential that is not scope-narrowed; a narrowing is a list of scope ids fixed at issue.
-`TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential` pins both, plus a user in
-another project who must not reach it.
+🔴 **IT WIDENS THE AUTHORITY OF EVERY MEMBER AND EVERY PROJECT GRANTEE, AND NO NARROWED
+CREDENTIAL'S.** `Resolve` expands both of its sources over the project's scopes at resolve
+time: a member's role verbs, and a live grant whose OBJECT is the project — a share-flow grant,
+a team-link redemption — at that grant's verbs, for a grantee who may be in no project of the
+owner's. Each reaches the new scope through any credential that is not scope-narrowed; a
+narrowing is a list of scope ids fixed at issue. ⚠ The first draft of this paragraph, the
+command's stderr line and `server/README.md` said "every member" only — the narrower audience,
+measured wrong by audit: an outsider with a project READ grant had read and not write on the
+new scope. `TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential` pins members, the
+grantee at exactly its verbs, a narrowed credential, and a user in another project with no
+grant who must not reach it.
 
 ⚠ **What it cannot see** is `checkScopeNamesAreFree`'s own list, unchanged: a directory
 already under the store root (the command warns; this package holds no path), a concurrent
 writer — the model is read outside `Append`'s `flock` — and a hand-edited journal.
 
-The battery's rows for it are the `create-scope-*` ones and
-`a-third-writer-of-scope-created-appears-unledgered`: one per refusal above, the mode's
-dispatch and ledger entries, and both directions of the writer ledger.
+The battery's rows for it are the `create-scope-*` ones, the two `…-PROJECT-grantee…` rows, and
+the two writer-ledger rows (a composite-literal and an ASSIGNMENT-shaped writer): one per refusal
+above, the mode's dispatch and ledger entries, the grantee audience, and both directions of the
+writer ledger.
 
 ## The credential-issuing path — and the sentence it made false
 

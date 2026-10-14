@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/authz"
 )
@@ -112,7 +113,14 @@ func TestCreatingAScopeInAnExistingProjectIsOneRecordTheOwnerReaches(t *testing.
 
 // TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential pins what creating a scope
 // CHANGES for credentials that already exist — the operator-facing consequence the command
-// prints.
+// prints. Its name says "members"; the GRANTEE arm is what makes it as wide as the claim.
+//
+// 🔴 THE GRANTEE ARM IS THE ONE THE FIRST DRAFT OF THIS PATH GOT WRONG. The command, the doc
+// comment and both READMEs said the scope reaches "every member of the project"; `Resolve`'s
+// second source expands every live grant whose OBJECT is the project over `m.ScopesIn` at
+// resolve time, so a NON-member holding a project grant — a team-link redeemer, a share-flow
+// grantee — gains the new scope at the grant's verbs. The grant here is recorded BEFORE the
+// scope exists, which is the shape that makes it a widening nobody re-approved.
 //
 // ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE: no line of `CreateScope` decides this; it
 // is `Resolve` and `Narrow` behaving as they did, measured over the state this path makes.
@@ -124,8 +132,27 @@ func TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential(t *testing.T)
 	narrowedToOld := issueTo(t, store, KindUser, owner.User, []ID{old})
 	foreign := issueTo(t, store, KindUser, outsider.User, nil)
 
+	// A third user in their OWN project, holding a READ grant whose object is the owner's
+	// PROJECT — the shape a reader team link and a project share both record.
+	granteeReq := aUser("ledger-notes")
+	granteeReq.Subject, granteeReq.Email, granteeReq.ProjectName = "subject-0003", "ash@notes.example.test", "ledger"
+	grantee, err := ProvisionUser(context.Background(), store, granteeReq)
+	if err != nil {
+		t.Fatalf("provisioning the grantee: %v", err)
+	}
+	if _, err := store.Append(context.Background(), Event{
+		Kind: EventGranted, At: provisionClock, GrantID: "grt_projectreader",
+		SubjectKind: KindUser, SubjectID: grantee.User,
+		ObjectKind: ObjectProject, ObjectID: owner.Project, Verbs: NewVerbSet(VerbRead),
+	}); err != nil {
+		t.Fatalf("granting the project: %v", err)
+	}
+	granted := issueTo(t, store, KindUser, grantee.User, nil)
+
+	// An hour AFTER the grant: the grant predates the scope, which is the case that makes the
+	// expansion a widening nobody re-approved.
 	made, err := CreateScope(context.Background(), store, NewScope{
-		ProjectID: owner.Project, Name: "quarry-inbox", At: provisionClock,
+		ProjectID: owner.Project, Name: "quarry-inbox", At: provisionClock.Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("creating the scope: %v", err)
@@ -162,7 +189,13 @@ func TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential(t *testing.T)
 			"or lost the scope it was narrowed to, which would make this assertion vacuous")
 	}
 	if a := reach(foreign.Token()); a.Allows(inbox, VerbRead) {
-		t.Error("a user in a DIFFERENT project reaches the new scope")
+		t.Error("a user in a DIFFERENT project, holding no grant, reaches the new scope")
+	}
+	if a := reach(granted.Token()); !a.Allows(inbox, VerbRead) || a.Allows(inbox, VerbWrite) {
+		t.Errorf("a NON-member holding a READ grant on the PROJECT has read=%v write=%v on its new "+
+			"scope; want read=true write=false — project grants are expanded over the project's "+
+			"scopes at resolve time, so a new scope reaches every project grantee at the grant's verbs",
+			a.Allows(inbox, VerbRead), a.Allows(inbox, VerbWrite))
 	}
 	a := reach(fresh.Token())
 	if !a.Allows(inbox, VerbRead) || !a.Allows(inbox, VerbWrite) {
@@ -253,9 +286,17 @@ func TestTheScopeNameClassIsThePathComponentClass(t *testing.T) {
 
 // TestEveryWriterOfScopeCreatedChecksTheNameIsFree is the LEDGER behind
 // `checkScopeNamesAreFree`'s claim that the fold "lives only here": every function in
-// non-test code that BUILDS a `scope-created` event, by file and name, failing when the set
-// GROWS or SHRINKS — and, for each one that writes a journal, that the same function calls
-// the check.
+// non-test code that USES the identifier `EventScopeCreated`, by file and name, failing when
+// the set GROWS or SHRINKS — and, for each one that writes a journal, that the same function
+// calls the check.
+//
+// 🔴 ANY USE OF THE IDENTIFIER, NOT THE `Kind: EventScopeCreated` LITERAL, BECAUSE THE FIRST
+// DRAFT MATCHED ONLY THAT SHAPE AND AN ASSIGNMENT (`e.Kind = …`) OR A KIND PASSED AS AN
+// ARGUMENT WALKED STRAIGHT PAST IT. The exemptions are exactly the declaration (journal.go's
+// `const` block and `AllEventKinds`) and journal.go's `case` lists, where the kind is
+// dispatched on rather than built. A package-level `var` elsewhere is reported as
+// `(package-level)`. ⚠ What it still cannot see: the string `"scope-created"` spelled as a
+// literal `EventKind`, and a hand-written JSON line — neither uses the identifier.
 //
 // ⚠ STRUCTURAL, SO IT TYPE-CHECKS PAST A WRONG ARGUMENT: a writer calling the check with
 // `nil` satisfies it. The behavioural halves are
@@ -299,16 +340,37 @@ func TestEveryWriterOfScopeCreatedChecksTheNameIsFree(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		rel = filepath.ToSlash(rel)
+		isJournal := rel == "internal/control/journal.go"
 		for _, decl := range file.Decls {
-			fn, isFunc := decl.(*ast.FuncDecl)
-			if !isFunc || fn.Body == nil {
+			owner := "(package-level)"
+			if fn, isFunc := decl.(*ast.FuncDecl); isFunc {
+				owner = fn.Name.Name
+			} else if isJournal {
+				// The kind's own `const` declaration and `AllEventKinds` — the
+				// declaration this ledger is about, not a use of it.
 				continue
 			}
 			builds, checks := false, false
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
+			ast.Inspect(decl, func(n ast.Node) bool {
 				switch node := n.(type) {
-				case *ast.KeyValueExpr:
-					if key, ok := node.Key.(*ast.Ident); ok && key.Name == "Kind" && identName(node.Value) == "EventScopeCreated" {
+				case *ast.CaseClause:
+					// `validate`'s and `apply`'s arms DISPATCH on the kind; they build
+					// nothing. Exempt in journal.go only, and only the case LIST: the arm's
+					// body is still walked.
+					if isJournal {
+						for _, stmt := range node.Body {
+							ast.Inspect(stmt, func(inner ast.Node) bool {
+								if e, ok := inner.(ast.Expr); ok && identName(e) == "EventScopeCreated" {
+									builds = true
+								}
+								return true
+							})
+						}
+						return false
+					}
+				case *ast.Ident:
+					if node.Name == "EventScopeCreated" {
 						builds = true
 					}
 				case *ast.CallExpr:
@@ -319,7 +381,7 @@ func TestEveryWriterOfScopeCreatedChecksTheNameIsFree(t *testing.T) {
 				return true
 			})
 			if builds {
-				got[filepath.ToSlash(rel)+":"+fn.Name.Name] = checks
+				got[rel+":"+owner] = checks
 			}
 		}
 		return nil

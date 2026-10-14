@@ -100,12 +100,17 @@ type ScopeCreated struct {
 // owner was created. The remedy was a hand-appended line — the shape `SetMember` records
 // this repository being burned by.
 //
-// 🔴 IT WIDENS EVERY MEMBER'S AUTHORITY, AND THAT IS WHAT A SCOPE IN A PROJECT MEANS.
-// `Resolve` confers a member's role verbs over every scope their project owns, so the
-// moment this record is read each member — through any credential NOT narrowed by scope —
-// reaches the new scope. A scope-narrowed credential does not: a narrowing is a list of
-// scope IDS fixed at issue, and this id did not exist then.
-// `TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential` pins both halves.
+// 🔴 IT WIDENS THE AUTHORITY OF EVERY MEMBER *AND EVERY PROJECT GRANTEE*, AND THAT IS WHAT A
+// SCOPE IN A PROJECT MEANS. `Resolve` has two sources and both are expanded over
+// `m.ScopesIn(project)` at resolve time: a member's role verbs over every scope their project
+// owns, and a live grant whose OBJECT is the project — a share, a team-link redemption — at
+// the grant's verbs over the same set. So the moment this record is read, each of them,
+// through any credential NOT narrowed by scope, reaches the new scope. ⚠ An earlier draft of
+// this sentence said "every member" only, which is the narrower audience and the wrong one
+// to tell an operator: a grantee who is in no project of theirs gains it too. A
+// scope-narrowed credential does not: a narrowing is a list of scope IDS fixed at issue,
+// and this id did not exist then.
+// `TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential` pins all three.
 //
 // 🔴 THE NAME RULES ARE `ProvisionUser`'S OWN FUNCTION, NOT A COPY. `checkScopeNamesAreFree`
 // is what refuses a name any scope in the journal already folds to; the fold lives there and
