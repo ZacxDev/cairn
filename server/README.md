@@ -1326,6 +1326,38 @@ refused**: nothing on disk says whether it is the directory you seeded for this 
 another tenant's, and the journal is append-only, so there is no undo. Read that warning
 before you re-run the command.
 
+**Adding a scope to a project that already exists** is `-create-scope`: ONE `scope-created`
+record, nothing else. `-create-user` cannot do it — it creates a new user and a new project
+every time it runs.
+
+```sh
+kubectl exec -n <ns> deploy/<name> -- cairn-server -create-scope \
+  -scope-project prj_… -scope-name <name>
+# stdout, exit 0:  cairn-control: scope-created scope=scp_… name=<name> project=prj_… epoch=<n>
+```
+
+- `-scope-project` is the project's **id**, as `-create-user` printed it — not its name
+  (project names are not unique). A value the journal does not hold is refused, and the refusal
+  lists the ids it does hold beside their names.
+- `-scope-name` is ONE name per run, stored as typed: `[A-Za-z0-9_-]` only, not folding to
+  nothing (`___`), and free across the whole journal once folded — the same fold rule as
+  above. ⚠ The character class is stricter than `-create-user -scopes`, which applies none.
+- Exit **78** = nothing was written, the reason is on stderr.
+
+🔴 **WHAT IT DOES NOT DO.** It creates **no directory** under `-store` — the record is
+authority, not storage; an existing directory of that name is warned about as above, but
+AFTER the record is written, so a refused re-run prints no such warning.
+It issues **no credential**: every member of the project reaches the new scope at their role,
+AND every holder of a live grant on the PROJECT — a share, a team link — reaches it at that
+grant's verbs, through any credential that is not scope-narrowed. A project grant covers the
+project's scopes as they are when it is read, so creating a scope widens every such grant. A
+credential narrowed to other scopes does not, so narrowing one to it is a new
+`-issue-credential -narrow-scopes scp_… -narrow-verbs …`. And it does not rename or remove a scope — nothing does.
+
+`scope-created` is an event kind every build already replays, so only the binary that RUNS the
+command has to carry `-create-scope`; an older `cairn-server` or `cairn-ui` reading the same
+journal picks the record up on its next refresh.
+
 ### When the journal will not parse
 
 Fail-closed, in both directions, and the two directions look nothing alike:

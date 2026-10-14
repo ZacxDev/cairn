@@ -263,19 +263,22 @@ var ErrScopeNameTaken = errors.New("control: that scope display name is already 
 //     may already hold every existing tenant's directory. That is the hole that is live
 //     in every deployment, and it is the one the other three are not. `cmd/cairn-server`
 //     — which knows the store root, where this package does not — warns about it at
-//     `-create-user`; see `warnScopesThatAlreadyExistOnDisk`. A warning rather than a
-//     refusal because an existing directory is ALSO the ordinary sequence (seed the
-//     store, then provision the person who owns it), and nothing on disk distinguishes
-//     the two.
+//     `-create-user` and `-create-scope`; see `warnScopesThatAlreadyExistOnDisk`. A
+//     warning rather than a refusal because an existing directory is ALSO the ordinary
+//     sequence (seed the store, then provision the person who owns it), and nothing on
+//     disk distinguishes the two.
 //   - A `scope-renamed` or `scope-moved` event, neither of which exists yet.
 //   - A hand-edited journal.
-//   - A CONCURRENT `-create-user`: `ProvisionUser` reads the model OUTSIDE the `flock`
-//     that `Append` takes, so two runs can each read a journal without the name and both
-//     pass here. `Append`'s own re-read under the lock is what still refuses the duplicate
-//     (provider, subject) pair, but it carries no rule about names across projects — that
-//     rule lives only here, and here is not under the lock.
-//   - **A `scope-created` appended by any writer that does not come through
-//     `ProvisionUser`.** The fold lives in THIS function, not in `apply`, so a direct
+//   - A CONCURRENT `-create-user` or `-create-scope`: `ProvisionUser` and `CreateScope`
+//     each read the model OUTSIDE the `flock` that `Append` takes, so two runs can each
+//     read a journal without the name and both pass here. `Append`'s own re-read under
+//     the lock is what still refuses the duplicate (provider, subject) pair, but it carries
+//     no rule about names across projects — that rule lives only here, and here is not
+//     under the lock.
+//   - **A `scope-created` appended by any writer that does not call this function.**
+//     `ProvisionUser` and `CreateScope` are the two that do, and
+//     `TestEveryWriterOfScopeCreatedChecksTheNameIsFree` fails when that set moves. The
+//     fold lives in THIS function, not in `apply`, so a direct
 //     `Store.Append` of two scopes whose names fold alike into one project is accepted —
 //     `apply`'s own rule is `Model.ScopeByNameIn`, a RAW `==`. Asserted, rather than left
 //     to be discovered, by `TestApplyRefusesTwoScopesWithONENameInONEProject`'s third arm.

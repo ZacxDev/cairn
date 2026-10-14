@@ -298,6 +298,7 @@ func TestTheRegisteredFlagCountInProseMatchesTheCode(t *testing.T) {
 		"registerRevokeCredentialFlags": "-revoke-credential",
 		"registerSetMemberFlags":        "-set-member",
 		"registerRenameUserFlags":       "-rename-user",
+		"registerCreateScopeFlags":      "-create-scope",
 	}
 	words := map[int]string{
 		1: "one", 2: "two", 3: "three", 4: "four", 5: "five",

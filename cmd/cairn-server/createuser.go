@@ -269,6 +269,10 @@ func scopeNames(raw string) []string {
 // by its id rather than its display name — the same condition `checkScopeNamesAreFree`
 // states — at which point an existing directory cannot be aliased by a name at all.
 //
+// ⚠ SHARED BY `-create-user` AND `-create-scope` — the two modes that choose a display
+// name — so its wording names the SCOPE and never the person: `-create-scope` hands the
+// directory to every member of an existing project, not to one new user.
+//
 // ⚠ AN UNREADABLE STORE ROOT IS SILENT HERE, DELIBERATELY. `-create-user` writes to the
 // journal and not to the store, so a store root this command cannot enumerate is not a
 // reason to refuse a write that does not touch it — and the SERVER refuses to start over
@@ -315,9 +319,9 @@ func warnScopesThatAlreadyExistOnDisk(storeRoot string, names []string, errOut i
 		fmt.Fprintln(errOut, reloadSafe(fmt.Sprintf(
 			"subsystem-store-api: WARNING scope %q already exists as %s/%s. The journal holds no "+
 				"record of it — the store root is ALSO the machine-token world's scope list — so this "+
-				"is either the directory you seeded for this person or another tenant's, and nothing "+
-				"on disk says which. Creating it hands this user READ AND WRITE over whatever is in "+
-				"there, and the journal is append-only: there is no undo",
+				"is either the directory you seeded for this scope or another tenant's, and nothing "+
+				"on disk says which. Creating it hands whoever holds this scope READ AND WRITE over "+
+				"whatever is in there, and the journal is append-only: there is no undo",
 			name, storeRoot, dir)))
 	}
 }

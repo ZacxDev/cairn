@@ -92,12 +92,14 @@ const (
 	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
 	// six flags in `main` — `store`, `host`, `port`, `token-file`, `routes`, `arc-journal` — plus
 	// `-create-user`'s seven, `-issue-credential`'s seven, `-revoke-credential`'s two,
-	// `-set-member`'s four and `-rename-user`'s three (counts pinned against the code by
-	// `TestTheRegisteredFlagCountInProseMatchesTheCode`), and no exit-code flag among them.
+	// `-set-member`'s four, `-rename-user`'s three and `-create-scope`'s three (counts pinned
+	// against the code by `TestTheRegisteredFlagCountInProseMatchesTheCode`), and no exit-code
+	// flag among them.
 	// The no-exit-code-flag sweep was measured at `e11c3a7` by reading every file under
 	// `cmd/cairn-server/` in that tree (positive control: the same sweep hits `-routes` in
 	// three of them) — before `-display-name` and `-rename-user` existed; none of those
-	// four flags is an exit-code flag, read from the source that added them. So this
+	// four flags is an exit-code flag, read from the source that added them, and neither is
+	// any of `-create-scope`'s. So this
 	// program declares its exit codes to nothing, and no runbook, test or script branches
 	// on 65. A distinction with no consumer, no gate and a known-wrong classification is
 	// worth less than the codes left: 0, 78 for every refusal to act, and
@@ -240,6 +242,7 @@ func main() {
 	revoke := registerRevokeCredentialFlags()
 	setMember := registerSetMemberFlags()
 	rename := registerRenameUserFlags()
+	createScope := registerCreateScopeFlags()
 	flag.Parse()
 
 	// 🔴 TWO MODES AT ONCE IS A REFUSAL, NOT A PRECEDENCE. Checking `-routes` first and
@@ -264,6 +267,7 @@ func main() {
 		{"-revoke-credential", *revoke.enabled},
 		{"-set-member", *setMember.enabled},
 		{"-rename-user", *rename.enabled},
+		{"-create-scope", *createScope.enabled},
 	}
 	var asked []string
 	for _, m := range modes {
@@ -298,8 +302,9 @@ func main() {
 		return
 	}
 	if *create.enabled {
-		// `*store` is passed because this mode is the ONE place a scope display name is
-		// chosen, and the store root is the only thing that can say whether that name
+		// `*store` is passed because this mode is one of the TWO places a scope display name
+		// is chosen (`-create-scope` is the other), and the store root is the only thing that
+		// can say whether that name
 		// already reaches somebody else's directory. `internal/control` holds no path and
 		// must not grow one; see `warnScopesThatAlreadyExistOnDisk`.
 		os.Exit(runCreateUser(envalias.Environ(), *store, create, os.Stdout, os.Stderr))
@@ -315,6 +320,12 @@ func main() {
 		// No `*store`, for `-set-member`'s reason: a display name names a person, not a
 		// directory, so there is nothing the store root could answer about it.
 		os.Exit(runRenameUser(envalias.Environ(), rename, os.Stdout, os.Stderr))
+	}
+	if *createScope.enabled {
+		// `*store` is passed for `-create-user`'s reason: this mode also chooses a scope
+		// display name, and only the store root can say whether a directory already
+		// answers to it.
+		os.Exit(runCreateScope(envalias.Environ(), *store, createScope, os.Stdout, os.Stderr))
 	}
 	if *revoke.enabled {
 		// No `*store`: a revocation names a credential by id and touches no scope.
