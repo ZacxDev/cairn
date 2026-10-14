@@ -48,12 +48,13 @@ func registerSetMemberFlags() *setMemberFlags {
 		project: flag.String("member-project", "",
 			"the project's id (`prj_…`), as printed by -create-user. NOT its display name: "+
 				"names are mutable and not unique, so addressing by name would be a lookup "+
-				"that can silently mean a different project tomorrow"),
+				"that can silently mean a different project tomorrow. Also read by -remove-member"),
 		user: flag.String("member-user", "",
 			"the user's id (`usr_…`), as printed by -create-user. NOT a provider subject "+
 				"and not an email. ⚠ A PROJECT CANNOT BE A MEMBER: `member-set` carries a "+
 				"user id and nothing else, and a project is not a member of itself — a "+
-				"service account reaches a scope only through an explicit grant"),
+				"service account reaches a scope only through an explicit grant. Also read by "+
+				"-remove-member"),
 		role: flag.String("member-role", "",
 			"`owner`, `admin` or `member`. owner and admin have identical authority over "+
 				"the project's scopes; they differ only in that an owner may delete the "+

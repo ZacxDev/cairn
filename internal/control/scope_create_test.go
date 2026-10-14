@@ -303,7 +303,6 @@ func TestTheScopeNameClassIsThePathComponentClass(t *testing.T) {
 // `TestCreateScopeRefusesANameTheJournalAlreadyFoldsTo` and
 // `TestAScopeNameThatFOLDSOntoOneAlreadyHeldIsRefused`.
 func TestEveryWriterOfScopeCreatedChecksTheNameIsFree(t *testing.T) {
-	const check = "checkScopeNamesAreFree"
 	// writer → whether it must call the check.
 	want := map[string]bool{
 		"internal/control/provision.go:ProvisionUser":  true,
@@ -312,7 +311,16 @@ func TestEveryWriterOfScopeCreatedChecksTheNameIsFree(t *testing.T) {
 		// directory listing on every refresh and appends them nowhere.
 		"internal/control/tokenfile/source.go:Events": false,
 	}
+	assertWriterLedger(t, "EventScopeCreated", "checkScopeNamesAreFree", want)
+}
 
+// assertWriterLedger is the walker behind every event-kind WRITER LEDGER here: the set of
+// non-test functions that use the identifier `kind` (outside journal.go's declaration and
+// `case` lists) must equal `want`'s keys, in both directions, and each writer `want` marks
+// true must call `check` in the same function. Shared rather than copied, so a fix to what
+// counts as a use reaches every ledger at once.
+func assertWriterLedger(t *testing.T, kind, check string, want map[string]bool) {
+	t.Helper()
 	root := filepath.Join("..", "..")
 	got := map[string]bool{}
 	scanned := 0
@@ -361,7 +369,7 @@ func TestEveryWriterOfScopeCreatedChecksTheNameIsFree(t *testing.T) {
 					if isJournal {
 						for _, stmt := range node.Body {
 							ast.Inspect(stmt, func(inner ast.Node) bool {
-								if e, ok := inner.(ast.Expr); ok && identName(e) == "EventScopeCreated" {
+								if e, ok := inner.(ast.Expr); ok && identName(e) == kind {
 									builds = true
 								}
 								return true
@@ -370,7 +378,7 @@ func TestEveryWriterOfScopeCreatedChecksTheNameIsFree(t *testing.T) {
 						return false
 					}
 				case *ast.Ident:
-					if node.Name == "EventScopeCreated" {
+					if node.Name == kind {
 						builds = true
 					}
 				case *ast.CallExpr:
@@ -402,14 +410,14 @@ func TestEveryWriterOfScopeCreatedChecksTheNameIsFree(t *testing.T) {
 		return out
 	}
 	if g, w := strings.Join(names(got), "\n"), strings.Join(names(want), "\n"); g != w {
-		t.Fatalf("the functions that build a `scope-created` event are\n%s\nand this ledger says\n%s\n"+
-			"A new writer must call %s — the fold is NOT in `apply` — and then be added here; a "+
-			"missing one means the ledger is describing code that is gone", g, w, check)
+		t.Fatalf("the functions that build a %s event are\n%s\nand this ledger says\n%s\n"+
+			"A new writer must call %s — that rule is NOT in `apply` — and then be added here; a "+
+			"missing one means the ledger is describing code that is gone", kind, g, w, check)
 	}
 	for writer, must := range want {
 		if must && !got[writer] {
-			t.Errorf("%s builds a `scope-created` event and does not call %s, so it accepts a name "+
-				"that folds onto another scope's directory", writer, check)
+			t.Errorf("%s builds a %s event and does not call %s, the rule `apply` does not carry",
+				writer, kind, check)
 		}
 	}
 }

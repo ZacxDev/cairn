@@ -264,6 +264,18 @@ python3 tests/control_mutants.py --show    # print each edit without running it
 
 🔴 **THE CURRENT COUNT IS NOT WRITTEN IN THIS FILE.** It is `len(MUTANTS)`, which every run prints on its `SUMMARY mutants=<N> …` line (and `--show` enumerates); a present-tense copy here made every change that adds a row edit this paragraph, so any two such changes conflicted, and `tests/test_control_mutant_count_is_pinned.py` now refuses one coming back. What follows is the RECORD of runs, each at the size it was measured at.
 
+**At 594 mutants DECLARED** (`cairn-server -remove-member`, on its own branch; COUNTED by loading
+`MUTANTS`) — it added twenty-seven rows over `main`'s 567, every killer inside `PKGS`. A PARTIAL
+measurement: those twenty-seven plus `create-scope-flag-count-in-prose-goes-stale` as a
+known-killed control, run alone through this harness's own `main` (rows narrowed in the loaded
+module, positive control GREEN): `mutants=28 killed=27 survived=0 misattributed=0
+harness-errors=1 stale-extras=0`. The one HARNESS ERROR was the control row itself — this change
+appended `-remove-member`'s count after `-create-scope`'s in `main`'s prose, so that row's anchor
+matched nothing; it is re-anchored, and every row on the three production files this change
+edited that other rows anchor in (`main.go`, `member_set.go`, `setmember.go`) then read
+`mutants=15 killed=15 survived=0 misattributed=0 harness-errors=0`. ⚠ No whole-battery run on
+this tree is recorded here; the `mutants` CI job is that measurement.
+
 **At 562 mutants DECLARED** (`cairn-server -create-scope`, on its own branch; COUNTED by loading
 `MUTANTS`) — it added fifteen rows, the `create-scope-*` ones and
 `a-third-writer-of-scope-created-appears-unledgered`, every killer already inside `PKGS`. A PARTIAL
@@ -876,6 +888,42 @@ The battery's rows for it are the `create-scope-*` ones, the two `…-PROJECT-gr
 the two writer-ledger rows (a composite-literal and an ASSIGNMENT-shaped writer): one per refusal
 above, the mode's dispatch and ledger entries, the grantee audience, and both directions of the
 writer ledger.
+
+## Taking a user out of a project — `RemoveMember`
+
+`RemoveMember` (`member_remove.go`) appends ONE `member-removed` record; `cairn-server
+-remove-member -member-project prj_… -member-user usr_…` is its only caller. The event kind and
+`apply`'s arm existed since P3 with no writer: `SetMember` declined to write one until two
+questions had answers. They are:
+
+- **The last owner — refused, by `SetMember`'s own `refuseOrphaning`, called with no next role.**
+  A removal costs what a demotion to `member` costs: nobody may administer the project and
+  nobody may delete it. Removing one of TWO owners is a handover's last step and is accepted.
+  Same check-then-act window as `SetMember`'s, same one-command recovery.
+- **Grants that name the person — REPORTED, never revoked.** Membership is one of `Resolve`'s two
+  sources; a live grant is the other, and it can be a deliberate share meant to outlive
+  membership. The journal has no undo, so revoking by default would make the destructive
+  direction the silent one. The result carries `StillReaches` — `Resolve`'s own answer over the
+  project's scopes after the append — and `Grants`, every live grant producing it, INCLUDING one
+  reaching the user through ANOTHER project they are still in (a grant whose subject is that
+  project). `TestTheReportedResidueIsExactlyWhatResolveStillGrants` pins the grants' expansion
+  equal to `StillReaches` and to `Resolve`. ⚠ No `cairn-server` command revokes a grant; the
+  browser share flow's unshare does.
+- **Credentials** bind to the principal, not a project: every live one of the user is reported
+  (`-revoke-credential` revokes one) and none is touched.
+
+| refusal | where the rule lives | sentinel |
+|---|---|---|
+| the project id is not in the journal | **only here** — `apply`'s `member-removed` arm checks nothing | `ErrNoSuchProject` |
+| the user id is not in the journal | **only here**, for the same reason | `ErrNoSuchMember` |
+| the user is not a member of that project | **only here** — `apply` folds it to a no-op and counts it | `ErrNotAMember` |
+| the user is the project's only owner | `refuseOrphaning`, shared with `SetMember` | `ErrWouldOrphanProject` |
+
+None is added to `apply`, for `ErrWouldOrphanProject`'s reason: a replay rule would refuse whole
+any journal already holding a hand-written removal. `TestEveryWriterOfMemberRemovedChecksTheLastOwner`
+is the writer ledger (grow or shrink is red), on the walker `-create-scope`'s ledger now shares.
+The battery's rows are the `remove-member-*`, `residual-grants-*` and `removal-reports-*` ones and
+their neighbours.
 
 ## The credential-issuing path — and the sentence it made false
 

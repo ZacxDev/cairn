@@ -92,14 +92,15 @@ const (
 	// flag and `internal/client/exit.go` is the table it prints. THIS program registers
 	// six flags in `main` — `store`, `host`, `port`, `token-file`, `routes`, `arc-journal` — plus
 	// `-create-user`'s seven, `-issue-credential`'s seven, `-revoke-credential`'s two,
-	// `-set-member`'s four, `-rename-user`'s three and `-create-scope`'s three (counts pinned
-	// against the code by `TestTheRegisteredFlagCountInProseMatchesTheCode`), and no exit-code
-	// flag among them.
+	// `-set-member`'s four, `-rename-user`'s three, `-create-scope`'s three and
+	// `-remove-member`'s one — it reuses `-set-member`'s two ids — (counts pinned against the
+	// code by `TestTheRegisteredFlagCountInProseMatchesTheCode`), and no exit-code flag among
+	// them.
 	// The no-exit-code-flag sweep was measured at `e11c3a7` by reading every file under
 	// `cmd/cairn-server/` in that tree (positive control: the same sweep hits `-routes` in
 	// three of them) — before `-display-name` and `-rename-user` existed; none of those
 	// four flags is an exit-code flag, read from the source that added them, and neither is
-	// any of `-create-scope`'s. So this
+	// any of `-create-scope`'s or `-remove-member`'s. So this
 	// program declares its exit codes to nothing, and no runbook, test or script branches
 	// on 65. A distinction with no consumer, no gate and a known-wrong classification is
 	// worth less than the codes left: 0, 78 for every refusal to act, and
@@ -243,6 +244,7 @@ func main() {
 	setMember := registerSetMemberFlags()
 	rename := registerRenameUserFlags()
 	createScope := registerCreateScopeFlags()
+	removeMember := registerRemoveMemberFlags(setMember)
 	flag.Parse()
 
 	// 🔴 TWO MODES AT ONCE IS A REFUSAL, NOT A PRECEDENCE. Checking `-routes` first and
@@ -268,6 +270,7 @@ func main() {
 		{"-set-member", *setMember.enabled},
 		{"-rename-user", *rename.enabled},
 		{"-create-scope", *createScope.enabled},
+		{"-remove-member", *removeMember.enabled},
 	}
 	var asked []string
 	for _, m := range modes {
@@ -326,6 +329,11 @@ func main() {
 		// display name, and only the store root can say whether a directory already
 		// answers to it.
 		os.Exit(runCreateScope(envalias.Environ(), *store, createScope, os.Stdout, os.Stderr))
+	}
+	if *removeMember.enabled {
+		// No `*store`, for `-set-member`'s reason: it addresses a project and a user by id and
+		// chooses no scope display name.
+		os.Exit(runRemoveMember(envalias.Environ(), removeMember, os.Stdout, os.Stderr))
 	}
 	if *revoke.enabled {
 		// No `*store`: a revocation names a credential by id and touches no scope.
