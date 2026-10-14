@@ -113,9 +113,10 @@ type Inviting interface {
 	//
 	// 🔴 IT REFUSES A PRINCIPAL WHO IS ALREADY A MEMBER, AND THAT REFUSAL IS LOAD-BEARING
 	// RATHER THAN TIDINESS. `Redeem` writes a bare `member-set`, and `Model.apply` calls
-	// `setMembership` unconditionally — it does NOT consult `refuseOrphaning`, which lives
-	// only on the operator's `PlanMemberSet` path. So a redemption by an existing member
-	// would OVERWRITE their role, and an `admin` could mint a `member` invitation into
+	// `setMembership` unconditionally — it does NOT consult `refuseOrphaning`, which only
+	// the operator's writers call (`internal/control`'s `SetMember` and `RemoveMember`). So
+	// a redemption by an existing member would OVERWRITE their role, and an `admin` could
+	// mint a `member` invitation into
 	// their own project, have the sole OWNER redeem it, and leave the project ownerless —
 	// a state `refuseOrphaning`'s own message calls recoverable only by a two-step nobody
 	// would know to run. Refusing before anything is spent closes that without reaching
@@ -381,8 +382,9 @@ func (c ControlInviting) Redeem(ctx context.Context, token, provider, subject st
 	// `errors.As`; the first mints a user and writes `member-set`, and the second — now
 	// reading a model where `held` is true — spends its invitation and writes `member-set`
 	// AGAIN. `Model.apply` calls `setMembership` unconditionally and never consults
-	// `refuseOrphaning` (that lives only on `PlanMemberSet`), so the second write silently
-	// overwrites the role the first conferred, and a project whose sole owner arrived this
+	// `refuseOrphaning` (only `internal/control`'s `SetMember` and `RemoveMember` call it), so
+	// the second write silently overwrites the role the first conferred, and a project whose
+	// sole owner arrived this
 	// way is left ownerless.
 	//
 	// ⚠ DELEGATING RATHER THAN COPYING THE GUARD IS THE POINT. A second `RoleIn` check here

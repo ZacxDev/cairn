@@ -13,8 +13,11 @@
 // `control.Store` over Postgres would put this package's driver in `internal/control`,
 // which `cmd/cairn-server` imports — and that binary's import closure is
 // [depspolicy.LinkedBinaryRoots], which must stay free of every third-party module.
-// Moving the journal therefore also decides where `cairn-server -create-user` and
-// `-set-member` live, because those two write it. That is a separate change with a
+// Moving the journal therefore also decides where `cairn-server`'s operator modes live,
+// because every one of them but `-routes` writes it — the set is `main.go`'s `modes`
+// ledger, checked against `TestTheBinaryActuallyDispatchesIssueCredential`'s `modeArgs`
+// sweep in `cmd/cairn-server`, so it is named there rather than hand-listed here (this
+// comment once named two writers when there were seven). That is a separate change with a
 // separate argument, and it is NOT unblocked by this one.
 //
 // So the split here is not "durable vs ephemeral". It is:
