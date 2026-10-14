@@ -7043,11 +7043,282 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="create-scope-flag-count-in-prose-goes-stale",
         path="cmd/cairn-server/main.go",
-        old="`-create-scope`'s three (counts",
-        new="`-create-scope`'s two (counts",
+        # Re-anchored by `-remove-member`, which appended its own count after this one; the
+        # old anchor (`three (counts`) matched nothing and scored a HARNESS ERROR.
+        old="`-create-scope`'s three and",
+        new="`-create-scope`'s two and",
         killer="TestTheRegisteredFlagCountInProseMatchesTheCode",
         why="proves the new mode is IN the flag-count gate: a mode absent from that test's "
         "table is one whose prose count nothing checks.",
+    ),
+    # `cairn-server -remove-member` / `control.RemoveMember`: the first writer of
+    # `member-removed`. One row per refusal, per reported set, and per wiring claim, each on
+    # the narrowest expression that decides it.
+    Mutant(
+        name="remove-member-accepts-a-project-the-journal-does-not-hold",
+        path="internal/control/member_remove.go",
+        old="\tif _, known := current.Projects[req.ProjectID]; !known {",
+        new="\tif _, known := current.Projects[req.ProjectID]; !known && false {",
+        killer="TestRemoveMemberRefusesAProjectTheJournalDoesNotHold",
+        extra_killers=("TestEveryRemoveMemberRefusalWritesNOTHING",),
+        why="`SetMember`'s twin check is an EARLY refusal that `apply` repeats, so this one reads "
+        "as redundant too. It is not: `apply`'s `member-removed` arm checks nothing, so without "
+        "it a mistyped project id is refused as 'not a member' and the operator is never told "
+        "the project does not exist.",
+    ),
+    Mutant(
+        name="remove-member-accepts-a-user-the-journal-does-not-hold",
+        path="internal/control/member_remove.go",
+        old="\tif _, known := current.Users[req.UserID]; !known {",
+        new="\tif _, known := current.Users[req.UserID]; !known && false {",
+        killer="TestRemoveMemberRefusesAUserTheJournalDoesNotHold",
+        extra_killers=("TestEveryRemoveMemberRefusalWritesNOTHING",),
+        why="the not-a-member refusal below catches the same input, so this reads as "
+        "duplication — and the operator who typed an id that names nobody is told the person is "
+        "merely not in the project.",
+    ),
+    Mutant(
+        name="remove-member-removes-a-non-member",
+        path="internal/control/member_remove.go",
+        old="\tif !isMember {",
+        new="\tif !isMember && false {",
+        killer="TestRemoveMemberRefusesSomebodyWhoIsNotAMember",
+        extra_killers=("TestEveryRemoveMemberRefusalWritesNOTHING",),
+        why="`SetMember` accepts a restated role as idempotent, so accepting a removal of "
+        "nobody looks consistent. `apply` folds it to a no-op and counts it as an event: a "
+        "departure that never happened, in the log whose purpose is who left when.",
+    ),
+    Mutant(
+        name="remove-member-asks-the-last-owner-rule-the-wrong-question",
+        path="internal/control/member_remove.go",
+        # The wrong OPERAND, not a deleted call: the ledger row below is the deleted call.
+        old="refuseOrphaning(current, req.ProjectID, req.UserID, prior.Role, \"\")",
+        new="refuseOrphaning(current, req.ProjectID, req.UserID, prior.Role, RoleOwner)",
+        killer="TestTheLastOwnerCannotBeRemoved",
+        extra_killers=("TestEveryRemoveMemberRefusalWritesNOTHING",),
+        why="a removal has no next role, and `RoleOwner` is a plausible 'no change' placeholder "
+        "— it is exactly the value `refuseOrphaning` waves through, so the sole owner is "
+        "removed and the project is left with nobody who may administer or delete it.",
+    ),
+    Mutant(
+        name="remove-member-never-calls-the-last-owner-rule",
+        path="internal/control/member_remove.go",
+        old="\tif err := refuseOrphaning(current, req.ProjectID, req.UserID, prior.Role, \"\"); err != nil {\n"
+        "\t\treturn MemberRemoved{}, err\n\t}\n",
+        new="",
+        killer="TestEveryWriterOfMemberRemovedChecksTheLastOwner",
+        extra_killers=("TestTheLastOwnerCannotBeRemoved",),
+        why="the ledger's SHRINK-of-coverage direction: `apply` carries no last-owner rule, so a "
+        "writer that skips the call is refused by nothing below it.",
+    ),
+    Mutant(
+        name="a-second-writer-of-member-removed-appears-unledgered",
+        path="cmd/cairn-server/removemember.go",
+        old="func runRemoveMember(",
+        new="func aSecondWriter(project, user control.ID) control.Event {\n"
+        "\treturn control.Event{Kind: control.EventMemberRemoved, ProjectID: project, UserID: user}\n}\n\n"
+        "func runRemoveMember(",
+        killer="TestEveryWriterOfMemberRemovedChecksTheLastOwner",
+        why="the ledger's GROW direction, from outside `internal/control`: the next surface that "
+        "removes somebody (a browser 'leave project' button) builds the event where it stands, "
+        "and the last-owner rule — not in `apply` — is skipped with every test green.",
+    ),
+    Mutant(
+        name="orphaning-refusal-for-a-removal-says-making-them-empty",
+        path="internal/control/member_set.go",
+        old="\tif next == \"\" {\n\t\tact = \"removing them from it\"",
+        new="\tif false {\n\t\tact = \"removing them from it\"",
+        killer="TestTheLastOwnerCannotBeRemoved",
+        extra_killers=("TestEveryRemoveMemberRefusalWritesNOTHING",),
+        why="one message for both callers is the shape `refuseOrphaning` already had to correct "
+        "once; for a removal it reads `making them \"\"`, which names no action the operator took.",
+    ),
+    Mutant(
+        name="a-second-owner-does-not-license-removing-the-first",
+        path="internal/control/member_set.go",
+        old="\t\tif userID != user && ms.Role == RoleOwner {",
+        new="\t\tif userID != user && ms.Role == RoleOwner && false {",
+        killer="TestRemovingOneOfTwoOwnersIsAccepted",
+        extra_killers=("TestASECONDOwnerMakesTheDemotionLEGITIMATE",),
+        why="'the owner may never be removed' is the blunt version of the rule, and it makes a "
+        "handover's last step impossible — the other half of the refusal above, without which a "
+        "guard refusing every owner removal passes it.",
+    ),
+    Mutant(
+        name="residue-read-from-the-model-before-the-removal",
+        path="internal/control/member_remove.go",
+        old="\t\tStillReaches: stillReaches(after, req.ProjectID, req.UserID),",
+        new="\t\tStillReaches: stillReaches(current, req.ProjectID, req.UserID),",
+        killer="TestRemovingAMemberTakesAwayTheirMembershipAuthority",
+        extra_killers=("TestTheReportedResidueIsExactlyWhatResolveStillGrants",),
+        why="`current` is already in hand and reads the same for grants, so it looks "
+        "interchangeable. It still holds the membership being removed, so every removal reports "
+        "the member as still reaching every scope of the project they just left.",
+    ),
+    Mutant(
+        name="still-reaches-counts-scopes-of-other-projects",
+        path="internal/control/member_remove.go",
+        old="\tvar out []ScopeReach\n\tfor _, scopeID := range m.ScopesIn(project) {",
+        new="\tvar out []ScopeReach\n\tfor _, scopeID := range auth.ScopeIDs(VerbRead) {",
+        killer="TestRemovingAMemberTakesAwayTheirMembershipAuthority",
+        why="`Resolve`'s whole answer is the obvious thing to report; it is the user's authority "
+        "EVERYWHERE, so their own project's scopes read as residue of a removal from another.",
+    ),
+    Mutant(
+        name="residual-grants-miss-the-route-through-another-project",
+        path="internal/control/member_remove.go",
+        old="\tfor other := range m.userProject[user] {",
+        new="\tfor other := range m.userProject[\"\"] {",
+        killer="TestASeparateGrantSurvivesTheRemovalAndIsReported",
+        extra_killers=("TestTheReportedResidueIsExactlyWhatResolveStillGrants",),
+        why="'grants whose subject is this user' is the natural reading of the question, and it "
+        "misses a grant to a project they are still in — authority `Resolve` still honours and "
+        "the report would leave unmentioned.",
+    ),
+    Mutant(
+        name="residual-grants-report-a-revoked-grant",
+        path="internal/control/member_remove.go",
+        old="\t\tif !g.Live() {",
+        new="\t\tif !g.Live() && false {",
+        killer="TestASeparateGrantSurvivesTheRemovalAndIsReported",
+        why="a grant row is still in the model after its tombstone, so a listing over "
+        "`m.Grants` names it; the operator is then sent to revoke a grant that is already dead.",
+    ),
+    Mutant(
+        name="residual-grants-ignore-the-object",
+        path="internal/control/member_remove.go",
+        old="\t\tif onThisProject {",
+        new="\t\tif onThisProject || true {",
+        killer="TestASeparateGrantSurvivesTheRemovalAndIsReported",
+        why="every live grant of the user is 'authority left behind' in some sense; reporting "
+        "grants on OTHER projects' objects buries the ones this removal is about.",
+    ),
+    Mutant(
+        name="removal-reports-a-revoked-credential",
+        path="internal/control/member_remove.go",
+        old="\t\tif c.Live() && c.PrincipalKind == KindUser && c.PrincipalID == user {",
+        new="\t\tif c.PrincipalKind == KindUser && c.PrincipalID == user {",
+        killer="TestRemovalReportsEveryLiveCredentialOfTheUser",
+        why="a revoked credential still has a row; reporting it tells the operator to revoke "
+        "something `-revoke-credential` then refuses as already revoked.",
+    ),
+    Mutant(
+        name="removal-reports-everybodys-credentials",
+        path="internal/control/member_remove.go",
+        old="\t\tif c.Live() && c.PrincipalKind == KindUser && c.PrincipalID == user {",
+        new="\t\tif c.Live() && c.PrincipalKind == KindUser {",
+        killer="TestRemovalReportsEveryLiveCredentialOfTheUser",
+        why="the operator then revokes a credential belonging to somebody who was not removed.",
+    ),
+    Mutant(
+        name="remove-member-with-no-journal-falls-through",
+        path="cmd/cairn-server/removemember.go",
+        old="\tif journal == \"\" {",
+        new="\tif false {",
+        killer="TestRemoveMemberWithNoJournalConfiguredRefusesRatherThanDefaulting",
+        why="the refusal that names the variable to set. Without it the operator is handed "
+        "whatever opening an empty path says, which names no remedy.",
+    ),
+    Mutant(
+        name="remove-member-ignores-a-member-role",
+        path="cmd/cairn-server/removemember.go",
+        old="\tif strings.TrimSpace(*f.role) != \"\" {",
+        new="\tif strings.TrimSpace(*f.role) != \"\" && false {",
+        killer="TestEveryRemoveMemberRefusalWritesNOTHING",
+        why="the flag is `-set-member`'s and a removal has no use for it, so ignoring it looks "
+        "harmless — and `-remove-member … -member-role member`, an operator who meant to DEMOTE, "
+        "removes the person instead.",
+    ),
+    Mutant(
+        name="remove-member-does-not-require-a-user",
+        path="cmd/cairn-server/removemember.go",
+        old="\tif project == \"\" || user == \"\" {",
+        new="\tif project == \"\" {",
+        killer="TestEveryRemoveMemberRefusalWritesNOTHING",
+        why="the prefix check catches an empty user anyway, so the flag check reads as "
+        "duplication — and the operator who forgot a flag is told their value is malformed.",
+    ),
+    Mutant(
+        name="remove-member-skips-the-swapped-ids-check",
+        path="cmd/cairn-server/removemember.go",
+        old="\tif !control.MustPrefix(project, control.PrefixProject) {",
+        new="\tif false {",
+        killer="TestEveryRemoveMemberRefusalWritesNOTHING",
+        why="`control.RemoveMember` refuses a project id that names nothing, so this reads as a "
+        "second authority; it is the only message that says the two flags were transposed.",
+    ),
+    Mutant(
+        name="remove-member-relays-a-missing-project-without-the-remedy",
+        path="cmd/cairn-server/removemember.go",
+        old="\t\tcase errors.Is(err, control.ErrNoSuchProject):",
+        new="\t\tcase errors.Is(err, control.ErrNoSuchProject) && false:",
+        killer="TestEveryRemoveMemberRefusalWritesNOTHING",
+        why="a sentinel is a guard only where something branches on it; the branch is what says "
+        "the flag takes an id, not a name.",
+    ),
+    Mutant(
+        name="remove-member-prints-no-grant-ids",
+        path="cmd/cairn-server/removemember.go",
+        old="\t\tfor _, g := range got.Grants {",
+        new="\t\tfor _, g := range got.Grants[:0] {",
+        killer="TestRemoveMemberWritesOneRecordAndReportsWhatItLeft",
+        why="the summary line already says how many grants remain, so the per-grant lines read "
+        "as verbosity. They are the only place the grant ids are — what the operator acts on.",
+    ),
+    Mutant(
+        name="remove-member-prints-no-credential-ids",
+        path="cmd/cairn-server/removemember.go",
+        old="\t\tfor _, c := range got.Credentials {",
+        new="\t\tfor _, c := range got.Credentials[:0] {",
+        killer="TestRemoveMemberWritesOneRecordAndReportsWhatItLeft",
+        why="the same, for the ids `-revoke-credential -credential` takes.",
+    ),
+    Mutant(
+        name="remove-member-is-silent-about-an-empty-residue",
+        path="cmd/cairn-server/removemember.go",
+        old="\tif len(got.StillReaches) == 0 {",
+        new="\tif len(got.StillReaches) == 0 && false {",
+        killer="TestRemoveMemberSaysSoWhenItLeftNothing",
+        why="printing only what remains looks tidier; then 'nothing remains' and 'the report "
+        "never ran' are the same stderr.",
+    ),
+    Mutant(
+        name="remove-member-missing-from-the-mode-ledger",
+        path="cmd/cairn-server/main.go",
+        old="\t\t{\"-remove-member\", *removeMember.enabled},\n",
+        new="",
+        killer="TestTheBinaryActuallyDispatchesRemoveMember",
+        extra_killers=("TestTheBinaryActuallyDispatchesIssueCredential",),
+        why="the copy that gets forgotten is the new one: `-set-member -remove-member` then "
+        "runs ONE of them and exits 0, and `-routes -remove-member` removes nobody.",
+    ),
+    Mutant(
+        name="a-mode-ledger-entry-nothing-sweeps",
+        path="cmd/cairn-server/main.go",
+        old="\t\t{\"-remove-member\", *removeMember.enabled},\n",
+        # Borrows `-create-scope`'s flag so the tree compiles and `-routes` alone still runs:
+        # the kill must be the ledger check's own message, not the positive control failing.
+        new="\t\t{\"-remove-member\", *removeMember.enabled},\n\t\t{\"-phantom-mode\", *createScope.enabled},\n",
+        killer="TestTheBinaryActuallyDispatchesIssueCredential",
+        why="the pairwise sweep's own hand list (`modeArgs`) had stopped at five modes while the "
+        "ledger grew to seven; a mode in the ledger and not in that list is never swept.",
+    ),
+    Mutant(
+        name="remove-member-never-dispatched",
+        path="cmd/cairn-server/main.go",
+        old="\tif *removeMember.enabled {",
+        new="\tif false {",
+        killer="TestTheBinaryActuallyDispatchesRemoveMember",
+        why="flags registered, ledger entry present, and the mode falls through to SERVING — "
+        "which every in-process test of `runRemoveMember` is blind to.",
+    ),
+    Mutant(
+        name="remove-member-flag-count-in-prose-goes-stale",
+        path="cmd/cairn-server/main.go",
+        old="`-remove-member`'s one",
+        new="`-remove-member`'s two",
+        killer="TestTheRegisteredFlagCountInProseMatchesTheCode",
+        why="proves the new mode is IN the flag-count gate.",
     ),
 )
 

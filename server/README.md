@@ -1358,6 +1358,28 @@ credential narrowed to other scopes does not, so narrowing one to it is a new
 command has to carry `-create-scope`; an older `cairn-server` or `cairn-ui` reading the same
 journal picks the record up on its next refresh.
 
+**Taking one user out of one project** is `-remove-member`: ONE `member-removed` record. It reads
+`-set-member`'s two id flags and takes no role (`-member-role` beside it is refused).
+
+```sh
+kubectl exec -n <ns> deploy/<name> -- cairn-server -remove-member \
+  -member-project prj_… -member-user usr_…
+# stdout, exit 0:  cairn-control: member-removed project=prj_… user=usr_… role=<was> epoch=<n>
+```
+
+- Exit **78** = nothing was written: an id the journal does not hold, a user who is not a member
+  of that project (also what a retry of a removal that already landed reads as), or the project's
+  ONLY owner — promote somebody else to owner first.
+- 🔴 **WHAT IT DOES NOT DO, AND PRINTS INSTEAD.** It revokes **no grant** and **no credential**.
+  stderr lists every live grant that still reaches that project's scopes for the user — named
+  directly, or through another project they are still in — one `NOT REVOKED grant=grt_… …` line
+  each, and every live credential that still authenticates as them, one `STILL AUTHENTICATES
+  credential=crd_…` line each (`-revoke-credential -credential crd_…` revokes one). No
+  `cairn-server` command revokes a grant; the browser share flow's unshare does. When nothing
+  remains, it says so in words rather than printing nothing.
+- `member-removed` is an event kind every build already replays; running surfaces pick it up on
+  their next journal refresh.
+
 ### When the journal will not parse
 
 Fail-closed, in both directions, and the two directions look nothing alike:

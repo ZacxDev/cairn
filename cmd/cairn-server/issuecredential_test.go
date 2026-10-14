@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -440,6 +441,32 @@ func TestTheBinaryActuallyDispatchesIssueCredential(t *testing.T) {
 		"-issue-credential":  {"-issue-credential", "-principal", user},
 		"-revoke-credential": {"-revoke-credential", "-credential", "crd_x"},
 		"-set-member":        {"-set-member", "-member-project", "prj_x", "-member-user", "usr_y", "-member-role", "member"},
+		"-rename-user":       {"-rename-user", "-rename-user-id", "usr_y", "-rename-display-name", "wren"},
+		"-create-scope":      {"-create-scope", "-scope-project", "prj_x", "-scope-name", "quarry-inbox"},
+		// No ids of its own: `-remove-member` reads `-set-member`'s, so paired with
+		// `-set-member` the command line carries them once and BOTH modes are still set.
+		"-remove-member": {"-remove-member"},
+	}
+	// 🔴 AND `modeArgs` IS ITSELF A HAND LIST, SO IT IS CHECKED AGAINST `main`'s LEDGER. The
+	// derivation above made the PAIRS follow the list; nothing made the list follow the
+	// modes, and it had silently stopped at five while `main` grew to seven (`-rename-user`
+	// and `-create-scope` were never swept). Every `{"-mode", *x.enabled}` entry in `main.go`
+	// must be a key here, and nothing else may be.
+	mainSrc, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("reading main.go: %v", err)
+	}
+	ledgered := regexp.MustCompile(`\{"(-[a-z-]+)", \*[A-Za-z]+(?:\.enabled)?\}`).FindAllStringSubmatch(string(mainSrc), -1)
+	if len(ledgered) < 2 {
+		t.Fatalf("read %d mode-ledger entries out of main.go — the reader is wired to nothing", len(ledgered))
+	}
+	for _, m := range ledgered {
+		if _, swept := modeArgs[m[1]]; !swept {
+			t.Errorf("main.go's mode ledger holds %s and `modeArgs` does not, so no pair with it is swept", m[1])
+		}
+	}
+	if len(ledgered) != len(modeArgs) {
+		t.Errorf("main.go's mode ledger holds %d modes and `modeArgs` %d", len(ledgered), len(modeArgs))
 	}
 	// Sorted, so a failure names the same pair on every run rather than a map-order one.
 	names := make([]string, 0, len(modeArgs))

@@ -149,10 +149,12 @@ func (m MembershipSet) Changed() bool {
 // schema an operator has to guess at is a hazard whatever the field; this function is the
 // same answer one event over.
 //
-// ⚠ WHAT IT DELIBERATELY DOES NOT DO. It does not REMOVE: `EventMemberRemoved` exists,
-// has no writer, and is not written here — removal has its own last-owner question and its
-// own answer about what happens to grants that named the person, and folding it in would
-// make one command with two destructive directions. It does not GRANT: membership confers
+// ⚠ WHAT IT DELIBERATELY DOES NOT DO. It does not REMOVE: `EventMemberRemoved`'s one
+// writer is `RemoveMember` (`member_remove.go`), which answers the two questions removal
+// has that this does not — the last owner (this file's `refuseOrphaning`, called with no
+// next role) and what happens to grants that named the person (reported, never revoked) —
+// and folding it in here would make one command with two destructive directions. It does
+// not GRANT: membership confers
 // authority over the project's OWN scopes through `roleVerbs`, and a scope shared from
 // elsewhere still needs its grant. And it does not create either party.
 func SetMember(ctx context.Context, s Store, req NewMembership) (MembershipSet, error) {
@@ -192,7 +194,7 @@ func SetMember(ctx context.Context, s Store, req NewMembership) (MembershipSet, 
 	}
 
 	prior, wasMember := current.Memberships[req.ProjectID][req.UserID]
-	if err := refuseOrphaning(current, req, prior); err != nil {
+	if err := refuseOrphaning(current, req.ProjectID, req.UserID, prior.Role, req.Role); err != nil {
 		return MembershipSet{}, err
 	}
 
@@ -234,15 +236,19 @@ func SetMember(ctx context.Context, s Store, req NewMembership) (MembershipSet, 
 //
 // What is left, and what each one actually buys:
 //
-//   - `prior.Role != RoleOwner` — the user must currently BE an owner. ⚠ ITS OWN CONTROL
+//   - `prior != RoleOwner` — the user must currently BE an owner. ⚠ ITS OWN CONTROL
 //     IS NARROW AND SAYS SO: dropping it is observable only in a project that ALREADY has
 //     no owner, where changing a member's role would then be refused with a message
 //     naming them as "the only owner" of a project they do not own.
 //     `TestAnAlreadyOrphanedProjectStillAcceptsAMembershipChange` is that case.
-//   - `req.Role == RoleOwner` — re-asserting owner on the sole owner changes nothing and
+//   - `next == RoleOwner` — re-asserting owner on the sole owner changes nothing and
 //     must not be refused. `TestReassertingOwnerOnTheSoleOwnerIsNotRefused`.
-//   - the loop's `userID != req.UserID` — demoting one of TWO owners is the ordinary end
-//     of a handover. `TestASECONDOwnerMakesTheDemotionLEGITIMATE`.
+//   - the loop's `userID != user` — demoting (or removing) one of TWO owners is the
+//     ordinary end of a handover. `TestASECONDOwnerMakesTheDemotionLEGITIMATE`, and
+//     `TestRemovingOneOfTwoOwnersIsAccepted` for `RemoveMember`.
+//
+// 🔴 TWO CALLERS NOW, ONE RULE: `SetMember` passes the requested role, `RemoveMember` passes
+// "" — the rule is the same function rather than a copy at the second writer.
 //
 // 🔴 IT IS A CHECK-THEN-ACT AND THE WINDOW IS REAL, NOT THEORETICAL — DECLARED HERE
 // BECAUSE THE ALTERNATIVE IS TO IMPLY A GUARANTEE THIS DOES NOT GIVE. `SetMember` reads
@@ -258,12 +264,12 @@ func SetMember(ctx context.Context, s Store, req NewMembership) (MembershipSet, 
 // introduces the command. **The operator-facing consequence is bounded**: the state is
 // recoverable with one `-set-member -member-role owner`, which is the remedy the refusal
 // names anyway.
-func refuseOrphaning(m Model, req NewMembership, prior Membership) error {
-	if prior.Role != RoleOwner || req.Role == RoleOwner {
+func refuseOrphaning(m Model, project, user ID, prior, next Role) error {
+	if prior != RoleOwner || next == RoleOwner {
 		return nil
 	}
-	for userID, ms := range m.Memberships[req.ProjectID] {
-		if userID != req.UserID && ms.Role == RoleOwner {
+	for userID, ms := range m.Memberships[project] {
+		if userID != user && ms.Role == RoleOwner {
 			return nil
 		}
 	}
@@ -273,14 +279,22 @@ func refuseOrphaning(m Model, req NewMembership, prior Membership) error {
 	// for an ADMIN, so the first half is wrong when the target role is `admin` — and the
 	// `-member-role` flag's own help text says so one file over, which is exactly the
 	// contradiction `AGENTS.md` warns leads a maintainer to delete the guard.
+	//
+	// ⚠ AN EMPTY `next` IS `RemoveMember`: no role at all, which costs what `member` costs —
+	// a non-member may neither administer nor delete — and is said as a removal rather than
+	// as `making them ""`.
 	cost := "whose membership nobody may change and which nobody may delete"
-	if req.Role == RoleAdmin {
+	if next == RoleAdmin {
 		cost = "that nobody may delete — an admin may still change its membership, " +
 			"but `MayDeleteProject` is true only for an owner"
 	}
+	act := fmt.Sprintf("making them %q", next)
+	if next == "" {
+		act = "removing them from it"
+	}
 	return fmt.Errorf(
-		"%w: %s is the only owner of %s, so making them %q leaves a project %s. Promote "+
+		"%w: %s is the only owner of %s, so %s leaves a project %s. Promote "+
 			"somebody else to owner first, then re-run this — that is a supported two-step "+
 			"and it is also how this state is recovered if it is ever reached another way",
-		ErrWouldOrphanProject, req.UserID, req.ProjectID, req.Role, cost)
+		ErrWouldOrphanProject, user, project, act, cost)
 }
