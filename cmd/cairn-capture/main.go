@@ -159,11 +159,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return exitError
 	}
 	runner := capture.ExecRunner{Bin: *ocBin}
-	dirs, err := opencodeDirs(*ocDisc, ocDirs, runner, stderr)
-	if err != nil {
-		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
-		return exitError
-	}
+	dirs, discRefused := opencodeDirs(*ocDisc, ocDirs, runner, stderr)
 	agent := &capture.Agent{
 		ClaudeRoot:   *claudeRoot,
 		OpencodeDirs: dirs,
@@ -176,6 +172,10 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	if err := agent.DryRun(stdout); err != nil {
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitError
+	}
+	if discRefused != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %s\n", discoveryLine(discRefused))
+		return exitRefused
 	}
 	return exitOK
 }
@@ -194,21 +194,35 @@ type runConfig struct {
 // or — under `-opencode-discover` — unioned with every project `opencode debug scrap` names
 // ([capture.DiscoverOpencodeDirs]).
 //
-// 🔴 A DISCOVERY THAT FAILS IS THE PASS'S ERROR (exit 1), NEVER "NO PROJECTS": a missing binary, a
-// non-zero exit or an answer that does not parse would otherwise read as a host with nothing to
-// capture. And the projects it SKIPS — a worktree that no longer exists, whose sessions `session
-// list` cannot reach — are said on stderr every pass, as one line of counts.
-func opencodeDirs(discover bool, explicit []string, runner capture.OpencodeRunner, stderr io.Writer) ([]string, error) {
+// 🔴 A DISCOVERY THAT FAILS REFUSES THE DISCOVERED HALF, NEVER THE PASS, AND NEVER READS AS "NO
+// PROJECTS" (operator decision). A missing binary, a non-zero exit or an answer that does not parse
+// is logged here as a `refused opencode discovery` line and returned as `refused`; the pass still
+// captures Claude Code and every explicit `-opencode-project` directory (`dirs` is those alone),
+// and the CALLER exits [exitRefused] once the pass is done. 3 rather than 1: it is a refusal that
+// RECURS on every run with nothing changed (a broken binary or an answer this build cannot read
+// stays broken) and the pass otherwise completed — exactly 3's meaning — while 1 means the pass
+// itself could not proceed. And the projects it SKIPS — no existing worktree or sandbox, so
+// `session list` cannot reach them — are said on stderr every pass, in one line of counts.
+func opencodeDirs(discover bool, explicit []string, runner capture.OpencodeRunner, stderr io.Writer) (dirs []string, refused error) {
 	if !discover {
 		return explicit, nil
 	}
-	dirs, named, skipped, err := capture.DiscoverOpencodeDirs(runner, explicit)
+	d, err := capture.DiscoverOpencodeDirs(runner, explicit)
 	if err != nil {
-		return nil, err
+		fmt.Fprintf(stderr, "cairn-capture: refused opencode discovery: %v — the projects it would name are not "+
+			"captured this pass; Claude Code and every -opencode-project directory still are\n", err)
+		return explicit, err
 	}
-	fmt.Fprintf(stderr, "cairn-capture: opencode discovery: projects=%d skipped-missing-worktree=%d enumerated=%d\n",
-		named, skipped, len(dirs))
-	return dirs, nil
+	fmt.Fprintf(stderr, "cairn-capture: opencode discovery: projects=%d via-sandbox=%d skipped-missing-worktree=%d enumerated=%d\n",
+		d.Projects, d.ViaSandbox, d.Skipped, len(d.Dirs))
+	return d.Dirs, nil
+}
+
+// discoveryLine is the run's LAST line when discovery was refused: the cause, its exit, its remedy.
+func discoveryLine(refused error) string {
+	return fmt.Sprintf("opencode discovery was refused (the `refused opencode discovery` line above), so the projects "+
+		"`opencode debug scrap` names were not captured; refused again on every run until it answers (exit %d). "+
+		"Check that -opencode-bin runs and that `opencode debug scrap` prints a JSON list of projects", exitRefused)
 }
 
 // aliased splits `[ALIAS=]VALUE`; no alias is the default instance.
@@ -378,10 +392,7 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	}
 	defer release()
 	runner := capture.ExecRunner{Bin: c.ocBin}
-	dirs, err := opencodeDirs(c.ocDiscover, c.ocDirs, runner, stderr)
-	if err != nil {
-		return fail(err)
-	}
+	dirs, discRefused := opencodeDirs(c.ocDiscover, c.ocDirs, runner, stderr)
 	capture.CleanStateTemps(c.state)
 	state, err := capture.LoadState(c.state)
 	if err != nil {
@@ -427,7 +438,11 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	if runErr != nil {
 		return fail(runErr)
 	}
-	if lines := recurringLines(sum, routing.MultiInstance(), c.state); len(lines) > 0 {
+	lines := recurringLines(sum, routing.MultiInstance(), c.state)
+	if discRefused != nil {
+		lines = append(lines, discoveryLine(discRefused))
+	}
+	if len(lines) > 0 {
 		for _, l := range lines {
 			fmt.Fprintf(stderr, "cairn-capture: %s\n", l)
 		}

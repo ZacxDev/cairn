@@ -136,7 +136,8 @@ type Summary struct {
 	// 3 when either is non-zero. Not printed: the run line's `refused=` is unchanged.
 	Unresumable, NotOwner int
 	// ExportSkipped counts opencode roots whose `opencode export` calls this run made none of
-	// ([Agent.exportSettled]). Not printed: the run line is unchanged.
+	// ([Agent.exportSettled]); printed as the summary's LAST field, `export-skipped=`, so the skip
+	// working is visible in the journal and no field before it moved.
 	ExportSkipped int
 }
 
@@ -177,8 +178,9 @@ func Recurs(err error) Recurrence {
 
 // String is the run's one summary line.
 func (s Summary) String() string {
-	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d skipped=%d withdrawal-pending=%d deleted=%d",
-		s.Sessions, s.Shipped, s.Held, s.Withdrawn, s.Records, s.Blobs, s.Refused, s.Skipped, s.WithdrawalPending, s.Deleted)
+	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d skipped=%d withdrawal-pending=%d deleted=%d export-skipped=%d",
+		s.Sessions, s.Shipped, s.Held, s.Withdrawn, s.Records, s.Blobs, s.Refused, s.Skipped, s.WithdrawalPending, s.Deleted,
+		s.ExportSkipped)
 }
 
 func (a *Agent) logf(format string, args ...any) {
@@ -203,12 +205,13 @@ func (a *Agent) Run() (Summary, error) {
 			a.isolate(cs.Root, &sum, func() error { return a.runClaude(cs, &sum) })
 		}
 	}
+	seen := map[string]bool{}
 	for _, dir := range a.OpencodeDirs {
 		raw, err := a.Runner.List(dir, a.listCap())
 		if err == nil {
 			var roots []listedRoot
 			if roots, err = listRoots(raw, a.listCap()); err == nil {
-				for _, root := range roots {
+				for _, root := range firstSeen(roots, seen) {
 					a.isolate(root.ID, &sum, func() error { return a.runOpencode(root, &sum) })
 				}
 			}
@@ -227,6 +230,25 @@ func (a *Agent) Run() (Summary, error) {
 		}
 	}
 	return sum, a.fatal
+}
+
+// firstSeen is the roots of one `session list` not already processed in this pass, marking them.
+//
+// 🔴 A ROOT IS PROCESSED ONCE PER PASS, WHICHEVER DIRECTORY LISTED IT. `session list` filters by
+// opencode's PROJECT, not by directory (measured: a base checkout and a worktree of it answered
+// identical id sets), so two directories of one project — an explicit `-opencode-project` beside
+// the worktree discovery names, or a worktree and a sandbox — list the same roots, and nothing
+// short of asking opencode maps a directory to its project. Deduplicating the ROOTS is the
+// mechanical form: a second visit would export it twice and count it twice.
+func firstSeen(roots []listedRoot, seen map[string]bool) []listedRoot {
+	var out []listedRoot
+	for _, r := range roots {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // isolate runs one session's capture and turns its failure into a logged refusal.
@@ -885,29 +907,42 @@ type ocStream struct {
 // OpencodeSettle is how long after a root's listed `updated` its export must have begun before an
 // unchanged `updated` may skip the next export ([Agent.exportSettled]).
 //
-// 🔴 WHY A WINDOW AND NOT THE ROOT'S `updated` ALONE: a CHILD session can change after its root
-// does — measured over 459 child sessions on one host, 2 were updated later than their root, by at
-// most 39.8 s — and the root's `updated` does not move when it does. An export that began at least
-// this long after the root's last update saw every such child change; one that began sooner may
-// not have, so the root is exported again until one has.
-const OpencodeSettle = 10 * time.Minute
+// 🔴 WHY A WINDOW AND NOT THE ROOT'S `updated` ALONE: the listed `updated` does not move for every
+// change an export would carry. Two shapes were measured on one host: a CHILD session updated
+// after its root (2 of 459 children, by at most 39.8 s), and a root's OWN final assistant message
+// whose `time.completed` lands after the root's listed `updated` (13 of 120 recent roots, by at most
+// 135.4 s) — a message completing does not bump `updated`. An export that began at least this long
+// after the root's last update saw every such change measured, with a wide margin; one that began
+// sooner may not have, so the root is exported again until one has.
+//
+// ⚠ A change later than the window, with `updated` still unmoved, is beyond what was measured and
+// not ruled out — [OpencodeMaxExportAge] is what bounds it.
+const OpencodeSettle = 60 * time.Minute
+
+// OpencodeMaxExportAge is the BACKSTOP: a root whose recorded export began longer ago than this is
+// exported again whatever its `updated` says, so a change the skip rule cannot see — one landing
+// later than [OpencodeSettle] with `updated` unmoved — is delayed by at most this, never lost. It
+// costs one export per root per day.
+const OpencodeMaxExportAge = 24 * time.Hour
 
 // exportSettled reports whether this run may make NO `opencode export` call for a root: its
 // listed `updated` is the one recorded at the last pass that exported and shipped the root and
 // every child COMPLETELY ([SessionState.OpencodeUpdated]), and that pass's export began at least
-// [OpencodeSettle] after it.
+// [OpencodeSettle] after it, and less than [OpencodeMaxExportAge] ago.
 //
 // 🔴 MEASURED COST, THE REASON IT EXISTS: one `opencode export` costs ~0.65 s whatever its size,
 // and every root and every child was exported on every 60-second pass — at ~600 roots and ~460
 // children, minutes of CPU per pass, forever, for sessions nobody had touched.
 //
 // 🔴 ANYTHING AMBIGUOUS EXPORTS: no record, a row with no `updated` (0), a different one, an
-// unsettled export, or a record that a pass which did not complete has cleared. A skip still
+// unsettled export, an export older than the backstop, or a record that a pass which did not
+// complete has cleared. A skip still
 // folds every ledger, ROUTES and ships the ledger ([Agent.runOpencode]), so a read that moves the
 // session, a routing-table edit and a pending withdrawal are all acted on exactly as before.
 func (a *Agent) exportSettled(ss *SessionState, updated int64) bool {
 	return updated > 0 && ss.OpencodeUpdated == updated &&
-		ss.OpencodeExportedAt >= updated+OpencodeSettle.Milliseconds()
+		ss.OpencodeExportedAt >= updated+OpencodeSettle.Milliseconds() &&
+		a.now().UnixMilli()-ss.OpencodeExportedAt < OpencodeMaxExportAge.Milliseconds()
 }
 
 // opencodeComplete reports whether nothing of an opencode session is refused, held, pending or awaiting a

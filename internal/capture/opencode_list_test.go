@@ -111,29 +111,57 @@ func TestDiscoveryUnionsDedupesAndCountsTheMissing(t *testing.T) {
 		{"id": "under-a-file", "worktree": filepath.Join(file, "x")},
 	})
 	explicitGone := filepath.Join(base, "explicit-gone")
-	dirs, discovered, skipped, err := DiscoverOpencodeDirs(&fakeRunner{projects: scrap},
-		[]string{alpha, beta + "/./", explicitGone})
+	d, err := DiscoverOpencodeDirs(&fakeRunner{projects: scrap}, []string{alpha, beta + "/./", explicitGone})
 	want := []string{"/", alpha, beta, explicitGone}
-	if err != nil || discovered != 5 || skipped != 2 || strings.Join(dirs, "|") != strings.Join(want, "|") {
-		t.Fatalf("dirs %v discovered %d skipped %d (%v); want %v, 5, 2", dirs, discovered, skipped, err, want)
+	if err != nil || d.Projects != 5 || d.Skipped != 2 || d.ViaSandbox != 0 || strings.Join(d.Dirs, "|") != strings.Join(want, "|") {
+		t.Fatalf("%+v (%v); want dirs %v, 5 projects, 2 skipped, 0 via a sandbox", d, err, want)
+	}
+}
+
+// TestAGoneWorktreeIsReachedThroughItsSandbox: `session list` answers a directory's PROJECT
+// (measured: all of a project's sessions from either sandbox while its worktree was gone), so a
+// project whose worktree is gone is enumerated from its FIRST EXISTING sandbox and counted
+// `ViaSandbox` — and only a project with no existing sandbox either is `Skipped`.
+func TestAGoneWorktreeIsReachedThroughItsSandbox(t *testing.T) {
+	base := t.TempDir()
+	sb2, sb3, live := filepath.Join(base, "sb2"), filepath.Join(base, "sb3"), filepath.Join(base, "live")
+	for _, d := range []string{sb2, sb3, live} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scrap, _ := json.Marshal([]map[string]any{
+		// worktree gone; first sandbox gone, second and third exist → the second, only.
+		{"id": "p1", "worktree": filepath.Join(base, "gone1"), "sandboxes": []string{filepath.Join(base, "sb1-gone"), sb2, sb3}},
+		// worktree gone, every sandbox gone → skipped.
+		{"id": "p2", "worktree": filepath.Join(base, "gone2"), "sandboxes": []string{filepath.Join(base, "sb4-gone")}},
+		// worktree present → the worktree, never its sandbox.
+		{"id": "p3", "worktree": live, "sandboxes": []string{sb3}},
+	})
+	d, err := DiscoverOpencodeDirs(&fakeRunner{projects: scrap}, nil)
+	want := []string{live, sb2}
+	if err != nil || d.Projects != 3 || d.ViaSandbox != 1 || d.Skipped != 1 || strings.Join(d.Dirs, "|") != strings.Join(want, "|") {
+		t.Fatalf("%+v (%v); want dirs %v, 3 projects, 1 via a sandbox, 1 skipped", d, err, want)
 	}
 }
 
 // TestDiscoveryNeverDegradesToNoProjects: a runner that fails, and every answer that is not a list
-// of projects with absolute worktrees, is an ERROR — while `[]` is zero projects and no error.
+// of projects with absolute worktrees (and absolute string sandboxes), is an ERROR — while `[]` is
+// zero projects and no error.
 func TestDiscoveryNeverDegradesToNoProjects(t *testing.T) {
-	if _, _, _, err := DiscoverOpencodeDirs(&fakeRunner{projErr: errors.New("exit status 1")}, nil); err == nil {
+	if _, err := DiscoverOpencodeDirs(&fakeRunner{projErr: errors.New("exit status 1")}, nil); err == nil {
 		t.Fatal("a failed `debug scrap` was not an error")
 	}
 	for _, raw := range []string{"", "null", "{}", `"x"`, "[", `[{"id":"x"}]`, `[{"worktree":"relative/dir"}]`,
-		`[{"worktree":7}]`, `[{"worktree":"/ok"}, {"worktree":null}]`} {
-		if _, _, _, err := DiscoverOpencodeDirs(&fakeRunner{projects: []byte(raw)}, nil); !errors.Is(err, ErrProjectsUnreadable) {
+		`[{"worktree":7}]`, `[{"worktree":"/ok"}, {"worktree":null}]`, `[{"worktree":"/ok","sandboxes":["rel"]}]`,
+		`[{"worktree":"/ok","sandboxes":[{"dir":"/x"}]}]`, `[{"worktree":"/ok","sandboxes":"/x"}]`} {
+		if _, err := DiscoverOpencodeDirs(&fakeRunner{projects: []byte(raw)}, nil); !errors.Is(err, ErrProjectsUnreadable) {
 			t.Errorf("scrap answering %q: %v; want ErrProjectsUnreadable", raw, err)
 		}
 	}
-	dirs, n, skipped, err := DiscoverOpencodeDirs(&fakeRunner{projects: []byte(" [] \n")}, []string{"/work/alpha"})
-	if err != nil || n != 0 || skipped != 0 || len(dirs) != 1 {
-		t.Fatalf("an empty project list: %v %d %d %v; want the explicit directory alone and no error", dirs, n, skipped, err)
+	d, err := DiscoverOpencodeDirs(&fakeRunner{projects: []byte(" [] \n")}, []string{"/work/alpha"})
+	if err != nil || d.Projects != 0 || d.Skipped != 0 || len(d.Dirs) != 1 {
+		t.Fatalf("an empty project list: %+v %v; want the explicit directory alone and no error", d, err)
 	}
 }
 
@@ -145,16 +173,16 @@ func TestDiscoveryRunsTheRealSubprocess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CAPTURE_OPENCODE_STUB", stub)
-	dirs, _, _, err := DiscoverOpencodeDirs(ExecRunner{Bin: os.Args[0], TempDir: t.TempDir()}, nil)
-	if err != nil || len(dirs) != 1 || dirs[0] != "/" {
-		t.Fatalf("through the subprocess: %v (%v)", dirs, err)
+	d, err := DiscoverOpencodeDirs(ExecRunner{Bin: os.Args[0], TempDir: t.TempDir()}, nil)
+	if err != nil || len(d.Dirs) != 1 || d.Dirs[0] != "/" {
+		t.Fatalf("through the subprocess: %+v (%v)", d, err)
 	}
-	if _, _, _, err := DiscoverOpencodeDirs(ExecRunner{Bin: filepath.Join(stub, "no-such-opencode"), TempDir: t.TempDir()}, nil); err == nil {
+	if _, err := DiscoverOpencodeDirs(ExecRunner{Bin: filepath.Join(stub, "no-such-opencode"), TempDir: t.TempDir()}, nil); err == nil {
 		t.Fatal("a missing opencode binary was not an error")
 	}
 	// A non-zero exit: the stub exits 65 when it has no answer to give.
 	t.Setenv("CAPTURE_OPENCODE_STUB", t.TempDir())
-	if _, _, _, err := DiscoverOpencodeDirs(ExecRunner{Bin: os.Args[0], TempDir: t.TempDir()}, nil); err == nil ||
+	if _, err := DiscoverOpencodeDirs(ExecRunner{Bin: os.Args[0], TempDir: t.TempDir()}, nil); err == nil ||
 		!strings.Contains(err.Error(), "exit status 65") {
 		t.Fatalf("a `debug scrap` that exits non-zero: %v; want its exit status as an error", err)
 	}

@@ -94,7 +94,7 @@ func TestADryRunDiscoversOpencodesProjects(t *testing.T) {
 	if code != exitOK || got != "ses_alpha,ses_beta" {
 		t.Fatalf("exit %d, roots %q; want ses_alpha,ses_beta once each\nstdout:\n%s\nstderr:\n%s", code, got, out.String(), errb.String())
 	}
-	const want = "cairn-capture: opencode discovery: projects=2 skipped-missing-worktree=1 enumerated=2\n"
+	const want = "cairn-capture: opencode discovery: projects=2 via-sandbox=0 skipped-missing-worktree=1 enumerated=2\n"
 	if strings.Count(errb.String(), "opencode discovery") != 1 || !strings.Contains(errb.String(), want) {
 		t.Fatalf("stderr does not carry the one discovery line %q:\n%s", want, errb.String())
 	}
@@ -108,10 +108,30 @@ func TestADryRunDiscoversOpencodesProjects(t *testing.T) {
 	}
 }
 
-// TestAFailedDiscoveryIsAnErrorNeverNoProjects: an unparseable scrap answer, a non-zero exit and a
-// missing binary each end the pass with exit 1 — in --dry-run AND --run — and nothing of opencode
-// is read; never a pass that quietly enumerated nothing.
-func TestAFailedDiscoveryIsAnErrorNeverNoProjects(t *testing.T) {
+// TestAGoneWorktreeIsEnumeratedFromItsSandbox: a project whose worktree is gone but whose sandbox
+// exists is listed from the sandbox, and the counts line says so (`via-sandbox=1`).
+func TestAGoneWorktreeIsEnumeratedFromItsSandbox(t *testing.T) {
+	base := discoverWorld(t, nil)
+	scrap, _ := json.Marshal([]map[string]any{{"id": "p0", "worktree": filepath.Join(base, "gone"),
+		"sandboxes": []string{filepath.Join(base, "alpha")}}})
+	if err := os.WriteFile(filepath.Join(os.Getenv("CAIRN_CAPTURE_FAKE_OPENCODE"), "scrap.json"), scrap, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"--dry-run", "-claude-root", "", "-opencode-bin", os.Args[0], "-opencode-discover"},
+		&out, &errb, envOf(map[string]string{"HOME": t.TempDir()}))
+	const want = "opencode discovery: projects=1 via-sandbox=1 skipped-missing-worktree=0 enumerated=1\n"
+	if got := strings.Join(opencodeLines(out.String()), ","); code != exitOK || got != "ses_alpha" || !strings.Contains(errb.String(), want) {
+		t.Fatalf("exit %d, roots %q, stderr %q; want ses_alpha and %q", code, got, errb.String(), want)
+	}
+}
+
+// TestAFailedDiscoveryRefusesOnlyTheOpencodeHalf (operator decision "opencode half only"): an
+// unparseable scrap answer, a non-zero exit and a missing binary each REFUSE the discovered
+// projects — logged — while Claude Code and the explicit `-opencode-project` directory are still
+// captured, and the pass then exits 3 (a refusal that recurs) — in --dry-run AND --run. Never a
+// pass that quietly enumerated nothing, and never one that dropped Claude Code over opencode.
+func TestAFailedDiscoveryRefusesOnlyTheOpencodeHalf(t *testing.T) {
 	cases := []struct {
 		name  string
 		scrap []byte
@@ -129,20 +149,36 @@ func TestAFailedDiscoveryIsAnErrorNeverNoProjects(t *testing.T) {
 			if bin == "" {
 				bin = os.Args[0]
 			}
-			var out, errb bytes.Buffer
-			code := run([]string{"--dry-run", "-claude-root", "", "-opencode-bin", bin, "-opencode-discover",
-				"-opencode-project", filepath.Join(base, "alpha")}, &out, &errb, envOf(map[string]string{"HOME": t.TempDir()}))
-			if code != exitError || !strings.Contains(errb.String(), tc.says) || len(opencodeLines(out.String())) != 0 {
-				t.Fatalf("--dry-run: exit %d, stdout %q, stderr %q; want exit %d naming %q", code, out.String(), errb.String(), exitError, tc.says)
-			}
 			p := newRunPod(t, true)
-			_, tokenFile, env := runWorld(t, runToken)
+			home, tokenFile, env := runWorld(t, runToken)
+			var out, errb bytes.Buffer
+			args := []string{"--dry-run", "-claude-root", filepath.Join(home, ".claude", "projects"), "-opencode-bin", bin,
+				"-opencode-discover"}
+			if tc.bin == "" {
+				// With a binary that runs, the explicit directory is still listed. (With none, its own
+				// `session list` fails too, which a dry run reports as exit 1 — unchanged by this.)
+				args = append(args, "-opencode-project", filepath.Join(base, "alpha"))
+			}
+			code := run(args, &out, &errb, env)
+			refused := "cairn-capture: refused opencode discovery: "
+			if code != exitRefused || !strings.Contains(errb.String(), refused) || !strings.Contains(errb.String(), tc.says) ||
+				!strings.Contains(out.String(), "claude s-0001 ") {
+				t.Fatalf("--dry-run: exit %d, stdout %q, stderr %q; want exit %d, Claude Code still read, the refusal naming %q",
+					code, out.String(), errb.String(), exitRefused, tc.says)
+			}
+			if tc.bin == "" && strings.Join(opencodeLines(out.String()), ",") != "ses_alpha" {
+				t.Fatalf("--dry-run: the explicit -opencode-project was not read:\n%s", out.String())
+			}
 			errb.Reset()
 			code = run([]string{"--run", "-host", "host-a", "-worker", p.url, "-capture-token-file", tokenFile,
 				"-opencode-bin", bin, "-opencode-discover"}, &bytes.Buffer{}, &errb, env)
-			if code != exitError || !strings.Contains(errb.String(), tc.says) || p.requests.Load() != 0 {
-				t.Fatalf("--run: exit %d, %d request(s), stderr %q; want exit %d naming %q and nothing sent",
-					code, p.requests.Load(), errb.String(), exitError, tc.says)
+			recs, _ := p.arc.ReadStream("s-0001", "main")
+			last := strings.TrimSpace(errb.String())
+			last = last[strings.LastIndex(last, "\n")+1:]
+			if code != exitRefused || !strings.Contains(errb.String(), tc.says) || len(recs) != 5 ||
+				!strings.Contains(last, "opencode discovery was refused") {
+				t.Fatalf("--run: exit %d, %d Claude Code record(s) stored, stderr %q; want exit %d, all 5 stored, the "+
+					"refusal naming %q and the discovery line last", code, len(recs), errb.String(), exitRefused, tc.says)
 			}
 		})
 	}
@@ -155,7 +191,7 @@ func TestAnEmptyProjectListIsZeroProjectsNotAnError(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"--dry-run", "-claude-root", "", "-opencode-bin", os.Args[0], "-opencode-discover"},
 		&out, &errb, envOf(map[string]string{"HOME": t.TempDir()}))
-	if code != exitOK || !strings.Contains(errb.String(), "projects=0 skipped-missing-worktree=0 enumerated=0") {
+	if code != exitOK || !strings.Contains(errb.String(), "projects=0 via-sandbox=0 skipped-missing-worktree=0 enumerated=0") {
 		t.Fatalf("exit %d, stderr %q", code, errb.String())
 	}
 }

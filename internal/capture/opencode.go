@@ -221,75 +221,119 @@ func listRoots(raw []byte, limit int) ([]listedRoot, error) {
 var ErrProjectsUnreadable = errors.New("capture: `opencode debug scrap` did not answer a JSON list of projects " +
 	"with absolute worktrees")
 
-// parseProjects reads `opencode debug scrap`'s `[{"id", "worktree", …}]` into cleaned worktree
-// paths. The `global` project's worktree is `/`, and `session list` run there lists the global
-// project's sessions (measured), so it is a project like any other.
+// scrapProject is one project `debug scrap` names: its worktree and its sandboxes — further
+// directories of the SAME project — all cleaned absolute paths.
+type scrapProject struct {
+	Worktree  string
+	Sandboxes []string
+}
+
+// parseProjects reads `opencode debug scrap`'s `[{"id", "worktree", "sandboxes", …}]`. The
+// `global` project's worktree is `/`, and `session list` run there lists the global project's
+// sessions (measured), so it is a project like any other.
 //
-// 🔴 ONLY A LIST IS AN ANSWER. `null`, an object, a row with no worktree or a relative one is
-// [ErrProjectsUnreadable]: each would otherwise read as "fewer projects", the silent loss this
-// discovery exists to end. `[]` IS an answer: opencode knows no project.
-func parseProjects(raw []byte) ([]string, error) {
+// 🔴 ONLY A LIST IS AN ANSWER. `null`, an object, a row with no worktree or a relative one, or a
+// sandbox that is not an absolute path string, is [ErrProjectsUnreadable]: each would otherwise
+// read as "fewer projects", the silent loss this discovery exists to end. `[]` IS an answer:
+// opencode knows no project. A row with no `sandboxes` has none.
+func parseProjects(raw []byte) ([]scrapProject, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '[' {
 		return nil, ErrProjectsUnreadable
 	}
 	var rows []struct {
-		Worktree *string `json:"worktree"`
+		Worktree  *string           `json:"worktree"`
+		Sandboxes []json.RawMessage `json:"sandboxes"`
 	}
 	if err := json.Unmarshal(trimmed, &rows); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProjectsUnreadable, err)
 	}
-	out := make([]string, 0, len(rows))
+	out := make([]scrapProject, 0, len(rows))
 	for i, r := range rows {
 		if r.Worktree == nil || !filepath.IsAbs(*r.Worktree) {
 			return nil, fmt.Errorf("%w: row %d", ErrProjectsUnreadable, i)
 		}
-		out = append(out, filepath.Clean(*r.Worktree))
+		p := scrapProject{Worktree: filepath.Clean(*r.Worktree)}
+		for _, s := range r.Sandboxes {
+			var dir string
+			if err := json.Unmarshal(s, &dir); err != nil || !filepath.IsAbs(dir) {
+				return nil, fmt.Errorf("%w: row %d's sandboxes", ErrProjectsUnreadable, i)
+			}
+			p.Sandboxes = append(p.Sandboxes, filepath.Clean(dir))
+		}
+		out = append(out, p)
 	}
 	return out, nil
 }
 
+// Discovery is [DiscoverOpencodeDirs]'s answer: the directories to enumerate, and the counts the
+// caller prints — how many projects scrap named, how many of those whose worktree is gone were
+// reached through an existing sandbox instead, and how many could be reached through neither.
+type Discovery struct {
+	Dirs                          []string
+	Projects, ViaSandbox, Skipped int
+}
+
+// gone reports whether a directory does not exist (or a component of its path is not one).
+func gone(dir string) bool {
+	_, err := os.Stat(dir)
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
 // DiscoverOpencodeDirs is the opencode project directories one run enumerates: the `explicit`
 // ones (`-opencode-project`) UNION every project `opencode debug scrap` names, deduplicated by
-// cleaned absolute path and sorted. `discovered` is how many projects scrap named.
+// cleaned absolute path and sorted.
 //
-// A discovered worktree that no longer exists is SKIPPED and counted in `skipped`: `session list`
-// must run inside the directory, so its sessions cannot be listed through the CLI at all — the
-// caller says how many there were, so the loss is never silent. Any other stat error keeps the
-// directory, and the run's own `refused opencode project` line then names it. An explicit
-// directory is never skipped.
+// `session list` runs IN a directory and answers that directory's PROJECT — it filters by project,
+// not by directory (measured: a base checkout and a worktree of it answered identical id sets; a
+// project whose worktree was gone answered all 10 of its sessions from either of its 2 sandboxes).
+// So a project whose worktree no longer exists is reached through its FIRST existing sandbox
+// (`ViaSandbox`), and only a project with neither is SKIPPED (`Skipped`) — the caller prints both
+// counts, so the loss is never silent. Any other stat error keeps the directory, and the run's own
+// `refused opencode project` line then names it. An explicit directory is never skipped. Two
+// directories of one project list the same roots; the pass processes each root once
+// ([firstSeen]).
 //
 // 🔴 A RUNNER THAT FAILS (a missing binary, a non-zero exit) OR AN ANSWER THAT DOES NOT PARSE IS AN
 // ERROR — never zero projects.
-func DiscoverOpencodeDirs(r OpencodeRunner, explicit []string) (dirs []string, discovered, skipped int, err error) {
+func DiscoverOpencodeDirs(r OpencodeRunner, explicit []string) (Discovery, error) {
 	raw, err := r.Projects()
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("capture: opencode project discovery failed: %w", err)
+		return Discovery{}, fmt.Errorf("capture: opencode project discovery failed: %w", err)
 	}
 	found, err := parseProjects(raw)
 	if err != nil {
-		return nil, 0, 0, err
+		return Discovery{}, err
 	}
+	d := Discovery{Projects: len(found)}
 	set := map[string]bool{}
-	for _, d := range explicit {
-		if abs, aerr := filepath.Abs(d); aerr == nil {
-			d = abs
+	for _, dir := range explicit {
+		if abs, aerr := filepath.Abs(dir); aerr == nil {
+			dir = abs
 		}
-		set[filepath.Clean(d)] = true
+		set[filepath.Clean(dir)] = true
 	}
-	for _, d := range found {
-		if set[d] {
+	for _, p := range found {
+		if set[p.Worktree] || !gone(p.Worktree) {
+			set[p.Worktree] = true
 			continue
 		}
-		if _, serr := os.Stat(d); errors.Is(serr, os.ErrNotExist) || errors.Is(serr, syscall.ENOTDIR) {
-			skipped++
-			continue
+		reached := false
+		for _, s := range p.Sandboxes {
+			if !gone(s) {
+				set[s], reached = true, true
+				break
+			}
 		}
-		set[d] = true
+		if reached {
+			d.ViaSandbox++
+		} else {
+			d.Skipped++
+		}
 	}
-	for d := range set {
-		dirs = append(dirs, d)
+	for dir := range set {
+		d.Dirs = append(d.Dirs, dir)
 	}
-	sort.Strings(dirs)
-	return dirs, len(found), skipped, nil
+	sort.Strings(d.Dirs)
+	return d, nil
 }

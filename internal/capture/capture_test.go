@@ -253,6 +253,9 @@ type memSink struct {
 	probes []string
 	// probeErr makes every position ask fail (an unreachable instance).
 	probeErr error
+	// errAfterStore makes a records write store EVERY record and still answer this error — a write
+	// whose state ends clean while the session reports a failure.
+	errAfterStore error
 }
 
 func newMemSink() *memSink {
@@ -286,7 +289,7 @@ func (s *memSink) Records(u Upload, stream string, recs []Record) (int, error) {
 	s.records[k] = append(s.records[k], recs...)
 	s.pos[k] = recs[len(recs)-1].End
 	s.declared[u.Instance+"/"+u.Root] = u.Declared
-	return len(recs), nil
+	return len(recs), s.errAfterStore
 }
 
 func (s *memSink) Blob(u Upload, name, to string, data []byte) error {

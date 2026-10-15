@@ -118,7 +118,7 @@ func TestARowWithNoUpdatedIsAlwaysExported(t *testing.T) {
 // carrying `oc_updated` 0 with an export time must not turn every row without `updated` into a
 // skip. (The run never WRITES such a record: TestARowWithNoUpdatedIsAlwaysExported.)
 func TestAZeroUpdatedNeverSettles(t *testing.T) {
-	a := &Agent{}
+	a := &Agent{Now: clockAt(1 + settle + 60_000)}
 	if a.exportSettled(&SessionState{OpencodeUpdated: 0, OpencodeExportedAt: 946684800000}, 0) {
 		t.Fatal("a listed `updated` of 0 matched a hand-written record of 0 and skipped the export")
 	}
