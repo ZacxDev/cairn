@@ -252,3 +252,9 @@ revoked token still presented is a 401 every minute that counts toward the liste
 - **The damage budget pins a FROZEN corpus** (`internal/redact/testdata/`); the live-tree and GOROOT
   sweeps are opt-in (`-redact.live-budget`) because the live form failed on unrelated doc edits and
   under Go 1.26. A whole-stdlib sweep still sees +112 lines the frozen corpus cannot. via: measurement
+
+- **The "transcript store is NOT backed up" defect now has its operator decision on record: a backup that
+  honours retention and deletion, APPROVED** (hourly, deletions driven by `journal.jsonl`, dedicated bucket,
+  delete-capable credential scoped to it). Built on an unmerged deployment-repo branch, blocked on the
+  operator creating the bucket and credential. The defect closes when that job runs green and a restore
+  drill passes; tracked as rank 4 of `claudedocs/handoff-cairn-outstanding-sweep.md`. via: command
