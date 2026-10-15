@@ -190,7 +190,14 @@ type listedRoot struct {
 
 // listRoots parses `session list --format json`: `[{id, updated, …}]`, asked for at most `limit`
 // rows. A list of `limit` rows or more is [ErrSessionListAtCap].
+//
+// 🔴 AN EMPTY ANSWER IS ZERO ROOTS: measured on opencode 1.18.29, a project with no sessions makes
+// `session list` write nothing at all (exit 0) rather than `[]`. Only all-whitespace counts; a
+// truncated list is still an error. Stdout goes to a regular file, so empty is not a pipe cut short.
 func listRoots(raw []byte, limit int) ([]listedRoot, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, nil
+	}
 	var rows []struct {
 		ID      string          `json:"id"`
 		Updated json.RawMessage `json:"updated"`
