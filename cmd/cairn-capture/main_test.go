@@ -148,7 +148,12 @@ func runWorld(t *testing.T, token string) (home, tokenFile string, env func(stri
 	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return home, tokenFile, envOf(map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "xdg")})
+	// 🔴 CAIRN_CONFIG IS SET, NOT LEFT TO HOME: with it unset `client.Discover` resolves the config
+	// through the PROCESS's home directory, not this env's HOME, so the run read the instances of
+	// whatever machine ran the test — measured: on a developer host configured with two instances
+	// the single-instance remedy assertion failed, because the run took that host's routing.
+	return home, tokenFile, envOf(map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "xdg"),
+		"CAIRN_CONFIG": filepath.Join(home, ".config", "cairn", "env")})
 }
 
 // TestARunUploadsOnceAndAnIdleRunSendsNothing: `--run` against the real worker stores the

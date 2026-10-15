@@ -34,7 +34,7 @@ operator's act.
    prefix and stop for good.
 5. **Redacts** every record and blob (`internal/redact`) and hands the exact bytes to the Sink; a
    watermark advances only after its write succeeds. One session's failure is refused and logged;
-   the run continues — and, once it has completed and saved the state, exits 3 (below).
+   the run continues; whether the pass then exits 3 is the exit-status section below.
 
 ## Measured facts it is built on (one host, opencode 1.18.29)
 
@@ -97,24 +97,29 @@ AccuracySec=1s
 
 ### `--run`'s exit status
 
+🔴 **This is the ONE statement of cairn-capture's exit codes**; `main.go`, `Recurs`'s doc and the
+CHANGELOG point here. It is cairn-capture's own table, not the client's (`cairn -exit-codes`, where 3
+means something else).
+
 | exit | means |
 |---|---|
-| 0 | the pass completed and refused nothing that fails it — including a session held (`held=`), deleted on its instance (410, `deleted=`), or refused only because its instance is disarmed or full (503/507: counted in `refused=`, retried next run with nothing lost) |
-| 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session: every other `refused` the run line counts (`Summary.Failed`). Each keeps its `refused <session>: …` line, and one last line names the count and the remedy |
+| 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run; a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` |
+| 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session for a reason that recurs on every run with nothing changed on either side (`capture.Recurs`): an **unresumable position** or **another uploader** (table below). One last stderr line per cause names the count and that cause's remedy |
 | 1 | the state cannot be read or saved, a session tree cannot be listed, or an instance refused the capture token (401/403); wins over 3 |
-| 2 | usage |
+| 2 | usage, and `--self-test`'s "could not vouch" |
 
-Exit 3 is what makes a **wedged** session visible to the unit running it: a stored position the
-state cannot resume from (`UnresumableError`) or a root held by another uploader (`ErrNotOwner`) is
-refused again on every run, so the unit is `failed` on every run until it is resolved. Without it the
-run exited 0 forever. The remedy, once the cause is understood: with no run in progress, remove that
-session's entry (keyed by its id, under `sessions`) from the state file — the next run reads it again
-from the start. ⚠ Not every refusal recurs: a network error or a 5xx fails the run it happened in
-and is retried on the next, where it may not; a 422 that holds a stream for good, and a rewritten stream, are counted
-only in the run that first marks them, so they fail that one run. 🔴 This is cairn-capture's own table,
-not the client's (`cairn -exit-codes`, where 3 means something else). `--dry-run` talks to no
-instance and reads no state, so none of these refusals can arise in it: its per-session `refused=`
-counts files it could not read, and it exits 0 having printed them.
+`--dry-run` is unchanged: it reads no state and talks to no instance, so no refusal here can arise in it.
+
+| cause | the line to look for | exit | remedy |
+|---|---|---|---|
+| a stored position the state cannot resume from (`UnresumableError`) | `refused <session>: the instance holds this stream at "<pos>", which is not the start or the end of any record this run carries; …` | 3, every run | **On a host routed to ONE instance:** once the cause is understood (say, the instance's store was restored behind this host), with no run in progress, remove that session's entry (keyed by its id, under `sessions`) from the state file; the next run reads it again from the start. The entry also remembers which records the pod's re-check refused, so their bytes may be sent once more (the pod refuses them again). **On a host routed to SEVERAL instances: do not remove the whole entry** — it also records which instance holds the session's earlier upload (`instance`, the withdrawal obligation of decision 16) and any final hold (`held`), and removing it can strand or duplicate that upload. No narrower remedy has been measured; resolve it with the instance's operator |
+| another (owner, host) holds the root (`ErrNotOwner`) | `refused <session>: the instance answered that this session is held by another uploader (409); …` — or, on a move, a `refused <session>: its routing answer now names instance …` line ending in that text | 3, every run | resolved **on the instance** (the other uploader's copy of that root — a token reissued under another host label, say). Clearing this host's state changes nothing |
+| a 422 naming a request field (the pod's redaction re-check matched a name or cursor) | `HOLD <session>/<stream>: … — held on this host for good and never resent` (no `refused` line) | 0 | **never clear the entry**: that forgets the hold and re-sends bytes the re-check refused. Marked once, so it would fail only one run anyway |
+| a rewritten Claude Code stream | `refused <session>/<stream>: …` | 0 | marked once and skipped after; clearing would re-ship the rewritten file from its start |
+
+⚠ A session reports only its FIRST failure, so its `refused` line may name a transient error while
+another of its streams is wedged; the exit still counts the wedge (the classification sees every
+failed write); once the transient cause is gone, a later run's line can name it.
 
 A run takes `<state>.lock` (`flock`); an overlapping run exits 0 having done nothing. The state is
 saved only when it CHANGED: at once where a crash must not lose a decision (an opencode write's
