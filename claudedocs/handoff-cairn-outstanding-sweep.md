@@ -99,12 +99,14 @@ its arc and is updated by the lane that owns it.
 8. Retire the invitation half once the deployed `invites` table has zero open rows (at most 7 days after the
    fold deployed): revoke route, redeem arm, the redirect, `invite.Store.Create`; a route-ledger change.
    forcing: user — follows from the operator's option A
-9. IN FLIGHT: cairn#284 — `cairn-capture --run` exits 3 when a run refused a session (a permanent wedge was
-   invisible: exit 0, unit green). CI 30/30 green; regression test re-run independently here: red at the base
-   (`exit 0, want 3`), green at the head. Next: `/audit-pr 284`, merge on a 🔴-free round, then ship the
-   tooling repo's cairn pin to BOTH hosts — after which a refused session turns each host's capture unit
-   `failed` (intended). Open choice recorded in the PR: a permanent 422-field hold or rewritten stream fails
-   only ONE run. Touches `cmd/cairn-capture/`, `internal/capture/`. forcing: user — operator: proceed
+9. cairn#284 MERGED (`63c16cc`, content identical to the audited head `92b14b5`): `cairn-capture --run` exits 3
+   ONLY for refusals that recur every run (unresumable stored position; not-owner 409, incl. a move's probe),
+   with a per-cause remedy on stderr; transient failures still exit 0. Ladder: round 0 + rounds 1–2, no 🔴;
+   both rounds' 🟡s fixed. NOT SHIPPED: move the tooling repo's cairn pin to ≥ `63c16cc` on BOTH hosts. Then a
+   wedged session turns that host's capture unit `failed` — and per round 0 NOTHING reads a failed user unit
+   automatically (the unit has no OnFailure by design; the bar shows only runaways), so pair the ship with a
+   reader (a failed-unit bar pill, or a rate-limited OnFailure) or accept manual `systemctl --user --failed`.
+   forcing: user — operator: proceed
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this sweep (paraphrased):** the redactor's 90% held-back gate is WAIVED as an
@@ -281,6 +283,14 @@ its arc and is updated by the lane that owns it.
   in another namespace at a wide age window and 0 at a 1 s window. via: measurement
 - **A regression test that uses a helper added in a sibling test file does not BUILD at the base** — copy the
   helper file too, so the red is the behaviour (`exit 0, want 3`) and not `undefined`. via: command
+
+- **Operator decision (taken by the agent under "proceed", recorded in the PR): exit 3 only for refusals that
+  RECUR; transient 5xx/network failures keep exit 0** so pod rollouts do not flap the capture unit. A 422
+  redaction hold never gets clear-the-entry advice: clearing it re-sends bytes the pod already refused.
+  via: command
+- **Clearing a capture state entry on a MULTI-instance host strands the earlier upload** — the entry carries
+  `instance` (the withdrawal obligation) and the final `held`; the remedy text now says so per cause. Found by
+  audit round 1–2 from reading `route`/`withdraw`, not reproduced live. via: code
 
 ## How to verify
 ```bash
