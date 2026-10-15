@@ -100,24 +100,23 @@ its arc and is updated by the lane that owns it.
    forcing: user — follows from the operator's option A
 9. DONE — cairn#284 SHIPPED to both hosts: the tooling repo pins cairn `63c16cc` (its #2197) and both hosts'
    capture units run `cairn-capture-63c16cc` (timers active). Paired reader: a failed-user-units bar pill
-   (its #2198; audit round 1's 🔴 — an unacknowledged `systemctl` reacher — fixed), live on the laptop's bar
-   (rendered `✗ 1 <unit>…` Critical on its first run). The workbench was at the login greeter (no X session),
-   so its bar picks the pill up at next login. forcing: user — operator: proceed as recommended
-10. Failed user units the pill surfaced: the workbench's two (dunst, drift-check) have since CLEARED (0 failed
-   there now); the laptop's `muster-flow-runner.service` is still failed and unexamined. forcing: user — the operator's own call
-11. OPENCODE CAPTURE IS NOT ON for either host — the operator's original ask said opencode support was
-   mandatory. The code supports it; the hosts' units pass no `-opencode-project` (the tooling repo's
-   cairn-capture module defaults the list to empty). Measured on the workbench, a `--dry-run` over its 24
-   existing opencode project directories (Claude root pointed at an empty dir): 1,114 sessions — 984 ship
-   (personal), 123 held (`*` in `V`), 7 route to the UNARMED client instance; 543 carry a redaction; rc 0, no
-   stderr. 10 more project directories no longer exist, and their sessions cannot be enumerated (`session
-   list` runs per project directory). The laptop has its own set (the tooling repo 56, two scratch repos, a client repo,
-   others). DECISION PENDING (operator): arm it, and HOW the unit learns the project list — a static per-host
-   list (rots on every new project), the unit querying opencode's DB at run time (couples to its private
-   schema), or `cairn-capture` enumerating projects itself (a cairn change). forcing: user — operator: opencode support mandatory
-12. DONE — memo-webhooks 0.3.1 deployed (carries only #1016): pod runs digest `0f2e61f7…`, 0 restarts, both
-   pollers advancing, #1016's new strings present in the running binary and absent from 0.3.0.
-   forcing: user — operator: proceed
+   (its #2198), live on the laptop's bar. forcing: user — operator: proceed as recommended
+10. Failed user units the pill surfaced: the workbench's two have CLEARED; the laptop's
+   `muster-flow-runner.service` is still failed and unexamined. forcing: user — the operator's own call
+11. IN FLIGHT: cairn branch `fix/opencode-capture-discovery` (subagent PR, not yet merged) — OPENCODE CAPTURE.
+   DECIDED (operator, "proceed as recommended"): arm it, and `cairn-capture` discovers projects itself via
+   `opencode debug scrap` (a new `-opencode-discover` flag; unparseable/failed scrap is an ERROR, never zero
+   projects; missing worktrees skipped and counted on stderr). The same PR fixes two blockers found while
+   measuring (see Gotchas): the 100-row `session list` cap, and the per-pass full re-export (skip a root whose
+   listed `updated` is unchanged AND whose last complete export ran ≥10 min after it). Then, in order: audit
+   the PR (ladder until a round has no 🔴) and merge; tooling repo `nix/cairn-capture.nix` gains the discover
+   flag (its `test_cairn_capture.py` pins the args) + cairn pin bump, as a PR; on EACH host run
+   `cairn-capture --dry-run -opencode-discover` (Claude root pointed at an empty dir) and compare — workbench
+   expects 616 root sessions (631 in its DB minus 15 under 3 projects whose worktrees are gone); time a second
+   `--run` pass to confirm the skip makes it cheap; redaction spot-check; then enable per host. `opencode` is
+   already on the unit's PATH (`~/.nix-profile/bin`). Claim `cairn-outstanding-sweep-11` is held by this host.
+   forcing: user — operator: opencode support mandatory
+12. DONE — memo-webhooks 0.3.1 deployed (carries only #1016). forcing: user — operator: proceed
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this sweep (paraphrased):** the redactor's 90% held-back gate is WAIVED as an
@@ -325,6 +324,20 @@ its arc and is updated by the lane that owns it.
   store is not backed up, and its webhook handoff lists #1016 inside 0.3.0. via: command
 - **The webhook receiver's pod start line counts capture token rows at START** — `1 token row(s)` while the file
   holds 2 rows is a pod that predates the second mint, not a missing row; both hosts upload. via: measurement
+
+- **Operator decision (rank 11): arm opencode capture; `cairn-capture` enumerates projects via `opencode debug
+  scrap`** — chosen over a static per-host list (rots) and querying opencode's SQLite (private schema). via: command
+- **`opencode session list --format json` (1.18.29) CAPS AT 100 rows by default, exit 0** — a 202-session project
+  returned 100; `-n 50` → 50; `-n 100000` → 202 (= its DB count); the global project (run in `/`) → 159 (= DB).
+  The shipped `ExecRunner.List` passed no `-n`, so capture would have silently dropped all but the newest 100 per
+  project. The previous `--dry-run` count (1,114) was therefore undercounted too. via: measurement
+- **`opencode debug scrap` lists known projects** as `[{id, worktree, vcs, time, sandboxes}]`: 17 on the
+  workbench (14 worktrees exist, 3 gone, plus `global` = `/`). Root sessions in the DB: 631 over 17 projects; the
+  earlier "24 + 10 project directories" counted session cwds, not projects. via: measurement
+- **Each `opencode export` costs ~0.65 s whatever its size** (1.2 MB, 2.6 MB and 1.3 KB all 0.65–0.66 s), and
+  `runOpencode` exported every non-held root + children every 60 s pass — ~12 min of CPU per pass at this host's
+  ~1,100 sessions. Root `updated` is a near-sufficient change signal: 2 of 459 child sessions were updated after
+  their root, by at most 39.8 s — hence the 10-minute settle window in the skip rule. via: measurement
 
 ## How to verify
 ```bash
