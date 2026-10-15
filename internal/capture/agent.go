@@ -107,7 +107,24 @@ type Summary struct {
 	// got no answer in this run; each is asked again on the next. Deleted counts sessions an instance
 	// answered 410 for in this run — their transcript was deleted there, and they are never sent again.
 	WithdrawalPending, Deleted int
+	// RefusedStopped is the part of Refused whose session failed ONLY because its instance stopped
+	// taking uploads in this run — a 503 (capture disarmed) or a 507 (quota) — which the next run
+	// retries with nothing lost. Not printed: the run line's `refused=` is unchanged.
+	RefusedStopped int
 }
+
+// Failed is how many of this run's refusals make the run itself a failure (`cairn-capture --run`
+// exits 3): every `refused` the run line counts EXCEPT a session refused only because its instance
+// is not taking uploads (503/507, [HeldError]) — that is the designed steady state of a disarmed
+// instance, already said on stderr, and a unit that failed every minute over it would teach
+// everyone to ignore the unit. A 410 is not a refusal at all (`deleted=`), nor is a routing hold
+// (`held=`).
+//
+// 🔴 A 422 that HOLDS a stream for good, and a rewritten stream, are counted ONLY in the run that
+// first marks them: later runs skip the marked stream without counting it. So they fail ONE run, not
+// every run; a refusal that recurs — a stored position the state cannot resume from, a root held by
+// another uploader — fails every run until it is resolved.
+func (s Summary) Failed() int { return s.Refused - s.RefusedStopped }
 
 // String is the run's one summary line.
 func (s Summary) String() string {
@@ -123,7 +140,9 @@ func (a *Agent) logf(format string, args ...any) {
 
 // Run captures every session once. It returns an error only for what ends the run's uploads — a
 // session tree that cannot be listed, or an instance that refused the capture token
-// ([FatalError]); every other failure is one session's, logged and counted in Refused.
+// ([FatalError]); every other failure is one session's, logged and counted in Refused, and the run
+// goes on to every other session. Whether those refusals fail the RUN is [Summary.Failed]'s answer,
+// read by the caller after the pass has completed and the state is saved.
 func (a *Agent) Run() (Summary, error) {
 	var sum Summary
 	if a.ClaudeRoot != "" {
@@ -186,6 +205,9 @@ func (a *Agent) isolate(root string, sum *Summary, run func() error) {
 	case err != nil:
 		a.logf("refused %s: %v", root, err)
 		sum.Refused++
+		if held := (*HeldError)(nil); errors.As(err, &held) {
+			sum.RefusedStopped++
+		}
 	}
 	if !bytes.Equal(before, a.sessionImage(root)) {
 		a.dirty = true

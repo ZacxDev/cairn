@@ -16,9 +16,10 @@
 //
 // 🔴 `--run` UPLOADS NOTHING TO AN UNARMED INSTANCE, AND LOSES NOTHING EITHER. Every instance is
 // unarmed today (O16): the worker answers 503 `capture-disarmed`, the sink holds, no watermark
-// advances, and the next run retries. The capture token is read from a FILE (`-capture-token-file`,
-// mode 0600) — never an argument, never the environment, never printed. A refused token (401/403)
-// ends the run's uploads to that instance and exits 1.
+// advances, the next run retries, and the run exits 0. The capture token is read from a FILE
+// (`-capture-token-file`, mode 0600) — never an argument, never the environment, never printed. A
+// refused token (401/403) ends the run's uploads to that instance and exits 1. A pass that completes
+// having REFUSED a session exits 3 (`runPass`), so a stream wedged on every run fails the unit.
 //
 // 🔴 A SEPARATE BINARY, NOT A `cairn` VERB (decision 5): a verb that reads every transcript on the
 // machine would widen what the installed reader is for. And it is STDLIB-ONLY, enforced: it is one
@@ -53,11 +54,16 @@ import (
 	"github.com/ZacxDev/cairn/internal/redact"
 )
 
-// Exit codes.
+// Exit codes. cairn-capture's OWN table, a separate binary from `cairn` and not part of the exit
+// model `cairn -exit-codes` prints (where 3 means something else entirely); a timer unit reads it.
 const (
 	exitOK    = 0
-	exitError = 1
-	exitUsage = 2
+	exitError = 1 // the state cannot be read or saved, an instance refused the capture token, …
+	exitUsage = 2 // and `--self-test`'s "could not vouch"
+	// exitRefused is `--run` COMPLETING — every other session processed, the state saved — having
+	// refused at least one session ([capture.Summary.Failed]). Without it a wedged stream that is
+	// refused on every run exited 0 forever and was invisible to the unit running it.
+	exitRefused = 3
 )
 
 type multi []string
@@ -287,9 +293,12 @@ func sortedKeys(m map[string]string) []string {
 	return out
 }
 
-// runPass is `--run`: ONE capture pass. Exit 0 when the pass completed — a session that was held,
-// refused or retried later is a logged line, not a failure of the pass; exit 1 when the state
-// cannot be read or saved, or an instance refused the capture token (401/403); exit 2 on usage.
+// runPass is `--run`: ONE capture pass. Exit 0 when the pass completed and refused nothing that
+// fails it — a session held, deleted (410), or skipped because its instance is disarmed or full
+// (503/507) is a logged line, not a failure; exit 3 when the pass COMPLETED but refused at least one
+// session ([capture.Summary.Failed]) — the refusal never stops the pass early, only its exit status
+// moves; exit 1 when the state cannot be read or saved, or an instance refused the capture token
+// (401/403), which wins over 3; exit 2 on usage.
 func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	fail := func(err error) int {
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
@@ -387,6 +396,16 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	fmt.Fprintf(stderr, "cairn-capture: run %s omitted=%d recheck-omitted=%d requests=%d\n", sum, sink.Omitted, sink.Rechecked, sink.Requests)
 	if runErr != nil {
 		return fail(runErr)
+	}
+	if n := sum.Failed(); n > 0 {
+		noun := "session refusal"
+		if n > 1 {
+			noun += "s"
+		}
+		fmt.Fprintf(stderr, "cairn-capture: %d %s in this run (exit %d); each is a `refused` line above. A refusal that "+
+			"recurs on every run is a wedged session: once its cause is understood, remove that session's entry from the "+
+			"state file %s (no run in progress) and the next run reads it again from the start\n", n, noun, exitRefused, c.state)
+		return exitRefused
 	}
 	return exitOK
 }

@@ -93,7 +93,10 @@ type runPod struct {
 	requests *atomic.Int64
 }
 
-func newRunPod(t *testing.T, armed bool) runPod {
+func newRunPod(t *testing.T, armed bool) runPod { t.Helper(); return newRunPodFronted(t, armed, nil) }
+
+// newRunPodFronted is newRunPod with `front` (when set) in front of the real worker, in-process.
+func newRunPodFronted(t *testing.T, armed bool, front func(http.Handler) http.Handler) runPod {
 	t.Helper()
 	red, err := redact.New(redact.SelfTestKey(5), nil)
 	if err != nil {
@@ -113,10 +116,14 @@ func newRunPod(t *testing.T, armed bool) runPod {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var h http.Handler = w
+	if front != nil {
+		h = front(w)
+	}
 	var n atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		n.Add(1)
-		w.ServeHTTP(rw, r)
+		h.ServeHTTP(rw, r)
 	}))
 	t.Cleanup(srv.Close)
 	return runPod{url: srv.URL, arc: arc, requests: &n}

@@ -34,7 +34,7 @@ operator's act.
    prefix and stop for good.
 5. **Redacts** every record and blob (`internal/redact`) and hands the exact bytes to the Sink; a
    watermark advances only after its write succeeds. One session's failure is refused and logged;
-   the run continues.
+   the run continues — and, once it has completed and saved the state, exits 3 (below).
 
 ## Measured facts it is built on (one host, opencode 1.18.29)
 
@@ -94,6 +94,27 @@ OnStartupSec=60s
 OnUnitActiveSec=60s
 AccuracySec=1s
 ```
+
+### `--run`'s exit status
+
+| exit | means |
+|---|---|
+| 0 | the pass completed and refused nothing that fails it — including a session held (`held=`), deleted on its instance (410, `deleted=`), or refused only because its instance is disarmed or full (503/507: counted in `refused=`, retried next run with nothing lost) |
+| 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session: every other `refused` the run line counts (`Summary.Failed`). Each keeps its `refused <session>: …` line, and one last line names the count and the remedy |
+| 1 | the state cannot be read or saved, a session tree cannot be listed, or an instance refused the capture token (401/403); wins over 3 |
+| 2 | usage |
+
+Exit 3 is what makes a **wedged** session visible to the unit running it: a stored position the
+state cannot resume from (`UnresumableError`) or a root held by another uploader (`ErrNotOwner`) is
+refused again on every run, so the unit is `failed` on every run until it is resolved. Without it the
+run exited 0 forever. The remedy, once the cause is understood: with no run in progress, remove that
+session's entry (keyed by its id, under `sessions`) from the state file — the next run reads it again
+from the start. ⚠ Not every refusal recurs: a network error or a 5xx fails the run it happened in
+and is retried on the next, where it may not; a 422 that holds a stream for good, and a rewritten stream, are counted
+only in the run that first marks them, so they fail that one run. 🔴 This is cairn-capture's own table,
+not the client's (`cairn -exit-codes`, where 3 means something else). `--dry-run` talks to no
+instance and reads no state, so none of these refusals can arise in it: its per-session `refused=`
+counts files it could not read, and it exits 0 having printed them.
 
 A run takes `<state>.lock` (`flock`); an overlapping run exits 0 having done nothing. The state is
 saved only when it CHANGED: at once where a crash must not lose a decision (an opencode write's
