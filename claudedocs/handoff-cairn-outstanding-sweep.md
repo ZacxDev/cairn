@@ -84,10 +84,9 @@ its arc and is updated by the lane that owns it.
    forcing: user — operator asked for it at handoff
 3. DONE — transcript capture armed on the second host (State now).
    forcing: user — operator: arm it fully
-4. Transcript backup — LIVE, restore DRILL PASSED (State now; Gotchas). Remaining: add a
-   `kube_cronjob_status_last_successful_time` alert for `cairn-transcripts-backup` (nothing alerts on it, nor on
-   the sibling UI backup). The live-volume RESTORE itself (runbook steps 1–4, 6) and opencode resumption stay
-   unrun. Claimed: `cairn-outstanding-sweep-4`. forcing: user — operator approved the design
+4. DONE — transcript backup: approved design LIVE (hourly, journal-driven, its own bucket), restore DRILL
+   passed, and alerts live for it AND the sibling UI backup (6 rules, all `health=ok`). Not run: a restore
+   into the live volume, and opencode resumption after one (no opencode host). forcing: user — operator approved the design
 5. Tooling repo CI: REOPEN and merge the closed shard-1 fixture fix (branch `fix/tmux-reply-test-socket-path`
    — `/resume` reports it GONE locally; check the remote before assuming it was deleted; confirm it turns
    shard 1 green), and find why the go/node legs post "no verdict" while their logs pass.
@@ -100,6 +99,12 @@ its arc and is updated by the lane that owns it.
 8. Retire the invitation half once the deployed `invites` table has zero open rows (at most 7 days after the
    fold deployed): revoke route, redeem arm, the redirect, `invite.Store.Create`; a route-ledger change.
    forcing: user — follows from the operator's option A
+9. IN FLIGHT: cairn#284 — `cairn-capture --run` exits 3 when a run refused a session (a permanent wedge was
+   invisible: exit 0, unit green). CI 30/30 green; regression test re-run independently here: red at the base
+   (`exit 0, want 3`), green at the head. Next: `/audit-pr 284`, merge on a 🔴-free round, then ship the
+   tooling repo's cairn pin to BOTH hosts — after which a refused session turns each host's capture unit
+   `failed` (intended). Open choice recorded in the PR: a permanent 422-field hold or rewritten stream fails
+   only ONE run. Touches `cmd/cairn-capture/`, `internal/capture/`. forcing: user — operator: proceed
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this sweep (paraphrased):** the redactor's 90% held-back gate is WAIVED as an
@@ -270,6 +275,12 @@ its arc and is updated by the lane that owns it.
 - **`cairn-capture --run` exits 0 with `refused>0`**, so a wedged stream is invisible to anything that reads
   the unit's status — in normal operation too, not only after a restore. Not yet filed as a defect.
   via: measurement
+
+- **Backup alerts: `kube_job_failed` is published only for a Job carrying a Failed condition**, so a 0-series
+  read for a healthy job is a reading, not a dead query — proven by the same join matching 3 real failed jobs
+  in another namespace at a wide age window and 0 at a 1 s window. via: measurement
+- **A regression test that uses a helper added in a sibling test file does not BUILD at the base** — copy the
+  helper file too, so the red is the behaviour (`exit 0, want 3`) and not `undefined`. via: command
 
 ## How to verify
 ```bash
