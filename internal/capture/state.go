@@ -109,10 +109,17 @@ type SessionState struct {
 	// sit in the pod's grow-only `declared_scopes` and make the session owner-only for good, after
 	// the ledger that answers F1 had landed (#266's audit). `V` keeps F1 for ROUTING, which must
 	// hold a session whose reads nothing names.
-	Declared []string                `json:"declared,omitempty"`
-	Evidence scopeuse.Evidence       `json:"evidence"`
-	Streams  map[string]*StreamState `json:"streams,omitempty"`
-	Blobs    map[string]BlobState    `json:"blobs,omitempty"`
+	Declared []string `json:"declared,omitempty"`
+	// OpencodeUpdated and OpencodeExportedAt are an opencode root's export-skip record
+	// ([Agent.exportSettled]): the `updated` its `session list` row carried (epoch ms) at the last
+	// pass whose export and ship of the root AND every child completed with nothing refused, held,
+	// pending or left unshipped, and the wall-clock time (epoch ms) that pass's export began. Both
+	// 0 when there is no such pass — and any pass that does not complete clears them.
+	OpencodeUpdated    int64                   `json:"oc_updated,omitempty"`
+	OpencodeExportedAt int64                   `json:"oc_exported_at,omitempty"`
+	Evidence           scopeuse.Evidence       `json:"evidence"`
+	Streams            map[string]*StreamState `json:"streams,omitempty"`
+	Blobs              map[string]BlobState    `json:"blobs,omitempty"`
 }
 
 // BlobState is what was shipped of one blob. Size and modification time are compared FIRST, so

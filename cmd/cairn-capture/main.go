@@ -25,7 +25,8 @@
 // of `internal/depspolicy`'s `LinkedBinaryRoots`.
 //
 //	cairn-capture --self-test [-seed N]
-//	cairn-capture --dry-run [-claude-root DIR] [-opencode-project DIR]... [-ledger-dir DIR] [-denylist FILE]
+//	cairn-capture --dry-run [-claude-root DIR] [-opencode-project DIR]... [-opencode-discover] [-opencode-bin BIN]
+//	              [-ledger-dir DIR] [-denylist FILE]
 //	cairn-capture --run -host LABEL -worker [ALIAS=]URL -capture-token-file [ALIAS=]FILE [-state FILE]
 //	              [-host-key FILE] [-allow-plaintext-host [ALIAS=]HOST]... [the --dry-run reading flags]
 //
@@ -90,7 +91,10 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		ledgerDir  = fs.String("ledger-dir", "", "the client read-ledger directory (default $XDG_STATE_HOME/cairn/read-ledger)")
 		denylist   = fs.String("denylist", "", "a 0600 per-host denylist file (optional)")
 		ocBin      = fs.String("opencode-bin", "opencode", "the opencode binary, by name or path")
-		ocDirs     multi
+		ocDisc     = fs.Bool("opencode-discover", false, "also enumerate every project `opencode debug scrap` names "+
+			"(unioned with -opencode-project; a project whose worktree is gone is listed through its first existing sandbox, "+
+			"else skipped; both counted on stderr)")
+		ocDirs multi
 	)
 	fs.Var(&ocDirs, "opencode-project", "an opencode project directory to enumerate (repeatable; `session list` lists ONE project's roots)")
 	fs.Var(&workers, "worker", "--run: [ALIAS=]URL of an instance's worker listener (repeatable; no alias is the default instance)")
@@ -127,7 +131,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	if *runOnce {
 		return runPass(runConfig{host: *host, state: *statePath, hostKey: *hostKey, maxRequest: *maxRequest,
 			workers: workers, tokenFiles: tokenFiles, plaintext: plaintext, stateHome: stateHome, claudeRoot: *claudeRoot,
-			ocDirs: ocDirs, ocBin: *ocBin, ledgerDir: *ledgerDir, denylist: *denylist}, stderr, getenv)
+			ocDirs: ocDirs, ocDiscover: *ocDisc, ocBin: *ocBin, ledgerDir: *ledgerDir, denylist: *denylist}, stderr, getenv)
 	}
 	// 🔴 --dry-run WRITES NOTHING, THE HOST KEY INCLUDED. It prints counts by rule, never a tag, so
 	// an ephemeral in-memory key is all it needs; creating the persistent key file as a side effect
@@ -155,10 +159,12 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitError
 	}
+	runner := capture.ExecRunner{Bin: *ocBin}
+	dirs, discRefused := opencodeDirs(*ocDisc, ocDirs, runner, stderr)
 	agent := &capture.Agent{
 		ClaudeRoot:   *claudeRoot,
-		OpencodeDirs: ocDirs,
-		Runner:       capture.ExecRunner{Bin: *ocBin},
+		OpencodeDirs: dirs,
+		Runner:       runner,
 		LedgerDir:    *ledgerDir,
 		Routing:      routing,
 		Redactor:     red,
@@ -167,6 +173,10 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	if err := agent.DryRun(stdout); err != nil {
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitError
+	}
+	if discRefused != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %s\n", discoveryLine(discRefused))
+		return exitRefused
 	}
 	return exitOK
 }
@@ -178,6 +188,42 @@ type runConfig struct {
 	claudeRoot, ocBin, ledgerDir    string
 	denylist                        string
 	ocDirs                          []string
+	ocDiscover                      bool
+}
+
+// opencodeDirs is the opencode project directories a pass enumerates: `-opencode-project` alone,
+// or — under `-opencode-discover` — unioned with every project `opencode debug scrap` names
+// ([capture.DiscoverOpencodeDirs]).
+//
+// 🔴 A DISCOVERY THAT FAILS REFUSES THE DISCOVERED HALF, NEVER THE PASS, AND NEVER READS AS "NO
+// PROJECTS" (operator decision). A missing binary, a non-zero exit or an answer that does not parse
+// is logged here as a `refused opencode discovery` line and returned as `refused`; the pass still
+// captures Claude Code and every explicit `-opencode-project` directory (`dirs` is those alone),
+// and the CALLER exits [exitRefused] once the pass is done. 3 rather than 1: it is a refusal that
+// RECURS on every run with nothing changed (a broken binary or an answer this build cannot read
+// stays broken) and the pass otherwise completed — exactly 3's meaning — while 1 means the pass
+// itself could not proceed. And the projects it SKIPS — no existing worktree or sandbox, so
+// `session list` cannot reach them — are said on stderr every pass, in one line of counts.
+func opencodeDirs(discover bool, explicit []string, runner capture.OpencodeRunner, stderr io.Writer) (dirs []string, refused error) {
+	if !discover {
+		return explicit, nil
+	}
+	d, err := capture.DiscoverOpencodeDirs(runner, explicit)
+	if err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: refused opencode discovery: %v — the projects it would name are not "+
+			"captured this pass; Claude Code and every -opencode-project directory still are\n", err)
+		return explicit, err
+	}
+	fmt.Fprintf(stderr, "cairn-capture: opencode discovery: projects=%d via-sandbox=%d skipped-missing-worktree=%d enumerated=%d\n",
+		d.Projects, d.ViaSandbox, d.Skipped, len(d.Dirs))
+	return d.Dirs, nil
+}
+
+// discoveryLine is the run's LAST line when discovery was refused: the cause, its exit, its remedy.
+func discoveryLine(refused error) string {
+	return fmt.Sprintf("opencode discovery was refused (the `refused opencode discovery` line above), so the projects "+
+		"`opencode debug scrap` names were not captured; refused again on every run until it answers (exit %d). "+
+		"Check that -opencode-bin runs and that `opencode debug scrap` prints a JSON list of projects", exitRefused)
 }
 
 // aliased splits `[ALIAS=]VALUE`; no alias is the default instance.
@@ -346,6 +392,8 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		return fail(err)
 	}
 	defer release()
+	runner := capture.ExecRunner{Bin: c.ocBin}
+	dirs, discRefused := opencodeDirs(c.ocDiscover, c.ocDirs, runner, stderr)
 	capture.CleanStateTemps(c.state)
 	state, err := capture.LoadState(c.state)
 	if err != nil {
@@ -371,8 +419,8 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	sink := &capture.HTTPSink{Host: c.host, Endpoints: eps, MaxRequest: c.maxRequest, Log: stderr}
 	agent := &capture.Agent{
 		ClaudeRoot:   c.claudeRoot,
-		OpencodeDirs: c.ocDirs,
-		Runner:       capture.ExecRunner{Bin: c.ocBin},
+		OpencodeDirs: dirs,
+		Runner:       runner,
 		LedgerDir:    c.ledgerDir,
 		Routing:      routing,
 		Redactor:     red,
@@ -391,7 +439,11 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	if runErr != nil {
 		return fail(runErr)
 	}
-	if lines := recurringLines(sum, routing.MultiInstance(), c.state); len(lines) > 0 {
+	lines := recurringLines(sum, routing.MultiInstance(), c.state)
+	if discRefused != nil {
+		lines = append(lines, discoveryLine(discRefused))
+	}
+	if len(lines) > 0 {
 		for _, l := range lines {
 			fmt.Fprintf(stderr, "cairn-capture: %s\n", l)
 		}

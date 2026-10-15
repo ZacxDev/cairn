@@ -33,17 +33,18 @@ func (a *Agent) DryRun(w io.Writer) error {
 			a.dryClaude(w, cs)
 		}
 	}
+	seen := map[string]bool{}
 	for _, dir := range a.OpencodeDirs {
-		raw, err := a.Runner.List(dir)
+		raw, err := a.Runner.List(dir, a.listCap())
 		if err != nil {
 			return err
 		}
-		roots, err := listRoots(raw)
+		roots, err := listRoots(raw, a.listCap())
 		if err != nil {
 			return err
 		}
-		for _, root := range roots {
-			a.dryOpencode(w, root)
+		for _, root := range firstSeen(roots, seen) {
+			a.dryOpencode(w, root.ID)
 		}
 	}
 	return nil
