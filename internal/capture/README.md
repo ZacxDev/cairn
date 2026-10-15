@@ -55,6 +55,10 @@ operator's act.
   asked with `-n SessionListCap` (1000000), and a list that comes back with that many rows is
   REFUSED (`ErrSessionListAtCap`, the project's `refused opencode project` line) — at the cap,
   complete and cut short look the same.
+- `session list` for a project with **no sessions writes nothing at all** — zero bytes, exit 0,
+  with `--format json` or without — not `[]`. An all-whitespace answer is therefore zero roots;
+  before this was read, one such project was a recurring refusal on `--run` and stopped
+  `--dry-run` outright.
 - `debug scrap` prints every project opencode knows as `[{"id", "worktree", "sandboxes", …}]`;
   the `global` project's worktree is `/`, and `session list` run there lists the global project's
   sessions. `session list` runs IN a directory but filters by PROJECT, not directory: a base

@@ -87,7 +87,35 @@ func TestAListAtItsCapIsRefusedNotRead(t *testing.T) {
 	}
 }
 
-// TestDiscoveryUnionsDedupesAndCountsTheMissing: scrap's projects UNION the explicit ones, one per
+// TestAnEmptyListAnswerIsZeroRootsNotAnError is the REGRESSION test for opencode's empty answer.
+//
+// 🔴 MEASURED on opencode 1.18.29: `session list` for a project with no sessions writes NOTHING —
+// zero bytes, exit 0, `--format json` or not — rather than `[]`. Parsing that as JSON refused the
+// project on every `--run` (a recurring refusal) and failed `--dry-run` outright, stopping it before
+// every project after it. Through the REAL subprocess path; a truncated list is still refused.
+func TestAnEmptyListAnswerIsZeroRootsNotAnError(t *testing.T) {
+	for _, tc := range []struct {
+		answer string
+		ok     bool
+	}{{"", true}, {" \n", true}, {"[]", true}, {"[", false}, {" [", false}} {
+		stub := t.TempDir()
+		if err := os.WriteFile(filepath.Join(stub, "list.json"), []byte(tc.answer), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CAPTURE_OPENCODE_STUB", stub)
+		a := &Agent{OpencodeDirs: []string{t.TempDir()}, Runner: ExecRunner{Bin: os.Args[0], TempDir: t.TempDir()},
+			State: &State{Schema: 1, Sessions: map[string]*SessionState{}}, Log: &bytes.Buffer{}, Sink: newMemSink()}
+		sum, err := a.Run()
+		if wantRefused := map[bool]int{true: 0, false: 1}[tc.ok]; err != nil || sum.Sessions != 0 || sum.Refused != wantRefused {
+			t.Errorf("`session list` answering %q: %+v (%v); want ok=%v and no session", tc.answer, sum, err, tc.ok)
+		}
+		if n, err := dryRoots(t, &Agent{OpencodeDirs: a.OpencodeDirs, Runner: a.Runner}); (err == nil) != tc.ok || n != 0 {
+			t.Errorf("--dry-run over %q: %d roots (%v); want ok=%v", tc.answer, n, err, tc.ok)
+		}
+	}
+}
+
+// TestDiscoveryUnionsDedupesAndCountsTheMissing:scrap's projects UNION the explicit ones, one per
 // cleaned absolute path; the global project's `/` is a project; a worktree that is gone is
 // skipped and COUNTED, never silently dropped; an explicit directory is kept whether or not it
 // exists.
