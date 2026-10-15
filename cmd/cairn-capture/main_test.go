@@ -93,7 +93,10 @@ type runPod struct {
 	requests *atomic.Int64
 }
 
-func newRunPod(t *testing.T, armed bool) runPod {
+func newRunPod(t *testing.T, armed bool) runPod { t.Helper(); return newRunPodFronted(t, armed, nil) }
+
+// newRunPodFronted is newRunPod with `front` (when set) in front of the real worker, in-process.
+func newRunPodFronted(t *testing.T, armed bool, front func(http.Handler) http.Handler) runPod {
 	t.Helper()
 	red, err := redact.New(redact.SelfTestKey(5), nil)
 	if err != nil {
@@ -113,10 +116,14 @@ func newRunPod(t *testing.T, armed bool) runPod {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var h http.Handler = w
+	if front != nil {
+		h = front(w)
+	}
 	var n atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		n.Add(1)
-		w.ServeHTTP(rw, r)
+		h.ServeHTTP(rw, r)
 	}))
 	t.Cleanup(srv.Close)
 	return runPod{url: srv.URL, arc: arc, requests: &n}
@@ -141,7 +148,12 @@ func runWorld(t *testing.T, token string) (home, tokenFile string, env func(stri
 	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return home, tokenFile, envOf(map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "xdg")})
+	// 🔴 CAIRN_CONFIG IS SET, NOT LEFT TO HOME: with it unset `client.Discover` resolves the config
+	// through the PROCESS's home directory, not this env's HOME, so the run read the instances of
+	// whatever machine ran the test — measured: on a developer host configured with two instances
+	// the single-instance remedy assertion failed, because the run took that host's routing.
+	return home, tokenFile, envOf(map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "xdg"),
+		"CAIRN_CONFIG": filepath.Join(home, ".config", "cairn", "env")})
 }
 
 // TestARunUploadsOnceAndAnIdleRunSendsNothing: `--run` against the real worker stores the

@@ -50,6 +50,9 @@ type Agent struct {
 	// whichever of its failures the session reports; [Agent.isolate] turns it into the session's
 	// final mark.
 	sawDeleted bool
+	// recurs is the first [Recurs] answer seen among ANY of the session's failed writes ([Agent.held]),
+	// so a recurring refusal behind an ordinary first failure still counts.
+	recurs Recurrence
 }
 
 // checkpoint saves the state now.
@@ -107,6 +110,45 @@ type Summary struct {
 	// got no answer in this run; each is asked again on the next. Deleted counts sessions an instance
 	// answered 410 for in this run — their transcript was deleted there, and they are never sent again.
 	WithdrawalPending, Deleted int
+	// Unresumable and NotOwner are the part of Refused whose session was refused for a reason that
+	// RECURS on every run with nothing changed on either side ([Recurs]); `cairn-capture --run` exits
+	// 3 when either is non-zero. Not printed: the run line's `refused=` is unchanged.
+	Unresumable, NotOwner int
+}
+
+// Recurrence is [Recurs]'s answer.
+type Recurrence int
+
+const (
+	// NotRecurring is every other failure: retried next run, or already marked so it is not.
+	NotRecurring Recurrence = iota
+	// RecursUnresumable is an [UnresumableError]: the instance holds the stream at a position no
+	// run of this state can resume from.
+	RecursUnresumable
+	// RecursNotOwner is [ErrNotOwner]: another (owner, host) holds the root on the instance.
+	RecursNotOwner
+)
+
+// Recurs is THE ONE classification of which session refusals fail a run (`cairn-capture --run`
+// exits 3; the table is `internal/capture/README.md` § *`--run`'s exit status*): a refusal that the
+// next run will meet again with nothing changed on either side. Typed, never matched on text.
+//
+// 🔴 EVERYTHING ELSE IS NotRecurring, DELIBERATELY. A network error, a 5xx, a 400, an unanswered
+// withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are retried next
+// run and may not recur — failing the unit on one was measured in review (a single 502) and
+// narrowed out on an operator decision. A 422 that HOLDS a stream (a [RecheckRefusal] naming a
+// field) and a rewritten stream are permanent but marked ONCE and skipped silently after, so they
+// would fail exactly one run — and the only state remedy would be wrong for both (clearing re-sends
+// bytes the pod's re-check refused, or re-ships a rewritten file from its start).
+func Recurs(err error) Recurrence {
+	var ur *UnresumableError
+	switch {
+	case errors.As(err, &ur):
+		return RecursUnresumable
+	case errors.Is(err, ErrNotOwner):
+		return RecursNotOwner
+	}
+	return NotRecurring
 }
 
 // String is the run's one summary line.
@@ -123,7 +165,9 @@ func (a *Agent) logf(format string, args ...any) {
 
 // Run captures every session once. It returns an error only for what ends the run's uploads — a
 // session tree that cannot be listed, or an instance that refused the capture token
-// ([FatalError]); every other failure is one session's, logged and counted in Refused.
+// ([FatalError]); every other failure is one session's, logged and counted in Refused, and the run
+// goes on to every other session. Which of those refusals fail the RUN is [Recurs]'s answer, counted
+// in [Summary] and read by the caller after the pass has completed and the state is saved.
 func (a *Agent) Run() (Summary, error) {
 	var sum Summary
 	if a.ClaudeRoot != "" {
@@ -168,7 +212,7 @@ func (a *Agent) Run() (Summary, error) {
 // advance (each advances only after its own write), so the next run retries it.
 func (a *Agent) isolate(root string, sum *Summary, run func() error) {
 	before := a.sessionImage(root)
-	a.sawDeleted = false
+	a.sawDeleted, a.recurs = false, NotRecurring
 	err := run()
 	switch ss := a.State.Sessions[root]; {
 	case a.sawDeleted && ss != nil:
@@ -186,6 +230,16 @@ func (a *Agent) isolate(root string, sum *Summary, run func() error) {
 	case err != nil:
 		a.logf("refused %s: %v", root, err)
 		sum.Refused++
+		r := a.recurs
+		if r == NotRecurring {
+			r = Recurs(err)
+		}
+		switch r {
+		case RecursUnresumable:
+			sum.Unresumable++
+		case RecursNotOwner:
+			sum.NotOwner++
+		}
 	}
 	if !bytes.Equal(before, a.sessionImage(root)) {
 		a.dirty = true
@@ -242,6 +296,9 @@ func (a *Agent) held(err error, mark *string, what string, sum *Summary) error {
 	}
 	if errors.Is(err, ErrDeleted) {
 		a.sawDeleted = true
+	}
+	if r := Recurs(err); r != NotRecurring && a.recurs == NotRecurring {
+		a.recurs = r
 	}
 	var rc *RecheckRefusal
 	if !errors.As(err, &rc) {

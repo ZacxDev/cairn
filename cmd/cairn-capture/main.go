@@ -17,8 +17,8 @@
 // 🔴 `--run` UPLOADS NOTHING TO AN UNARMED INSTANCE, AND LOSES NOTHING EITHER. Every instance is
 // unarmed today (O16): the worker answers 503 `capture-disarmed`, the sink holds, no watermark
 // advances, and the next run retries. The capture token is read from a FILE (`-capture-token-file`,
-// mode 0600) — never an argument, never the environment, never printed. A refused token (401/403)
-// ends the run's uploads to that instance and exits 1.
+// mode 0600) — never an argument, never the environment, never printed. The exit codes are stated
+// ONCE, in `internal/capture/README.md` § *`--run`'s exit status*.
 //
 // 🔴 A SEPARATE BINARY, NOT A `cairn` VERB (decision 5): a verb that reads every transcript on the
 // machine would widen what the installed reader is for. And it is STDLIB-ONLY, enforced: it is one
@@ -53,11 +53,14 @@ import (
 	"github.com/ZacxDev/cairn/internal/redact"
 )
 
-// Exit codes.
+// Exit codes: cairn-capture's OWN table, not the one `cairn -exit-codes` prints (where 3 means
+// something else). What each means is stated ONCE, in `internal/capture/README.md` § *`--run`'s
+// exit status*; this block only names them.
 const (
-	exitOK    = 0
-	exitError = 1
-	exitUsage = 2
+	exitOK      = 0
+	exitError   = 1
+	exitUsage   = 2
+	exitRefused = 3
 )
 
 type multi []string
@@ -287,9 +290,9 @@ func sortedKeys(m map[string]string) []string {
 	return out
 }
 
-// runPass is `--run`: ONE capture pass. Exit 0 when the pass completed — a session that was held,
-// refused or retried later is a logged line, not a failure of the pass; exit 1 when the state
-// cannot be read or saved, or an instance refused the capture token (401/403); exit 2 on usage.
+// runPass is `--run`: ONE capture pass. Its exit codes are `internal/capture/README.md` § *`--run`'s
+// exit status*. A refusal never stops the pass early: exit 3 is decided after it has completed and
+// the state is saved, from [capture.Recurs]'s counts.
 func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	fail := func(err error) int {
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
@@ -388,5 +391,56 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	if runErr != nil {
 		return fail(runErr)
 	}
+	if lines := recurringLines(sum, routing.MultiInstance(), c.state); len(lines) > 0 {
+		for _, l := range lines {
+			fmt.Fprintf(stderr, "cairn-capture: %s\n", l)
+		}
+		return exitRefused
+	}
 	return exitOK
+}
+
+// recurringLines is what a run that refused a session for a reason that RECURS ([capture.Recurs])
+// says last, one line per cause, each with the remedy for THAT cause — or nothing, when the run
+// refused nothing that recurs.
+//
+// 🔴 THE REMEDY IS PER CAUSE BECAUSE NO ONE REMEDY IS RIGHT FOR ALL. Clearing a session's state
+// entry is right for an unresumable position on a host routed to ONE instance (measured: it
+// un-wedges the session); it does not resolve a root another uploader holds; and on a host routed
+// to several instances the entry also records WHERE the earlier upload lives (`instance`, the
+// withdrawal obligation of decision 16) and a final hold, so removing it can strand or duplicate
+// that upload — for EITHER cause. ⚠ A not-owner refusal can come from a MOVE's destination probe:
+// clearing then empties `instance`, the next run ships straight to the destination, is refused
+// again, and the copy on the instance the session left is never withdrawn (review round 2). A 422 hold never reaches here ([capture.Recurs]): clearing would re-send bytes the
+// pod's re-check refused.
+func recurringLines(sum capture.Summary, multiInstance bool, statePath string) []string {
+	var out []string
+	const doNotClear = "This host routes to several instances: do NOT remove the session's whole entry from the state " +
+		"file — it also records which instance holds the session's earlier upload, and any final hold, and removing it " +
+		"can strand or duplicate that upload. "
+	if n := sum.Unresumable; n > 0 {
+		l := fmt.Sprintf("%d session(s) refused because the instance holds a stream at a position this host's state "+
+			"cannot resume from (the `refused <session>: the instance holds this stream at …` lines above); refused again "+
+			"on every run (exit %d). ", n, exitRefused)
+		if multiInstance {
+			l += doNotClear + "Resolve it with the instance's operator"
+		} else {
+			l += "Once the cause is understood (say, the instance's store was restored behind this host), with no run in " +
+				"progress, remove that session's entry from the state file " + statePath + "; the next run reads it again " +
+				"from the start. The entry also remembers which records the pod's re-check refused, so their bytes may " +
+				"be sent once more (the pod refuses them again)"
+		}
+		out = append(out, l)
+	}
+	if n := sum.NotOwner; n > 0 {
+		l := fmt.Sprintf("%d session(s) refused because the instance holds the session for another uploader "+
+			"(the `refused <session>: …held by another uploader (409)…` lines above); refused again on every run "+
+			"(exit %d). ", n, exitRefused)
+		if multiInstance {
+			l += doNotClear
+		}
+		out = append(out, l+"It is resolved on the instance — the other uploader's copy of that root; clearing this "+
+			"host's state does not resolve it")
+	}
+	return out
 }
