@@ -177,9 +177,9 @@ func TestARecheckFieldHoldExitsZeroAndNeverAdvisesClearing(t *testing.T) {
 	}
 }
 
-// TestANotOwnerRefusalExitsThreeAndSaysClearingDoesNothing: the uniform 409 recurs on every run;
-// clearing this host's state cannot resolve it, so the remedy must not say to.
-func TestANotOwnerRefusalExitsThreeAndSaysClearingDoesNothing(t *testing.T) {
+// TestANotOwnerRefusalExitsThreeAndSaysClearingDoesNotResolveIt: the uniform 409 recurs on every run;
+// clearing this host's state does not resolve it, so the remedy must not say to.
+func TestANotOwnerRefusalExitsThreeAndSaysClearingDoesNotResolveIt(t *testing.T) {
 	p := interceptedPod(t, "s-0001", http.StatusConflict, `{"refused":"held-by-another-uploader"}`)
 	_, tokenFile, env := twoSessionWorld(t)
 	args := []string{"--run", "-host", "host-a", "-worker", p.url, "-capture-token-file", tokenFile}
@@ -191,7 +191,7 @@ func TestANotOwnerRefusalExitsThreeAndSaysClearingDoesNothing(t *testing.T) {
 		last := lines[len(lines)-1]
 		if code != 3 || !strings.Contains(log, "refused s-0001: the instance answered that this session is held by another uploader (409)") ||
 			!strings.HasPrefix(last, "cairn-capture: 1 session(s) refused because the instance holds the session for another uploader") ||
-			!strings.Contains(last, "clearing this host's state changes nothing") || strings.Contains(log, noClearingAdvice) {
+			!strings.Contains(last, "clearing this host's state does not resolve it") || strings.Contains(log, noClearingAdvice) {
 			t.Fatalf("pass %d: exit %d\n%s", pass, code, log)
 		}
 	}
@@ -209,6 +209,13 @@ func TestTheUnresumableRemedyOnAMultiInstanceHostNeverSaysToClearTheEntry(t *tes
 	}
 	if strings.Contains(multi, noClearingAdvice) || !strings.Contains(multi, "do NOT remove the session's whole entry") {
 		t.Fatalf("the multi-instance remedy: %q", multi)
+	}
+	// Not-owner on a multi-instance host carries the same warning: from a move's destination probe,
+	// clearing empties `instance` and strands the copy on the instance the session left.
+	notOwner := strings.Join(recurringLines(capture.Summary{Refused: 1, NotOwner: 1}, true, "/state.json"), "\n")
+	if !strings.Contains(notOwner, "do NOT remove the session's whole entry") || strings.Contains(notOwner, noClearingAdvice) ||
+		!strings.Contains(notOwner, "does not resolve it") {
+		t.Fatalf("the multi-instance not-owner remedy: %q", notOwner)
 	}
 	if got := recurringLines(capture.Summary{Refused: 4}, false, "/state.json"); len(got) != 0 {
 		t.Fatalf("refusals that do not recur produced a remedy: %q", got)
@@ -290,5 +297,36 @@ func TestARecurringRefusalBehindATransientFirstFailureStillExitsThree(t *testing
 	}
 	if code != 3 || !strings.Contains(log, "1 session(s) refused because the instance holds a stream at a position") {
 		t.Fatalf("exit %d — the wedged subagent stream was masked by the 502 reported first\n%s", code, log)
+	}
+}
+
+// TestOnATwoInstanceHostTheRemedyNeverSaysToClearTheEntry drives the wiring, not the wording: the
+// run must hand `recurringLines` the HOST's instance count, read from its configuration. With a
+// second instance configured beside the default one (an empty `instances/<alias>.env` is a
+// configured instance), an unresumable refusal must print the multi-instance warning and NOT the
+// single-instance "remove that session's entry". A run that passed a constant `false` there would
+// tell an operator on exactly the host where clearing strands an upload to clear it.
+func TestOnATwoInstanceHostTheRemedyNeverSaysToClearTheEntry(t *testing.T) {
+	p := interceptedPod(t, "s-0001", http.StatusConflict, `{"stored_to":"7"}`)
+	home, tokenFile, env := runWorld(t, runToken)
+	instances := filepath.Join(home, ".config", "cairn", "instances")
+	if err := os.MkdirAll(instances, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(instances, "secondary.env"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	code := run([]string{"--run", "-host", "host-a", "-worker", p.url, "-capture-token-file", tokenFile}, &bytes.Buffer{}, &errb, env)
+	log := errb.String()
+	if !strings.Contains(log, "refused s-0001: the instance holds this stream at") {
+		t.Fatalf("CONTROL: the unresumable refusal was not reached on the two-instance host:\n%s", log)
+	}
+	lines := strings.Split(strings.TrimRight(log, "\n"), "\n")
+	last := lines[len(lines)-1]
+	if code != 3 || !strings.Contains(last, "This host routes to several instances: do NOT remove the session's whole entry") ||
+		strings.Contains(log, noClearingAdvice) {
+		t.Fatalf("exit %d — on a two-instance host the remedy must warn against clearing the entry, never advise it: %q",
+			code, last)
 	}
 }

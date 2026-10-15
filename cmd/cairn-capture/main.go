@@ -406,21 +406,24 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 //
 // 🔴 THE REMEDY IS PER CAUSE BECAUSE NO ONE REMEDY IS RIGHT FOR ALL. Clearing a session's state
 // entry is right for an unresumable position on a host routed to ONE instance (measured: it
-// un-wedges the session); it does nothing for a root another uploader holds; and on a host routed
+// un-wedges the session); it does not resolve a root another uploader holds; and on a host routed
 // to several instances the entry also records WHERE the earlier upload lives (`instance`, the
 // withdrawal obligation of decision 16) and a final hold, so removing it can strand or duplicate
-// that upload. A 422 hold never reaches here ([capture.Recurs]): clearing would re-send bytes the
+// that upload — for EITHER cause. ⚠ A not-owner refusal can come from a MOVE's destination probe:
+// clearing then empties `instance`, the next run ships straight to the destination, is refused
+// again, and the copy on the instance the session left is never withdrawn (review round 2). A 422 hold never reaches here ([capture.Recurs]): clearing would re-send bytes the
 // pod's re-check refused.
 func recurringLines(sum capture.Summary, multiInstance bool, statePath string) []string {
 	var out []string
+	const doNotClear = "This host routes to several instances: do NOT remove the session's whole entry from the state " +
+		"file — it also records which instance holds the session's earlier upload, and any final hold, and removing it " +
+		"can strand or duplicate that upload. "
 	if n := sum.Unresumable; n > 0 {
 		l := fmt.Sprintf("%d session(s) refused because the instance holds a stream at a position this host's state "+
 			"cannot resume from (the `refused <session>: the instance holds this stream at …` lines above); refused again "+
 			"on every run (exit %d). ", n, exitRefused)
 		if multiInstance {
-			l += "This host routes to several instances: do NOT remove the session's whole entry from the state file — it " +
-				"also records which instance holds the session's earlier upload, and any final hold, and removing it can " +
-				"strand or duplicate that upload. Resolve it with the instance's operator"
+			l += doNotClear + "Resolve it with the instance's operator"
 		} else {
 			l += "Once the cause is understood (say, the instance's store was restored behind this host), with no run in " +
 				"progress, remove that session's entry from the state file " + statePath + "; the next run reads it again " +
@@ -430,10 +433,14 @@ func recurringLines(sum capture.Summary, multiInstance bool, statePath string) [
 		out = append(out, l)
 	}
 	if n := sum.NotOwner; n > 0 {
-		out = append(out, fmt.Sprintf("%d session(s) refused because the instance holds the session for another uploader "+
-			"(the `refused <session>: the instance answered that this session is held by another uploader (409)` lines "+
-			"above); refused again on every run (exit %d). It is resolved on the instance — the other uploader's copy of "+
-			"that root — and clearing this host's state changes nothing", n, exitRefused))
+		l := fmt.Sprintf("%d session(s) refused because the instance holds the session for another uploader "+
+			"(the `refused <session>: …held by another uploader (409)…` lines above); refused again on every run "+
+			"(exit %d). ", n, exitRefused)
+		if multiInstance {
+			l += doNotClear
+		}
+		out = append(out, l+"It is resolved on the instance — the other uploader's copy of that root; clearing this "+
+			"host's state does not resolve it")
 	}
 	return out
 }
