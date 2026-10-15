@@ -99,14 +99,15 @@ its arc and is updated by the lane that owns it.
 8. Retire the invitation half once the deployed `invites` table has zero open rows (at most 7 days after the
    fold deployed): revoke route, redeem arm, the redirect, `invite.Store.Create`; a route-ledger change.
    forcing: user — follows from the operator's option A
-9. cairn#284 MERGED (`63c16cc`, content identical to the audited head `92b14b5`): `cairn-capture --run` exits 3
-   ONLY for refusals that recur every run (unresumable stored position; not-owner 409, incl. a move's probe),
-   with a per-cause remedy on stderr; transient failures still exit 0. Ladder: round 0 + rounds 1–2, no 🔴;
-   both rounds' 🟡s fixed. NOT SHIPPED: move the tooling repo's cairn pin to ≥ `63c16cc` on BOTH hosts. Then a
-   wedged session turns that host's capture unit `failed` — and per round 0 NOTHING reads a failed user unit
-   automatically (the unit has no OnFailure by design; the bar shows only runaways), so pair the ship with a
-   reader (a failed-unit bar pill, or a rate-limited OnFailure) or accept manual `systemctl --user --failed`.
-   forcing: user — operator: proceed
+9. DONE — cairn#284 SHIPPED to both hosts: the tooling repo pins cairn `63c16cc` (its #2197) and both hosts'
+   capture units run `cairn-capture-63c16cc` (timers active). Paired reader: a failed-user-units bar pill
+   (its #2198; audit round 1's 🔴 — an unacknowledged `systemctl` reacher — fixed), live on the laptop's bar
+   (rendered `✗ 1 <unit>…` Critical on its first run). The workbench was at the login greeter (no X session),
+   so its bar picks the pill up at next login. forcing: user — operator: proceed as recommended
+10. Failed user units the new pill surfaced, for the operator: workbench `dunst.service` (X11 init failed —
+   consistent with no logged-in X session) and `drift-check.service` (rc15: the two hosts' settings.json key
+   sets / enabled plugins differ); laptop `muster-flow-runner.service`. Each needs a look or a deliberate
+   `systemctl --user reset-failed <unit>`; until then both bars stay red. forcing: user — the operator's own call
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this sweep (paraphrased):** the redactor's 90% held-back gate is WAIVED as an
@@ -291,6 +292,17 @@ its arc and is updated by the lane that owns it.
 - **Clearing a capture state entry on a MULTI-instance host strands the earlier upload** — the entry carries
   `instance` (the withdrawal obligation) and the final `held`; the remedy text now says so per cause. Found by
   audit round 1–2 from reading `route`/`withdraw`, not reproduced live. via: code
+
+- **A NEW script that reaches `systemctl` must join the tooling repo's two-way `ACKNOWLEDGED_UNSTUBBED` ledger
+  (`test_no_real_launchers.py`) in the same PR** — the implementing agent's targeted run left that file out
+  and reported green; the audit caught it red. Pin the verbs against `SYSTEMCTL_READ_VERBS`, not a literal.
+  via: measurement
+- **`i3-msg restart` on a host sitting at the login greeter finds no i3 socket** ("Resource temporarily
+  unavailable") — there is no session to restart; the bar loads new blocks at the next login. Check
+  `loginctl list-sessions` / `/tmp/.X11-unix` before diagnosing it. via: command
+- **One tooling-repo pytests failure on a lockfile-only PR was a timing flake**
+  (`test_a_second_PostToolUse_inside_the_interval_does_not_MOVE_the_timestamp` sleeps 1.1 s against a
+  throttle window): 5/5 local passes, green on re-run, main green. A flaky test, not yet fixed. via: measurement
 
 ## How to verify
 ```bash
