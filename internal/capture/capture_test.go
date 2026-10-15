@@ -9,26 +9,45 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/client"
 	"github.com/ZacxDev/cairn/internal/redact"
 )
 
 // TestMain doubles as an opencode STUB: when CAPTURE_OPENCODE_STUB names a directory, the test
-// binary answers `export <id>` and `session list …` from files there and exits — so ExecRunner's
-// real subprocess path (stdout to a FILE) is exercised without opencode installed.
+// binary answers `export <id>`, `session list …` and `debug scrap` from files there and exits — so
+// ExecRunner's real subprocess path (stdout to a FILE) is exercised without opencode installed.
+//
+// 🔴 `session list` MODELS THE REAL BINARY'S ROW CAP, measured on opencode 1.18.29: with no `-n`
+// it answers at most [stubDefaultListRows] rows (exit 0, nothing on stderr), and `-n N` answers at
+// most N. A stub that returned every row would pass a runner that never asked for them all.
 func TestMain(m *testing.M) {
 	if dir := os.Getenv("CAPTURE_OPENCODE_STUB"); dir != "" {
 		args := os.Args[1:]
 		var file string
+		limit := -1
 		switch {
 		case len(args) == 2 && args[0] == "export":
 			file = filepath.Join(dir, "export-"+args[1]+".json")
 		case len(args) >= 2 && args[0] == "session" && args[1] == "list":
 			file = filepath.Join(dir, "list.json")
+			limit = stubDefaultListRows
+			for i := 2; i < len(args); i++ {
+				if args[i] == "-n" && i+1 < len(args) {
+					n, err := strconv.Atoi(args[i+1])
+					if err != nil {
+						os.Exit(66)
+					}
+					limit = n
+				}
+			}
+		case len(args) == 2 && args[0] == "debug" && args[1] == "scrap":
+			file = filepath.Join(dir, "scrap.json")
 		default:
 			os.Exit(64)
 		}
@@ -36,11 +55,21 @@ func TestMain(m *testing.M) {
 		if err != nil {
 			os.Exit(65)
 		}
+		if limit >= 0 {
+			var rows []json.RawMessage
+			if json.Unmarshal(data, &rows) == nil && len(rows) > limit {
+				data, _ = json.Marshal(rows[:limit])
+			}
+		}
 		os.Stdout.Write(data)
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
+
+// stubDefaultListRows is opencode 1.18.29's `session list` default row cap, measured: 202 root
+// sessions in one project, 100 rows answered with no `-n`, 50 with `-n 50`, 202 with `-n 100000`.
+const stubDefaultListRows = 100
 
 type world struct {
 	Sessions map[string]struct {
@@ -139,12 +168,15 @@ func materialize(t *testing.T, w world, keep ...string) env {
 
 // fakeRunner serves recorded exports in-process.
 type fakeRunner struct {
-	exports map[string][]byte
-	list    []byte
-	calls   int // exports asked for
+	exports  map[string][]byte
+	list     []byte
+	calls    int // exports asked for
+	projects []byte
+	projErr  error
 }
 
-func (f *fakeRunner) List(string) ([]byte, error) { return f.list, nil }
+func (f *fakeRunner) List(string, int) ([]byte, error) { return f.list, nil }
+func (f *fakeRunner) Projects() ([]byte, error)        { return f.projects, f.projErr }
 func (f *fakeRunner) Export(id string) ([]byte, error) {
 	f.calls++
 	b, ok := f.exports[id]
@@ -178,9 +210,15 @@ func newAgent(t *testing.T, e env, routing client.Routing, runner OpencodeRunner
 		t.Fatal(err)
 	}
 	a := &Agent{ClaudeRoot: e.claude, Runner: runner, LedgerDir: e.ledger, Routing: routing, Redactor: r,
-		Sink: e.sink, State: &State{Schema: 1, Sessions: map[string]*SessionState{}}, Log: log}
+		Sink: e.sink, State: &State{Schema: 1, Sessions: map[string]*SessionState{}}, Log: log, Now: unsettled}
 	return a
 }
+
+// unsettled is the clock every agent these tests build reads unless a test sets its own: a moment
+// BEFORE the synthetic world's `session list` `updated`, so no export is ever settled and every
+// pass exports — what the tests written before the export skip assume when they change an export
+// under an unchanged list. The skip's own tests (opencode_skip_test.go) set the clock.
+func unsettled() time.Time { return time.UnixMilli(946684800000) }
 
 func mustRun(t *testing.T, a *Agent) Summary {
 	t.Helper()

@@ -16,9 +16,13 @@ operator's act.
 1. **Reads what is new.** Claude Code: every stream's complete lines after its byte offset (the
    main JSONL, each `subagents/agent-<id>.jsonl` as `subagent:<id>`), and every other file under
    the session directory as a blob — stat first, read only when size or mtime moved. opencode:
-   `opencode export <id>` for each root `opencode session list --format json` names in each
-   `-opencode-project` directory, and each child its `task` parts name, recursively; a unit (session
-   info, message info, part) is new when the digest of its bytes changed.
+   `opencode export <id>` for each root `opencode session list --format json -n <SessionListCap>`
+   names in each `-opencode-project` directory — and, under `-opencode-discover`, in every project
+   `opencode debug scrap` names — and each child its `task` parts name, recursively; a unit (session
+   info, message info, part) is new when the digest of its bytes changed. A root whose listed
+   `updated` is unchanged since a pass that exported and shipped it completely, an export that began
+   at least `OpencodeSettle` (10 min) after that `updated`, is NOT exported (`Agent.exportSettled`):
+   its ledgers are still folded, it is still routed, and its ledger still ships.
 2. **Derives `V`'s read half** with `internal/transcript/scopeuse` over the new records, the
    persisted evidence of earlier runs, and the client read ledgers of the root and every child —
    a UNION with the stored `V`, so a deleted ledger cannot shrink it.
@@ -43,6 +47,23 @@ operator's act.
   nothing.
 - The export carries **no part `time_updated`**, so a part's version is a digest of its bytes.
 - `session list` names the **current project's root sessions only**.
+- `session list` answers **at most 100 rows unless `-n` is given**, exit 0, nothing on stderr: 100
+  of a project's 202 roots with no `-n`, 50 at `-n 50`, all 202 at `-n 100000`. So every list is
+  asked with `-n SessionListCap` (1000000), and a list that comes back with that many rows is
+  REFUSED (`ErrSessionListAtCap`, the project's `refused opencode project` line) — at the cap,
+  complete and cut short look the same.
+- `debug scrap` prints every project opencode knows as `[{"id", "worktree", …}]`; the `global`
+  project's worktree is `/`, and `session list` run there lists the global project's sessions.
+  A project whose worktree no longer exists cannot be listed through the CLI at all (`session list`
+  runs IN the directory): `-opencode-discover` skips it and says how many on stderr
+  (`opencode discovery: projects=N skipped-missing-worktree=M enumerated=K`), every pass.
+- One `opencode export` costs **~0.65 s whatever its size**, so exporting every root and child on
+  every 60-second pass costs minutes of CPU per pass on a host with hundreds of sessions — the
+  reason for the skip above. Of 459 child sessions, **2 were updated later than their root**, by at
+  most 39.8 s, and a root's `updated` does not move when a child's does: the skip therefore needs an
+  export that began `OpencodeSettle` after the root's `updated`, not merely an unchanged `updated`.
+  ⚠ A child that changes MORE than that window after its root's last update, with the root still
+  unchanged, is not seen until the root next changes — beyond what was measured, not ruled out.
 
 ## Deviations from the plan, and why
 
@@ -105,10 +126,11 @@ means something else).
 |---|---|
 | 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run; a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` |
 | 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session for a reason that recurs on every run with nothing changed on either side (`capture.Recurs`): an **unresumable position** or **another uploader** (table below). One last stderr line per cause names the count and that cause's remedy |
-| 1 | the state cannot be read or saved, a session tree cannot be listed, or an instance refused the capture token (401/403); wins over 3 |
+| 1 | the state cannot be read or saved, a session tree cannot be listed, `-opencode-discover`'s `opencode debug scrap` failed (a missing binary, a non-zero exit, or an answer that is not a list of projects with absolute worktrees — never read as "no projects"; nothing is read or sent), or an instance refused the capture token (401/403); wins over 3 |
 | 2 | usage, and `--self-test`'s "could not vouch" |
 
-`--dry-run` is unchanged: it reads no state and talks to no instance, so no refusal here can arise in it.
+`--dry-run` is unchanged: it reads no state and talks to no instance, so no refusal here can arise in it. A
+failed `-opencode-discover` exits 1 there too.
 
 | cause | the line to look for | exit | remedy |
 |---|---|---|---|

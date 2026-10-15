@@ -41,6 +41,13 @@ type Agent struct {
 	Checkpoint      func() error
 	CheckpointEvery time.Duration
 
+	// ListCap is the `-n` each `session list` is asked with; 0 is [SessionListCap]. Only a test
+	// sets it, so the at-cap refusal can be reached without a million-row fixture.
+	ListCap int
+	// Now is the wall clock the opencode export skip reads ([Agent.exportSettled]); nil is
+	// [time.Now].
+	Now func() time.Time
+
 	// fatal is the first error that ends the run's uploads loudly (a refused token).
 	fatal error
 	// dirty is whether the state holds a change no checkpoint has saved; saved is when it last was.
@@ -53,6 +60,20 @@ type Agent struct {
 	// recurs is the first [Recurs] answer seen among ANY of the session's failed writes ([Agent.held]),
 	// so a recurring refusal behind an ordinary first failure still counts.
 	recurs Recurrence
+}
+
+func (a *Agent) listCap() int {
+	if a.ListCap > 0 {
+		return a.ListCap
+	}
+	return SessionListCap
+}
+
+func (a *Agent) now() time.Time {
+	if a.Now != nil {
+		return a.Now()
+	}
+	return time.Now()
 }
 
 // checkpoint saves the state now.
@@ -114,6 +135,9 @@ type Summary struct {
 	// RECURS on every run with nothing changed on either side ([Recurs]); `cairn-capture --run` exits
 	// 3 when either is non-zero. Not printed: the run line's `refused=` is unchanged.
 	Unresumable, NotOwner int
+	// ExportSkipped counts opencode roots whose `opencode export` calls this run made none of
+	// ([Agent.exportSettled]). Not printed: the run line is unchanged.
+	ExportSkipped int
 }
 
 // Recurrence is [Recurs]'s answer.
@@ -180,18 +204,19 @@ func (a *Agent) Run() (Summary, error) {
 		}
 	}
 	for _, dir := range a.OpencodeDirs {
-		raw, err := a.Runner.List(dir)
+		raw, err := a.Runner.List(dir, a.listCap())
 		if err == nil {
-			var roots []string
-			if roots, err = listRoots(raw); err == nil {
+			var roots []listedRoot
+			if roots, err = listRoots(raw, a.listCap()); err == nil {
 				for _, root := range roots {
-					a.isolate(root, &sum, func() error { return a.runOpencode(root, &sum) })
+					a.isolate(root.ID, &sum, func() error { return a.runOpencode(root, &sum) })
 				}
 			}
 		}
 		if err != nil {
 			// One unreadable project directory is refused and logged like one session; the rest
-			// still run.
+			// still run. A list at its `-n` cap ([ErrSessionListAtCap]) is refused WHOLE, here: no
+			// root of it is captured, because a list that may be cut short is not read as complete.
 			a.logf("refused opencode project %s: %v", dir, err)
 			sum.Refused++
 		}
@@ -857,7 +882,52 @@ type ocStream struct {
 	all     []exportUnit
 }
 
-func (a *Agent) runOpencode(root string, sum *Summary) error {
+// OpencodeSettle is how long after a root's listed `updated` its export must have begun before an
+// unchanged `updated` may skip the next export ([Agent.exportSettled]).
+//
+// 🔴 WHY A WINDOW AND NOT THE ROOT'S `updated` ALONE: a CHILD session can change after its root
+// does — measured over 459 child sessions on one host, 2 were updated later than their root, by at
+// most 39.8 s — and the root's `updated` does not move when it does. An export that began at least
+// this long after the root's last update saw every such child change; one that began sooner may
+// not have, so the root is exported again until one has.
+const OpencodeSettle = 10 * time.Minute
+
+// exportSettled reports whether this run may make NO `opencode export` call for a root: its
+// listed `updated` is the one recorded at the last pass that exported and shipped the root and
+// every child COMPLETELY ([SessionState.OpencodeUpdated]), and that pass's export began at least
+// [OpencodeSettle] after it.
+//
+// 🔴 MEASURED COST, THE REASON IT EXISTS: one `opencode export` costs ~0.65 s whatever its size,
+// and every root and every child was exported on every 60-second pass — at ~600 roots and ~460
+// children, minutes of CPU per pass, forever, for sessions nobody had touched.
+//
+// 🔴 ANYTHING AMBIGUOUS EXPORTS: no record, a row with no `updated` (0), a different one, an
+// unsettled export, or a record that a pass which did not complete has cleared. A skip still
+// folds every ledger, ROUTES and ships the ledger ([Agent.runOpencode]), so a read that moves the
+// session, a routing-table edit and a pending withdrawal are all acted on exactly as before.
+func (a *Agent) exportSettled(ss *SessionState, updated int64) bool {
+	return updated > 0 && ss.OpencodeUpdated == updated &&
+		ss.OpencodeExportedAt >= updated+OpencodeSettle.Milliseconds()
+}
+
+// opencodeComplete reports whether nothing of an opencode session is refused, held, pending or awaiting a
+// re-check placeholder — and, for the streams this run exported, nothing is left unshipped.
+func (ss *SessionState) opencodeComplete(exported []ocStream) bool {
+	for _, st := range ss.Streams {
+		if st.Refused != "" || len(st.Pending) > 0 || len(st.Rechecked) > 0 {
+			return false
+		}
+	}
+	for _, s := range exported {
+		if len(diffUnits(s.all, ss.stream(s.name).Units)) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *Agent) runOpencode(lr listedRoot, sum *Summary) (err error) {
+	root := lr.ID
 	ss := a.State.session(root, "opencode")
 	sum.Sessions++
 	if ss.Held || ss.Deleted != "" {
@@ -867,12 +937,39 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 		sum.Skipped++
 		return nil
 	}
-	// Export the root and, recursively, every child its `task` parts name.
-	type job struct{ id, stream string }
-	queue := []job{{root, "main"}}
-	seen := map[string]bool{root: true}
+	skip := a.exportSettled(ss, lr.Updated)
+	began := a.now().UnixMilli()
 	var streams []ocStream
 	var children []string
+	// 🔴 THE RECORD IS WRITTEN ONLY BY A PASS THAT COMPLETED, AND CLEARED BY ANY THAT DID NOT —
+	// an early return included (a refused export, a route that did not ship, a stopped instance, a
+	// failed write). A skipped pass that completes keeps the record it was skipped on.
+	completed := false
+	defer func() {
+		switch {
+		case completed && !skip && lr.Updated > 0:
+			ss.OpencodeUpdated, ss.OpencodeExportedAt = lr.Updated, began
+		case !completed:
+			ss.OpencodeUpdated, ss.OpencodeExportedAt = 0, 0
+		}
+	}()
+	if skip {
+		sum.ExportSkipped++
+		// The children are the ones the recorded pass exported: every `child:<id>` stream.
+		for name := range ss.Streams {
+			if id, ok := strings.CutPrefix(name, "child:"); ok {
+				children = append(children, id)
+			}
+		}
+		sort.Strings(children)
+	}
+	// Export the root and, recursively, every child its `task` parts name.
+	type job struct{ id, stream string }
+	var queue []job
+	if !skip {
+		queue = []job{{root, "main"}}
+	}
+	seen := map[string]bool{root: true}
 	for len(queue) > 0 {
 		j := queue[0]
 		queue = queue[1:]
@@ -920,14 +1017,20 @@ func (a *Agent) runOpencode(root string, sum *Summary) error {
 	ss.V = union(ss.V, res.V)
 	ss.Declared = union(ss.Declared, res.Declare)
 
-	ship, _, err := a.route(root, ss, sum)
+	ship, reset, err := a.route(root, ss, sum)
 	if err != nil || !ship {
 		return err
+	}
+	if skip && reset {
+		// A MOVE reset every watermark, and this run exported nothing to re-ship: the cleared record
+		// makes the next run export the whole session and ship it to the new instance.
+		return nil
 	}
 	if a.stopped(ss.Instance) {
 		sum.Skipped++
 		return nil
 	}
+	defer func() { completed = err == nil && ss.opencodeComplete(streams) }()
 	var failed error
 	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.Declared}
 	shippedAny, failed := a.shipLedger(up, append([]string{root}, children...), ss, sum)

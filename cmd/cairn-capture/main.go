@@ -25,7 +25,8 @@
 // of `internal/depspolicy`'s `LinkedBinaryRoots`.
 //
 //	cairn-capture --self-test [-seed N]
-//	cairn-capture --dry-run [-claude-root DIR] [-opencode-project DIR]... [-ledger-dir DIR] [-denylist FILE]
+//	cairn-capture --dry-run [-claude-root DIR] [-opencode-project DIR]... [-opencode-discover] [-opencode-bin BIN]
+//	              [-ledger-dir DIR] [-denylist FILE]
 //	cairn-capture --run -host LABEL -worker [ALIAS=]URL -capture-token-file [ALIAS=]FILE [-state FILE]
 //	              [-host-key FILE] [-allow-plaintext-host [ALIAS=]HOST]... [the --dry-run reading flags]
 //
@@ -90,7 +91,9 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		ledgerDir  = fs.String("ledger-dir", "", "the client read-ledger directory (default $XDG_STATE_HOME/cairn/read-ledger)")
 		denylist   = fs.String("denylist", "", "a 0600 per-host denylist file (optional)")
 		ocBin      = fs.String("opencode-bin", "opencode", "the opencode binary, by name or path")
-		ocDirs     multi
+		ocDisc     = fs.Bool("opencode-discover", false, "also enumerate every project `opencode debug scrap` names "+
+			"(unioned with -opencode-project; a worktree that is gone is skipped and counted on stderr)")
+		ocDirs multi
 	)
 	fs.Var(&ocDirs, "opencode-project", "an opencode project directory to enumerate (repeatable; `session list` lists ONE project's roots)")
 	fs.Var(&workers, "worker", "--run: [ALIAS=]URL of an instance's worker listener (repeatable; no alias is the default instance)")
@@ -127,7 +130,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	if *runOnce {
 		return runPass(runConfig{host: *host, state: *statePath, hostKey: *hostKey, maxRequest: *maxRequest,
 			workers: workers, tokenFiles: tokenFiles, plaintext: plaintext, stateHome: stateHome, claudeRoot: *claudeRoot,
-			ocDirs: ocDirs, ocBin: *ocBin, ledgerDir: *ledgerDir, denylist: *denylist}, stderr, getenv)
+			ocDirs: ocDirs, ocDiscover: *ocDisc, ocBin: *ocBin, ledgerDir: *ledgerDir, denylist: *denylist}, stderr, getenv)
 	}
 	// 🔴 --dry-run WRITES NOTHING, THE HOST KEY INCLUDED. It prints counts by rule, never a tag, so
 	// an ephemeral in-memory key is all it needs; creating the persistent key file as a side effect
@@ -155,10 +158,16 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitError
 	}
+	runner := capture.ExecRunner{Bin: *ocBin}
+	dirs, err := opencodeDirs(*ocDisc, ocDirs, runner, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
+		return exitError
+	}
 	agent := &capture.Agent{
 		ClaudeRoot:   *claudeRoot,
-		OpencodeDirs: ocDirs,
-		Runner:       capture.ExecRunner{Bin: *ocBin},
+		OpencodeDirs: dirs,
+		Runner:       runner,
 		LedgerDir:    *ledgerDir,
 		Routing:      routing,
 		Redactor:     red,
@@ -178,6 +187,28 @@ type runConfig struct {
 	claudeRoot, ocBin, ledgerDir    string
 	denylist                        string
 	ocDirs                          []string
+	ocDiscover                      bool
+}
+
+// opencodeDirs is the opencode project directories a pass enumerates: `-opencode-project` alone,
+// or — under `-opencode-discover` — unioned with every project `opencode debug scrap` names
+// ([capture.DiscoverOpencodeDirs]).
+//
+// 🔴 A DISCOVERY THAT FAILS IS THE PASS'S ERROR (exit 1), NEVER "NO PROJECTS": a missing binary, a
+// non-zero exit or an answer that does not parse would otherwise read as a host with nothing to
+// capture. And the projects it SKIPS — a worktree that no longer exists, whose sessions `session
+// list` cannot reach — are said on stderr every pass, as one line of counts.
+func opencodeDirs(discover bool, explicit []string, runner capture.OpencodeRunner, stderr io.Writer) ([]string, error) {
+	if !discover {
+		return explicit, nil
+	}
+	dirs, named, skipped, err := capture.DiscoverOpencodeDirs(runner, explicit)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(stderr, "cairn-capture: opencode discovery: projects=%d skipped-missing-worktree=%d enumerated=%d\n",
+		named, skipped, len(dirs))
+	return dirs, nil
 }
 
 // aliased splits `[ALIAS=]VALUE`; no alias is the default instance.
@@ -346,6 +377,11 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		return fail(err)
 	}
 	defer release()
+	runner := capture.ExecRunner{Bin: c.ocBin}
+	dirs, err := opencodeDirs(c.ocDiscover, c.ocDirs, runner, stderr)
+	if err != nil {
+		return fail(err)
+	}
 	capture.CleanStateTemps(c.state)
 	state, err := capture.LoadState(c.state)
 	if err != nil {
@@ -371,8 +407,8 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	sink := &capture.HTTPSink{Host: c.host, Endpoints: eps, MaxRequest: c.maxRequest, Log: stderr}
 	agent := &capture.Agent{
 		ClaudeRoot:   c.claudeRoot,
-		OpencodeDirs: c.ocDirs,
-		Runner:       capture.ExecRunner{Bin: c.ocBin},
+		OpencodeDirs: dirs,
+		Runner:       runner,
 		LedgerDir:    c.ledgerDir,
 		Routing:      routing,
 		Redactor:     red,
