@@ -92,7 +92,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		denylist   = fs.String("denylist", "", "a 0600 per-host denylist file (optional)")
 		ocBin      = fs.String("opencode-bin", "opencode", "the opencode binary, by name or path")
 		ocDisc     = fs.Bool("opencode-discover", false, "also enumerate every project `opencode debug scrap` names "+
-			"(unioned with -opencode-project; a worktree that is gone is skipped and counted on stderr)")
+			"(unioned with -opencode-project; a project whose worktree is gone is listed through its first existing sandbox, "+
+			"else skipped; both counted on stderr)")
 		ocDirs multi
 	)
 	fs.Var(&ocDirs, "opencode-project", "an opencode project directory to enumerate (repeatable; `session list` lists ONE project's roots)")
