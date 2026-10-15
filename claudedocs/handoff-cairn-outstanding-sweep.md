@@ -84,10 +84,10 @@ its arc and is updated by the lane that owns it.
    forcing: user — operator asked for it at handoff
 3. DONE — transcript capture armed on the second host (State now).
    forcing: user — operator: arm it fully
-4. Transcript backup — LIVE (State now). Remaining: run the restore DRILL in the deployment repo's
-   `TRANSCRIPTS-RESTORE.md`, beside the job (measures the agent-wedge-after-restore claim),
-   and add a `kube_cronjob_status_last_successful_time` alert for `cairn-transcripts-backup` (nothing alerts on
-   it, nor on the sibling UI backup). Claimed: `cairn-outstanding-sweep-4`. forcing: user — operator approved the design
+4. Transcript backup — LIVE, restore DRILL PASSED (State now; Gotchas). Remaining: add a
+   `kube_cronjob_status_last_successful_time` alert for `cairn-transcripts-backup` (nothing alerts on it, nor on
+   the sibling UI backup). The live-volume RESTORE itself (runbook steps 1–4, 6) and opencode resumption stay
+   unrun. Claimed: `cairn-outstanding-sweep-4`. forcing: user — operator approved the design
 5. Tooling repo CI: REOPEN and merge the closed shard-1 fixture fix (branch `fix/tmux-reply-test-socket-path`
    — `/resume` reports it GONE locally; check the remote before assuming it was deleted; confirm it turns
    shard 1 green), and find why the go/node legs post "no verdict" while their logs pass.
@@ -256,6 +256,20 @@ its arc and is updated by the lane that owns it.
   and merged the job to the deployment repo's trunk.** via: command
 - **The base-clone write guard cannot resolve `git -C $VAR`** — it judges the shell's cwd and refuses; spell
   the worktree path literally. via: command
+
+- **Transcript restore DRILL, 2026-10-15 — PASSED:** the live bucket restored into scratch (263 sessions,
+  every committed stream/blob size honoured, every gzip member complete, 138,207 records decoded; a
+  truncated-stream negative control went red); `cairn-ui` at the deployed revision opened it with no
+  ownership refusal. Record and procedure: the deployment repo's restore runbook beside the job. via: measurement
+- **A store restored behind a host's watermark WEDGES that host's grown sessions PERMANENTLY, and
+  `cairn-capture` EXITS 0** (`refused=2` in its run line; the unit stays green). Measured by replaying this
+  host's agent, with copies of its state and host key, against the restored copy over loopback. Clearing ONLY
+  the refused sessions' entries from the state file un-wedges them: the agent resumed at restored positions
+  of 1.48/2.3/13.1 MB — past its 1 MB first request — `shipped=2 refused=0`. Opencode streams untested (this
+  host has none). via: measurement
+- **`cairn-capture --run` exits 0 with `refused>0`**, so a wedged stream is invisible to anything that reads
+  the unit's status — in normal operation too, not only after a restore. Not yet filed as a defect.
+  via: measurement
 
 ## How to verify
 ```bash
