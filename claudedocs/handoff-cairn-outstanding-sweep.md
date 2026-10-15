@@ -87,10 +87,9 @@ its arc and is updated by the lane that owns it.
 4. DONE — transcript backup: approved design LIVE (hourly, journal-driven, its own bucket), restore DRILL
    passed, and alerts live for it AND the sibling UI backup (6 rules, all `health=ok`). Not run: a restore
    into the live volume, and opencode resumption after one (no opencode host). forcing: user — operator approved the design
-5. Tooling repo CI: REOPEN and merge the closed shard-1 fixture fix (branch `fix/tmux-reply-test-socket-path`
-   — `/resume` reports it GONE locally; check the remote before assuming it was deleted; confirm it turns
-   shard 1 green), and find why the go/node legs post "no verdict" while their logs pass.
-   forcing: user — operator: reopen and merge
+5. SUPERSEDED — the tooling repo's shard-1 socket-path failure was fixed another way (its #2183, merged); the
+   closed fixture PR stays closed, and main's pytests/go/node legs all post real verdicts (failed=0). Kept as a
+   numbered row so later ranks keep their claim ids. forcing: user — operator: reopen and merge
 6. First dispatched task-board agent on a scoped task: confirm the relay's first listener request answers 200
    and one memo is delivered once, then retracted. forcing: user — operator chose the relay
 7. Operator-only checks: signed-in Team flow, iPhone install checklist, signed-in memos tab, live opencode memo
@@ -104,10 +103,21 @@ its arc and is updated by the lane that owns it.
    (its #2198; audit round 1's 🔴 — an unacknowledged `systemctl` reacher — fixed), live on the laptop's bar
    (rendered `✗ 1 <unit>…` Critical on its first run). The workbench was at the login greeter (no X session),
    so its bar picks the pill up at next login. forcing: user — operator: proceed as recommended
-10. Failed user units the new pill surfaced, for the operator: workbench `dunst.service` (X11 init failed —
-   consistent with no logged-in X session) and `drift-check.service` (rc15: the two hosts' settings.json key
-   sets / enabled plugins differ); laptop `muster-flow-runner.service`. Each needs a look or a deliberate
-   `systemctl --user reset-failed <unit>`; until then both bars stay red. forcing: user — the operator's own call
+10. Failed user units the pill surfaced: the workbench's two (dunst, drift-check) have since CLEARED (0 failed
+   there now); the laptop's `muster-flow-runner.service` is still failed and unexamined. forcing: user — the operator's own call
+11. OPENCODE CAPTURE IS NOT ON for either host — the operator's original ask said opencode support was
+   mandatory. The code supports it; the hosts' units pass no `-opencode-project` (the tooling repo's
+   cairn-capture module defaults the list to empty). Measured on the workbench, a `--dry-run` over its 24
+   existing opencode project directories (Claude root pointed at an empty dir): 1,114 sessions — 984 ship
+   (personal), 123 held (`*` in `V`), 7 route to the UNARMED client instance; 543 carry a redaction; rc 0, no
+   stderr. 10 more project directories no longer exist, and their sessions cannot be enumerated (`session
+   list` runs per project directory). The laptop has its own set (the tooling repo 56, two scratch repos, a client repo,
+   others). DECISION PENDING (operator): arm it, and HOW the unit learns the project list — a static per-host
+   list (rots on every new project), the unit querying opencode's DB at run time (couples to its private
+   schema), or `cairn-capture` enumerating projects itself (a cairn change). forcing: user — operator: opencode support mandatory
+12. DONE — memo-webhooks 0.3.1 deployed (carries only #1016): pod runs digest `0f2e61f7…`, 0 restarts, both
+   pollers advancing, #1016's new strings present in the running binary and absent from 0.3.0.
+   forcing: user — operator: proceed
 
 ## Gotchas / decisions / dead-ends
 - **Operator decisions this sweep (paraphrased):** the redactor's 90% held-back gate is WAIVED as an
@@ -303,6 +313,18 @@ its arc and is updated by the lane that owns it.
 - **One tooling-repo pytests failure on a lockfile-only PR was a timing flake**
   (`test_a_second_PostToolUse_inside_the_interval_does_not_MOVE_the_timestamp` sleeps 1.1 s against a
   throttle window): 5/5 local passes, green on re-run, main green. A flaky test, not yet fixed. via: measurement
+
+- **Arc close-check (operator asked): 4 arcs, every operator message read, verdict NOT ADDRESSED on one item —
+  opencode capture (rank 11).** Everything else asked was shipped; ranks 6 and 8 wait on use/time, rank 7 is
+  the operator's own checks. via: measurement
+- **RETRACTS "this host has no opencode sessions" (restore-drill note): capture was never TOLD about opencode**
+  — the workbench's opencode database is 5.5 GB and active; the drill's 880/880 `claude` count describes what
+  capture was configured to read, not what the host runs. via: measurement
+- **Stale lines, now false:** the Defects row "shard 1 is red on every PR" (main is green); the Defects row "the
+  Cloudflare account token file is mode 644" (it is 600). The deployment repo's capture handoff still says the
+  store is not backed up, and its webhook handoff lists #1016 inside 0.3.0. via: command
+- **The webhook receiver's pod start line counts capture token rows at START** — `1 token row(s)` while the file
+  holds 2 rows is a pod that predates the second mint, not a missing row; both hosts upload. via: measurement
 
 ## How to verify
 ```bash
