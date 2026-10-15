@@ -64,6 +64,17 @@ its arc and is updated by the lane that owns it.
 - Not verified: the relay's first real request and an
   end-to-end relayed memo; a real-browser read of a stored transcript; a second signed-in principal being
   refused a transcript; the second host's hook/client beyond the ship script's report and a store-path match.
+- **Transcript backup (rank 4): DESIGNED, APPROVED, BUILT — NOT DEPLOYED.** Operator approved: an HOURLY job
+  in the deployment repo that mirrors the transcript volume (read-only mount) into a DEDICATED bucket, deletions
+  driven by the store's own `journal.jsonl` (owner delete / withdrawal / retention leave the backup within ~1 h),
+  a remote backstop deleting any backed-up root whose `meta.json` `updated_at` is past retention + 1 day, a root
+  absent locally AND unjournaled is REFUSED (never deleted; exit 3), streams uploaded truncated to `meta.json`'s
+  committed `bytes`, `meta.json` last. No versioning, no ILM, no history (history would contradict deletion).
+  The credential CAN delete, scoped to its own bucket (operator accepted). Built on the deployment repo branch
+  `feat/cairn-transcripts-backup` @ `9867527c` (pushed, unmerged, no PR): 29/29 tests run the shipped
+  ConfigMap script; the agent reported 21/21 mutants killed, and one (the refuse guard) was re-run
+  independently here → 3 named tests red, file restored sha-identical. Live store at design time: 178 MB,
+  263 sessions, 12 journal lines.
 
 ## Next steps (ranked)
 1. DONE — webhook receiver go-live: all three sources live, ClickUp proven end to end (State now). Kept as a
@@ -72,9 +83,14 @@ its arc and is updated by the lane that owns it.
    forcing: user — operator asked for it at handoff
 3. DONE — transcript capture armed on the second host (State now).
    forcing: user — operator: arm it fully
-4. Transcript backup: DESIGN, then ask before building — it must honour 90-day retention and owner deletion
-   (the existing job stages through a small scratch volume and would outlive both) and fit a 20 GB store.
-   forcing: user — operator: design, then ask
+4. Transcript backup — design APPROVED and BUILT (State now); BLOCKED-ON-OPERATOR: create the bucket (no
+   versioning, no ILM), a user with the bucket-scoped read/write/list/DELETE policy, and the sops-encrypted
+   `cairn-transcripts-backup-s3` Secret + its census-ledger row on the branch, in one commit — the exact
+   commands and policy JSON are in the branch's runbook/commit and this session's report. Then merge
+   (merging BEFORE the Secret exists makes every hourly run fail), watch the first run's summary line,
+   run the restore DRILL in the branch's `TRANSCRIPTS-RESTORE.md`, and add a
+   `kube_cronjob_status_last_successful_time` alert for the job (nothing alerts on it, nor on the
+   sibling UI backup). Claimed: `cairn-outstanding-sweep-4`. forcing: user — operator approved the design
 5. Tooling repo CI: REOPEN and merge the closed shard-1 fixture fix (branch `fix/tmux-reply-test-socket-path`
    — `/resume` reports it GONE locally; check the remote before assuming it was deleted; confirm it turns
    shard 1 green), and find why the go/node legs post "no verdict" while their logs pass.
@@ -219,6 +235,25 @@ its arc and is updated by the lane that owns it.
   memo lands one window (10 min) after the FIRST event; `events_queued` moves at once. via: measurement
 - **A long watcher that calls `~/.nix-profile/bin/<tool>` dies mid-run when a `home-manager switch` swaps the
   profile** — it then spins and reports a false "nothing happened"; call the system profile's binary. via: measurement
+
+- **Operator decisions on the transcript backup (paraphrased):** approve the hourly journal-driven mirror as
+  designed; accept a delete-capable credential limited to its own bucket; no client-side encryption (same
+  plaintext posture as the sibling backups). via: command
+- **`mc mirror --remove` is the WRONG primitive for a deletion-honouring backup**: a volume replaced empty
+  makes every root "absent" and the mirror erases the whole backup. Deletion must be driven by the journal
+  (a positive record), never by absence. via: code
+- **A missing `journal.jsonl` is normal**: the store creates it only at its first deletion, so "refuse when
+  the journal is absent" (the first design) would be red forever on a store that never deleted. via: code
+- **A journaled `retention-uncommitted` root is NOT final** — the id can later be committed by a live
+  session, so the local copy wins over the journal line. via: code
+- **Restoring the store behind an agent's watermark should wedge those streams** (409 naming a position the
+  run's batch cannot resume from, `UnresumableError` in `internal/capture/httpsink.go`); the restore runbook
+  clears host capture state so agents re-ship. Read from code, NOT measured — the drill measures it.
+  via: code
+- **`mc pipe` with the default part size was OOM-killed (rc 137) on a 300 MB stream under a 256 MiB cap;
+  `--part-size 16MiB` passed** — the job pins it. via: measurement
+- **The archive `-transcript-quota` is 40 GB (two hosts), not the 20 GB the PVC comment said** — corrected on
+  the branch. via: command
 
 ## How to verify
 ```bash
