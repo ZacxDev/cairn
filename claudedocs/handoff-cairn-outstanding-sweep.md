@@ -76,6 +76,15 @@ its arc and is updated by the lane that owns it.
   (empty bucket) 12 min 51 s, 263/263 sessions, 1,549 objects, refused 0; second run 18 s, uploaded 9, unchanged
   1,540. ⚠ NOT exercised live: a journal-driven or backstop deletion (unit tests + a local smoke only), and a
   RESTORE (no drill run yet).
+- **Opencode capture (rank 11): LIVE on BOTH hosts, first passes verified.** cairn #285 (`fd16918`: `-n` list cap,
+  `-opencode-discover`, settled-export skip) + #286 (`c9fab63`: an empty `session list` answer is zero roots — found
+  by the laptop's dry run, where a zero-session project answered 0 bytes and fd16918 failed the pass). Tooling repo
+  #2200 (`c623240b`): `opencodeDiscover = true`, `gitMinimal` on the unit PATH, timer 300 s; `ship.sh` converged both
+  hosts on that sha. First live pass: workbench rc 0, shipped 531 (529 opencode), held 96, 32 min, 1.5 G peak;
+  laptop rc 0, shipped 397, held 19, 20 min. Second pass: `export-skipped=529` in 12 s / `=397` in 8 s. Pod: 926
+  `runtime: opencode` sessions (= 529 + 397). Redaction spot-check over their stored bytes (31,996 tool lines as the
+  control): capture-token prefixes 0, GitHub/Anthropic/AWS/private-key patterns 0, `bearer` + ≥20 token chars 2 —
+  both hyphenated English prose by shape. The one `refused=1` per host is the pre-existing unarmed-instance route.
 
 ## Next steps (ranked)
 1. DONE — webhook receiver go-live: all three sources live, ClickUp proven end to end (State now). Kept as a
@@ -103,18 +112,8 @@ its arc and is updated by the lane that owns it.
    (its #2198), live on the laptop's bar. forcing: user — operator: proceed as recommended
 10. Failed user units the pill surfaced: the workbench's two have CLEARED; the laptop's
    `muster-flow-runner.service` is still failed and unexamined. forcing: user — the operator's own call
-11. IN FLIGHT: cairn branch `fix/opencode-capture-discovery` (subagent PR, not yet merged) — OPENCODE CAPTURE.
-   DECIDED (operator, "proceed as recommended"): arm it, and `cairn-capture` discovers projects itself via
-   `opencode debug scrap` (a new `-opencode-discover` flag; unparseable/failed scrap is an ERROR, never zero
-   projects; missing worktrees skipped and counted on stderr). The same PR fixes two blockers found while
-   measuring (see Gotchas): the 100-row `session list` cap, and the per-pass full re-export (skip a root whose
-   listed `updated` is unchanged AND whose last complete export ran ≥10 min after it). Then, in order: audit
-   the PR (ladder until a round has no 🔴) and merge; tooling repo `nix/cairn-capture.nix` gains the discover
-   flag (its `test_cairn_capture.py` pins the args) + cairn pin bump, as a PR; on EACH host run
-   `cairn-capture --dry-run -opencode-discover` (Claude root pointed at an empty dir) and compare — workbench
-   expects 616 root sessions (631 in its DB minus 15 under 3 projects whose worktrees are gone); time a second
-   `--run` pass to confirm the skip makes it cheap; redaction spot-check; then enable per host. `opencode` is
-   already on the unit's PATH (`~/.nix-profile/bin`). Claim `cairn-outstanding-sweep-11` is held by this host.
+11. DONE — opencode capture armed and live on both hosts (State now): cairn #285 + #286, tooling repo #2200,
+   both hosts converged, first passes and the cheap second pass verified, redaction spot-check clean.
    forcing: user — operator: opencode support mandatory
 12. DONE — memo-webhooks 0.3.1 deployed (carries only #1016). forcing: user — operator: proceed
 
@@ -339,17 +338,28 @@ its arc and is updated by the lane that owns it.
   ~1,100 sessions. Root `updated` is a near-sufficient change signal: 2 of 459 child sessions were updated after
   their root, by at most 39.8 s — hence the 10-minute settle window in the skip rule. via: measurement
 
+- **`opencode session list` for a project with ZERO sessions writes 0 bytes, exit 0 — not `[]`** (1.18.29; seen on
+  the laptop for a project whose worktree's root commit no longer matches its project id). A read-only (`mode=ro`)
+  count of opencode's `session` table then matched every other project's listed root count exactly (416 total).
+  via: measurement
+- **A full `$TMPDIR` also yields exit 0 + 0 bytes from opencode** (audit, against `/dev/full`) — the one known
+  exit-0-empty failure; corrupt DB, bad flags, a deleted cwd all exit 1. via: measurement
+- **The laptop's first dry run did not crash the host: its battery died** (operator). A store path built
+  `--no-link` was garbage-collected across that reboot — build with `-o <gc-root>` for a run you may repeat.
+  via: user
+- **Pod store paths:** transcripts live at `/var/lib/cairn-transcripts/sessions/<root>/{meta.json,*.gz}` in
+  `deploy/cairn-ui` (`KUBECONFIG=$KC_HOMELAB`); the container has no `/tmp`, so stream counts instead of staging
+  files. via: command
+
 ## How to verify
 ```bash
 bash tests/memo/live-probe.sh ~/.config/cairn-memo-probe/probe-input           # SUMMARY … exit=0
 gh pr list -R ZacxDev/cairn --state open                                       # none left from the sweep
 cairn sources --scope cairn                                                    # status=sources-undeclared until a source is added
-systemctl --user is-active cairn-capture.timer                                 # active on the armed host only
+systemctl --user is-active cairn-capture.timer                                 # active on BOTH hosts
+journalctl --user -u cairn-capture -n 20 -o cat | grep -E 'opencode discovery|export-skipped'  # rc 0, high export-skipped
 ```
 ## Defects (batched)
-- 🟡 The tooling repo's sharded CI: shard 1 is red on every PR (five socket-path overflows in a test file under
-  the shard temp dir; go/node legs post "no verdict" though they pass). A one-line fixture fix was opened and
-  CLOSED unmerged by someone else; its branch still exists.
 - 🟡 `tests/dualrun` self-test is flaky: `audit-identity-field-dropped` once also tripped the `process`
   comparison (mutants=7 caught=6, exit 2); the same commit passed on re-run.
 - 🟡 The personal-agent bridge credential's first ~16 of 43 characters were printed into the coordinator's
@@ -383,7 +393,6 @@ systemctl --user is-active cairn-capture.timer                                 #
 - 🟡 Discord DM watcher: whether opening a DM marks it read is unmeasured (accepted); a status containing
   parentheses in a DM label makes it read as not-a-DM; an older ClickUp mutant survives ~1 run in 7 (map
   order); the deployment repo's pre-push gate intermittently reports a guard that "could not run".
-- 🟡 The Cloudflare account token file on the workbench is mode 644.
 - 🟡 Docs-pass leftovers: a `flake.nix` comment (~1362–1372) says `cairn-ui` makes no outgoing TLS connection
   (false: the OIDC backend fetches keys); four `cairn-server` refusal messages still say "the path this pod
   reads its journal from"; the scopeuse linearity test is load-sensitive.
@@ -391,3 +400,10 @@ systemctl --user is-active cairn-capture.timer                                 #
   audit-round name; a one-field per-thread struct could be a plain map; after purging the BRIDGE profile the
   shared read policy is gone too, so re-provisioning the receiver's profile then refuses (rc 8) and the hint
   does not say why. All cosmetic or hint-level.
+- 🟡 opencode capture (#286 round 1): with `$TMPDIR` full, opencode exits 0 having written nothing, which now
+  reads as zero roots — silent only with explicit `-opencode-project` dirs (under `-opencode-discover` the empty
+  `debug scrap` is still refused, exit 3); delays, never withdraws. Nit: a dropped space in a test comment
+  (`internal/capture/opencode_list_test.go`, the discovery test's doc line).
+- 🟢 opencode capture: the 24 h re-export backstop re-exports every root ~24 h after its first export, so the
+  first pass's ~600 roots cluster into one long pass a day (~11 min of exports on the workbench); the CHANGELOG
+  row for #285 still reads `<UNFILLED>` (as do several older rows).
