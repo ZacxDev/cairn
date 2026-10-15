@@ -64,17 +64,18 @@ its arc and is updated by the lane that owns it.
 - Not verified: the relay's first real request and an
   end-to-end relayed memo; a real-browser read of a stored transcript; a second signed-in principal being
   refused a transcript; the second host's hook/client beyond the ship script's report and a store-path match.
-- **Transcript backup (rank 4): DESIGNED, APPROVED, BUILT — NOT DEPLOYED.** Operator approved: an HOURLY job
-  in the deployment repo that mirrors the transcript volume (read-only mount) into a DEDICATED bucket, deletions
-  driven by the store's own `journal.jsonl` (owner delete / withdrawal / retention leave the backup within ~1 h),
-  a remote backstop deleting any backed-up root whose `meta.json` `updated_at` is past retention + 1 day, a root
-  absent locally AND unjournaled is REFUSED (never deleted; exit 3), streams uploaded truncated to `meta.json`'s
-  committed `bytes`, `meta.json` last. No versioning, no ILM, no history (history would contradict deletion).
-  The credential CAN delete, scoped to its own bucket (operator accepted). Built on the deployment repo branch
-  `feat/cairn-transcripts-backup` @ `9867527c` (pushed, unmerged, no PR): 29/29 tests run the shipped
-  ConfigMap script; the agent reported 21/21 mutants killed, and one (the refuse guard) was re-run
-  independently here → 3 named tests red, file restored sha-identical. Live store at design time: 178 MB,
-  263 sessions, 12 journal lines.
+- **Transcript backup (rank 4): LIVE on trunk `4f5ec74a` (deployment repo), first runs GREEN.** Operator-approved
+  design: an HOURLY job mirroring the transcript volume (read-only mount) into a DEDICATED bucket; deletions
+  driven by the store's `journal.jsonl` (owner delete / withdrawal / retention leave the backup within ~1 h); a
+  remote backstop deleting any backed-up root whose `meta.json` `updated_at` is past retention + 1 day; a root
+  absent locally AND unjournaled is REFUSED (never deleted; exit 3); streams truncated to `meta.json`'s committed
+  `bytes`, `meta.json` last. No versioning, no ILM, no history. The credential CAN delete, scoped to its own
+  bucket (operator accepted); bucket, policy and user were created by the new
+  `scripts/provision-cairn-transcripts-backup-bucket.sh`, the credential went straight into a sops Secret
+  (decrypted key lengths checked, never printed) and the plaintext file was shredded. Measured: first run
+  (empty bucket) 12 min 51 s, 263/263 sessions, 1,549 objects, refused 0; second run 18 s, uploaded 9, unchanged
+  1,540. ⚠ NOT exercised live: a journal-driven or backstop deletion (unit tests + a local smoke only), and a
+  RESTORE (no drill run yet).
 
 ## Next steps (ranked)
 1. DONE — webhook receiver go-live: all three sources live, ClickUp proven end to end (State now). Kept as a
@@ -83,14 +84,10 @@ its arc and is updated by the lane that owns it.
    forcing: user — operator asked for it at handoff
 3. DONE — transcript capture armed on the second host (State now).
    forcing: user — operator: arm it fully
-4. Transcript backup — design APPROVED and BUILT (State now); BLOCKED-ON-OPERATOR: create the bucket (no
-   versioning, no ILM), a user with the bucket-scoped read/write/list/DELETE policy, and the sops-encrypted
-   `cairn-transcripts-backup-s3` Secret + its census-ledger row on the branch, in one commit — the exact
-   commands and policy JSON are in the branch's runbook/commit and this session's report. Then merge
-   (merging BEFORE the Secret exists makes every hourly run fail), watch the first run's summary line,
-   run the restore DRILL in the branch's `TRANSCRIPTS-RESTORE.md`, and add a
-   `kube_cronjob_status_last_successful_time` alert for the job (nothing alerts on it, nor on the
-   sibling UI backup). Claimed: `cairn-outstanding-sweep-4`. forcing: user — operator approved the design
+4. Transcript backup — LIVE (State now). Remaining: run the restore DRILL in the deployment repo's
+   `TRANSCRIPTS-RESTORE.md`, beside the job (measures the agent-wedge-after-restore claim),
+   and add a `kube_cronjob_status_last_successful_time` alert for `cairn-transcripts-backup` (nothing alerts on
+   it, nor on the sibling UI backup). Claimed: `cairn-outstanding-sweep-4`. forcing: user — operator approved the design
 5. Tooling repo CI: REOPEN and merge the closed shard-1 fixture fix (branch `fix/tmux-reply-test-socket-path`
    — `/resume` reports it GONE locally; check the remote before assuming it was deleted; confirm it turns
    shard 1 green), and find why the go/node legs post "no verdict" while their logs pass.
@@ -254,6 +251,11 @@ its arc and is updated by the lane that owns it.
   `--part-size 16MiB` passed** — the job pins it. via: measurement
 - **The archive `-transcript-quota` is 40 GB (two hosts), not the 20 GB the PVC comment said** — corrected on
   the branch. via: command
+
+- **Operator decision: "you do it" — the agent provisioned the transcript-backup bucket, policy, user and Secret
+  and merged the job to the deployment repo's trunk.** via: command
+- **The base-clone write guard cannot resolve `git -C $VAR`** — it judges the shell's cwd and refuses; spell
+  the worktree path literally. via: command
 
 ## How to verify
 ```bash
