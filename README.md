@@ -497,7 +497,7 @@ scopes, the opt-in — always lands; a problem in the summary is **adjusted and 
 | `source` | **required** whenever `summary` is sent | an uncitable source drops the **summary** (the arc still lands) |
 | `source.repo_path` | ≤ 256 bytes; `/`-separated segments of `[A-Za-z0-9._-]` only — so no leading or trailing `/`, no empty segment, no space or backslash — and no segment that is exactly `.` or `..` | summary dropped, `reason=source.repo_path` |
 | `source.commit` | a full lower-case hex commit id, exactly 40 or 64 characters | summary dropped, `reason=source.commit` |
-| `source.committed_at` | RFC 3339 (Go's `time.RFC3339` parse; fractional seconds accepted) | summary dropped, `reason=source.committed_at` |
+| `source.committed_at` | ≤ 35 bytes (nanoseconds and a numeric offset fit) and RFC 3339 (Go's `time.RFC3339` parse; fractional seconds accepted) | summary dropped, `reason=source.committed_at` |
 | the whole stored summary | 16 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) | items are dropped from the **end** of the lists — the longer of `state_now`/`next_steps` first (`state_now` on a tie), then `task_refs`, then `aliases` — until it fits |
 
 Every **text field** — `closing_condition` (when sent), every `state_now`, `next_steps`, `task_refs`
@@ -507,12 +507,18 @@ and `aliases` item — goes through four steps, in this order:
    `unicode.IsControl` reports (tab and newline included), U+2028 and U+2029 becomes a space — the
    answer is lines, and an embedded newline could print a line that reads as the pod's own;
 2. **dropped** if nothing but whitespace is left;
-3. **redacted**: scanned in full for a **confident secret** — the same rule subset memos refuse
-   on — and on a hit stored as `[redacted: <rule>]` (`[redacted: github-token]`). The scan treats
-   **placeholders as non-secrets**: `${NAME}`, an upper-case `$NAME`, `<anything-without-spaces>`
-   and a run of three or more `*` are removed before scanning, so
-   `postgresql://app:${PGPASSWORD}@db:5432/app` and `Authorization: Bearer <token>` are kept as
-   written, while a real value in the same position is still redacted;
+3. **redacted**: the text **as given** is scanned in full for a **confident secret** — the same
+   rule subset memos refuse on — and on a hit stored as `[redacted: <rule>]`
+   (`[redacted: github-token]`). A hit is ignored only when a **placeholder explains it**: the
+   placeholders are `${NAME}`, an upper-case `$NAME` and a run of three or more `*` — word-shaped,
+   so never a URL, a host or a token with a `:`, `/`, `@` or `.` — and a hit is explained when
+   replacing each by a space leaves no confident hit AND no replaced placeholder is a credential by
+   itself. (A space, not nothing: deleting one could join a token to the next character and slip it
+   past its rule's boundary.) A redaction names the rule of the hit no placeholder explains. So
+   `postgresql://app:${PGPASSWORD}@db:5432/app` and `https://user:***@host` are kept as written,
+   while `https://app:$ecretpass@db` (lower case is not a placeholder) is redacted. `<…>` is never a
+   placeholder: `Authorization: Bearer <token>` is kept because no confident rule matches through
+   `<`, and `<postgres://app:pw@db/app>` or `<ghp_…>` are redacted;
 4. **clipped** to its byte cap at a UTF-8 rune boundary, ending in `…` (U+2026, whose 3 bytes count
    within the cap).
 
@@ -528,8 +534,10 @@ schema 2`), a credential that may not write the home or a declared scope, and a 
 journal. A refusal names the field, never the value.
 
 **The response names every adjustment** — the contract a registering tool parses. After the usual
-outcome line, one line per adjustment, in the order made, and **no extra line at all when the
-summary was stored as sent**: (the lines below are drawn from several pushes, to show each shape)
+outcome line, one line per adjustment, in the order made, and **no extra line when no item was
+clipped, sanitized, redacted or dropped**. ⚠ That is narrower than "stored as sent": aliases are
+always folded and deduplicated (documented above) without a line. (The lines below are drawn from
+several pushes, to show each shape.)
 
 ```text
 arc-registered: alpha-notes/gadget-move · members=1 · unjoinable=0
@@ -548,11 +556,16 @@ Each line is `summary-adjusted: <action> <field> <detail>`:
 - `<field>` is the field **as sent**: `summary.<list>[<index in the payload>]`,
   `summary.closing_condition`, or `summary` for the whole summary.
 - `<detail>` is space-separated `key=value` pairs:
-  - `bytes=<sent> max=<cap>` for `clipped`;
+  - `bytes=<n> max=<cap>` for `clipped`, where `<n>` is the item's length as the pod received it
+    (after JSON decoding — the JSON decoder itself turns an invalid UTF-8 byte into the 3-byte
+    U+FFFD, so for invalid input this exceeds the raw byte count). When sanitizing then changed
+    the length, `sanitized_bytes=<m>` follows: the length that was compared with the cap;
   - `rule=<rule>` for `redacted`;
   - `replaced=<n>` for `sanitized`;
   - `reason=<reason>` (plus `max=<n>` for the two caps) for `dropped`. The reasons are `blank`,
-    `whitespace`, `normalizes-to-nothing`, `over-count`, `over-total`, `source.repo_path`,
+    `whitespace`, `normalizes-to-nothing`, `redacted` (an alias, after its `redacted` line — a
+    redacted alias is dropped rather than stored as a junk name), `over-count`, `over-total`,
+    `source.repo_path`,
     `source.commit`, `source.committed_at` and `secret-scan-unavailable`.
 
 An item can carry more than one line (`sanitized`, then `clipped`). The response never echoes a

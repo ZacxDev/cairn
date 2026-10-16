@@ -58,6 +58,10 @@ const (
 	MaxAliases               = 16
 	MaxAliasBytes            = 64
 	MaxSummaryBytes          = 16 * 1024
+	// MaxCommittedAtBytes is the longest RFC 3339 instant with nanoseconds and a numeric offset
+	// (`2006-01-02T15:04:05.999999999-07:00`). Go's parser accepts a fractional field of ANY length,
+	// so without it `committed_at` alone could carry the summary past MaxSummaryBytes.
+	MaxCommittedAtBytes = 35
 )
 
 // Source is where the tool read the summary: a repository-relative path and the commit it was read
@@ -117,22 +121,46 @@ func scanner() (*redact.Redactor, error) {
 // `entropy`) are not acted on anywhere in this tree, for memo's measured reason — they damage
 // honest prose at a rate that would redact ordinary handoff text.
 //
-// 🔴 PLACEHOLDERS ARE NOT SECRETS. The scan runs over the text with every PLACEHOLDER removed —
-// `${NAME}`, an upper-case `$NAME`, `<anything-without-spaces>` and a run of three or more `*` — so
-// `postgresql://app:${PGPASSWORD}@db/app` and `Authorization: Bearer <token>` are kept as written,
-// while a real value in the same position still hits. Only the SCAN sees the masked text; what is
-// stored is the original. ⚠ The limit: a real credential that itself contains one of those shapes
-// (a `$UPPER` run inside a token) is scanned without it and may be missed.
+// 🔴 THE RAW TEXT IS SCANNED, AND A HIT IS IGNORED ONLY WHEN A PLACEHOLDER EXPLAINS IT. A confident
+// hit on the text as sent is redacted, unless BOTH of these hold: removing the placeholders —
+// `${NAME}`, an upper-case `$NAME`, a run of three or more `*` — leaves no confident hit, and each
+// placeholder removed has no confident hit of its own (so `$` glued to a real token is not a way to
+// hide it). Each placeholder is replaced by a space, never deleted, so removal cannot join the text
+// around it into something a boundary-anchored rule no longer matches. That keeps `postgresql://app:${PGPASSWORD}@db/app` and `https://u:***@host` as written
+// while a real password in the same position is still redacted.
+//
+// 🔴 `<…>` IS DELIBERATELY NOT A PLACEHOLDER — retracted. An earlier draft masked every `<…>` before
+// scanning and stored the original, which let a markdown autolink holding a real connection string
+// (`<postgres://app:pw@db/app>`), or a bracketed token (`<ghp_…>`), through verbatim. And it was
+// never needed: no confident rule's character class admits `<` or `>`, so a text like
+// `Authorization: Bearer <token>` produces no hit to explain in the first place.
 func secretRule(s string) (string, error) {
 	scan, err := scanner()
 	if err != nil {
 		return "", err
 	}
-	return firstConfident(scan, placeholder.ReplaceAllString(s, "")), nil
+	rule := firstConfident(scan, s)
+	if rule == "" {
+		return "", nil
+	}
+	masked := placeholder.ReplaceAllStringFunc(s, func(m string) string {
+		if firstConfident(scan, m) != "" {
+			return m // a placeholder-shaped run that is itself a credential is a value, not a stand-in
+		}
+		// A SPACE, not nothing: deleting a placeholder would JOIN its neighbours, and a credential
+		// whose rule ends at a boundary (`AKIA…${X}Q`) would stop matching and be "explained".
+		return " "
+	})
+	if masked == s {
+		return rule, nil
+	}
+	// The rule NAMED is the hit no placeholder explains, not the raw text's first one.
+	return firstConfident(scan, masked), nil
 }
 
-// placeholder is every shape the scan treats as a stand-in for a value, never a value.
-var placeholder = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*|<[^<>\s]{1,64}>|\*{3,}`)
+// placeholder is every shape the scan treats as a stand-in for a value: purely word-shaped, so it can
+// carry no `:`, `/`, `@` or `.` — never a URL, a host or a token with a separator.
+var placeholder = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*|\*{3,}`)
 
 func firstConfident(scan *redact.Redactor, s string) string {
 	_, hits := scan.String(s)
@@ -197,12 +225,12 @@ func clip(s string, max int) string {
 func sanitize(s string) (string, int) {
 	n := 0
 	if !utf8.ValidString(s) {
-		fixed := strings.ToValidUTF8(s, "�")
-		n += strings.Count(fixed, "�") - strings.Count(s, "�")
+		fixed := strings.ToValidUTF8(s, "\uFFFD")
+		n += strings.Count(fixed, "\uFFFD") - strings.Count(s, "\uFFFD")
 		s = fixed
 	}
 	out := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || r == ' ' || r == ' ' {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
 			n++
 			return ' '
 		}
@@ -215,35 +243,45 @@ func sanitize(s string) (string, int) {
 // one clean line, dropped when nothing but whitespace is left, stored as `[redacted: <rule>]` on a
 // confident secret (scanned in full, before any clipping, so a cut cannot hide one), and clipped to
 // `max` bytes. ok is false when the item is dropped.
-func keepText(field, s string, max int, adj *[]Adjustment) (string, bool, error) {
+//
+// The `clipped` line's `bytes=` is the length AS SENT; when sanitizing changed the length (an
+// invalid UTF-8 byte becomes the 3-byte U+FFFD) the line adds `sanitized_bytes=<n>`, the length that
+// was compared with the cap. `redacted` is true when the item was stored as `[redacted: <rule>]`.
+func keepText(field, s string, max int, adj *[]Adjustment) (text string, kept, redacted bool, err error) {
+	sentBytes := len(s)
 	s, replaced := sanitize(s)
 	if replaced > 0 {
 		*adj = append(*adj, Adjustment{AdjustSanitized, field, "replaced=" + strconv.Itoa(replaced)})
 	}
 	if strings.TrimSpace(s) == "" {
 		*adj = append(*adj, Adjustment{AdjustDropped, field, "reason=blank"})
-		return "", false, nil
+		return "", false, false, nil
 	}
 	rule, err := secretRule(s)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	if rule != "" {
 		*adj = append(*adj, Adjustment{AdjustRedacted, field, "rule=" + rule})
-		return RedactedText(rule), true, nil
+		return RedactedText(rule), true, true, nil
 	}
 	if len(s) > max {
-		*adj = append(*adj, Adjustment{AdjustClipped, field, "bytes=" + strconv.Itoa(len(s)) + " max=" + strconv.Itoa(max)})
+		detail := "bytes=" + strconv.Itoa(sentBytes) + " max=" + strconv.Itoa(max)
+		if len(s) != sentBytes {
+			detail += " sanitized_bytes=" + strconv.Itoa(len(s))
+		}
+		*adj = append(*adj, Adjustment{AdjustClipped, field, detail})
 		s = clip(s, max)
 	}
-	return s, true, nil
+	return s, true, false, nil
 }
 
 // item is one kept list item and the index it was SENT at, so every later drop names the field the
 // tool sent rather than a position the pod's own edits moved.
 type item struct {
-	sent int
-	text string
+	sent     int
+	text     string
+	redacted bool
 }
 
 func texts(items []item) []string {
@@ -265,12 +303,12 @@ func keepList(field string, items []string, maxItems, maxBytes int, adj *[]Adjus
 			*adj = append(*adj, Adjustment{AdjustDropped, itemField(field, i), "reason=over-count max=" + strconv.Itoa(maxItems)})
 			continue
 		}
-		kept, ok, err := keepText(itemField(field, i), s, maxBytes, adj)
+		kept, ok, redacted, err := keepText(itemField(field, i), s, maxBytes, adj)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			out = append(out, item{i, kept})
+			out = append(out, item{i, kept, redacted})
 		}
 	}
 	return out, nil
@@ -301,12 +339,12 @@ func decodeSummary(raw *Summary) (*Summary, []Adjustment) {
 		return drop("source.repo_path")
 	case !commitHex.MatchString(raw.Source.Commit):
 		return drop("source.commit")
-	case !validTime(raw.Source.CommittedAt):
+	case len(raw.Source.CommittedAt) > MaxCommittedAtBytes || !validTime(raw.Source.CommittedAt):
 		return drop("source.committed_at")
 	}
 	s := Summary{Source: raw.Source}
 	if raw.ClosingCondition != "" {
-		kept, ok, err := keepText("summary.closing_condition", raw.ClosingCondition, MaxClosingConditionBytes, &adj)
+		kept, ok, _, err := keepText("summary.closing_condition", raw.ClosingCondition, MaxClosingConditionBytes, &adj)
 		if err != nil {
 			return drop("secret-scan-unavailable")
 		}
@@ -340,13 +378,19 @@ func decodeSummary(raw *Summary) (*Summary, []Adjustment) {
 	}
 	aliases := []item{}
 	for _, a := range sentAliases {
+		// A redacted alias is DROPPED: `[redacted: <rule>]` would fold to a junk name
+		// (`redacted-github-token`) a reader could then look the arc up by.
+		if a.redacted {
+			adj = append(adj, Adjustment{AdjustDropped, itemField("summary.aliases", a.sent), "reason=redacted"})
+			continue
+		}
 		folded := store.NormalizeRef(a.text)
 		if folded == "" {
 			adj = append(adj, Adjustment{AdjustDropped, itemField("summary.aliases", a.sent), "reason=normalizes-to-nothing"})
 			continue
 		}
 		if !slices.ContainsFunc(aliases, func(x item) bool { return x.text == folded }) {
-			aliases = append(aliases, item{a.sent, folded})
+			aliases = append(aliases, item{sent: a.sent, text: folded})
 		}
 	}
 	slices.SortFunc(aliases, func(x, y item) int { return strings.Compare(x.text, y.text) })
@@ -374,6 +418,10 @@ func decodeSummary(raw *Summary) (*Summary, []Adjustment) {
 		case len(aliases) > 0:
 			l = list{"summary.aliases", &aliases}
 		default:
+			// ⚠ DEFENSIVE, NOT REACHABLE WITHIN THE CAPS: with every list empty a summary is at most
+			// closing_condition (1000 bytes, ≤ 6000 once JSON escapes `<`/`>`/`&` as `\u003c`) plus
+			// source (256 + 64 + MaxCommittedAtBytes). `TestTheWorstCaseEmptySummaryFitsTheTotal`
+			// pins that arithmetic; this branch exists so a future cap change cannot loop forever.
 			return drop("over-total max=" + strconv.Itoa(MaxSummaryBytes))
 		}
 		last := len(*l.items) - 1

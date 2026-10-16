@@ -177,7 +177,7 @@ func TestNoSummaryProblemRefusesTheRegistration(t *testing.T) {
 	}{
 		{"state_now", `["  ","kept"]`, "dropped summary.state_now[0] reason=blank", func(s *Summary) string { return strings.Join(s.StateNow, "|") }},
 		{"state_now", `["two\nlines"]`, "sanitized summary.state_now[0] replaced=1", func(s *Summary) string { return s.StateNow[0] }},
-		{"next_steps", `["closed x\u0007y"]`, "sanitized summary.next_steps[0] replaced=2", func(s *Summary) string { return s.NextSteps[0] }},
+		{"next_steps", `["closed\u2028x\u0007y"]`, "sanitized summary.next_steps[0] replaced=2", func(s *Summary) string { return s.NextSteps[0] }},
 		{"closing_condition", `"tab\there"`, "sanitized summary.closing_condition replaced=1", func(s *Summary) string { return s.ClosingCondition }},
 		{"next_steps", `["rotate ` + token + `","kept"]`, "redacted summary.next_steps[0] rule=github-token", func(s *Summary) string { return strings.Join(s.NextSteps, "|") }},
 		{"task_refs", `["has space","t:2"]`, "dropped summary.task_refs[0] reason=whitespace", func(s *Summary) string { return strings.Join(s.TaskRefs, "|") }},
@@ -192,7 +192,7 @@ func TestNoSummaryProblemRefusesTheRegistration(t *testing.T) {
 			t.Fatalf("%s %s: adjustments %q, want %q", tc.field, tc.value, adjusted(reg), tc.want)
 		}
 		got := tc.stored(reg.Summary)
-		if strings.Contains(got, token) || strings.ContainsAny(got, "\n\t\a ") {
+		if strings.Contains(got, token) || strings.ContainsAny(got, "\n\t\a\u2028") {
 			t.Fatalf("%s: stored %q still carries what was adjusted", tc.field, got)
 		}
 		if tc.want == "redacted summary.next_steps[0] rule=github-token" && got != "[redacted: github-token]|kept" {
@@ -226,6 +226,117 @@ func TestNoSummaryProblemRefusesTheRegistration(t *testing.T) {
 	reg, _ := decode(t, summaryJSON(map[string]string{"next_steps": `["rotate ` + token + `"]`}))
 	if strings.Contains(adjusted(reg), token) {
 		t.Fatalf("the redaction line must not echo the value: %q", adjusted(reg))
+	}
+}
+
+// TestARealCredentialIsNeverExplainedAwayAsAPlaceholder: the RAW text is scanned, and these were
+// stored verbatim by a draft that masked every `<…>` before scanning. Each must be redacted. Every
+// value is built at run time so no literal token sits in this file. The `$`-glued rows pin the other
+// half: a lower-case `$word` is not a placeholder, and a `$UPPER` run that is itself a credential
+// is a value. The kept-as-written controls are the placeholders proper.
+func TestARealCredentialIsNeverExplainedAwayAsAPlaceholder(t *testing.T) {
+	pw := "Xk9mQ2pL" + "r7vB"
+	ghp := "gh" + "p_" + strings.Repeat("Ab3d", 9)
+	npm := "np" + "m_" + strings.Repeat("Ab3d", 9)
+	aiza := "AI" + "za" + strings.Repeat("Ab3dE", 7)
+	akia := "AK" + "IA" + strings.Repeat("Q7ZX", 4)
+	for text, rule := range map[string]string{
+		"db is <postgres://app:" + pw + "@db.example.test:5432/app>": "url-userinfo-password",
+		"use <redis://:" + pw + "@cache-0:6379>":                     "url-userinfo-password",
+		"token <" + ghp + ">":                                        "github-token",
+		"<" + npm + ">":                                              "npm-token",
+		"<" + aiza + ">":                                             "google-api-key",
+		"<" + akia + ">":                                             "aws-access-key-id",
+		"https://app:$ecretPass9" + "x@db.example.test/app":          "url-userinfo-password",
+		"https://app:$" + akia + "@db.example.test/app":              "",
+		// A placeholder beside an UNRELATED credential explains nothing about it.
+		"postgresql://app:${PGPASSWORD}@db/app and " + ghp: "github-token",
+		// Deleting the placeholder would join the token to the next letter, past the rule's
+		// boundary; it is replaced by a space instead.
+		"key " + akia + "${SUFFIX}Q": "aws-access-key-id",
+	} {
+		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, text)}))
+		got := adjusted(reg)
+		if !strings.HasPrefix(got, AdjustmentLinePrefix+"redacted summary.state_now[0] rule=") ||
+			(rule != "" && got != AdjustmentLinePrefix+"redacted summary.state_now[0] rule="+rule) ||
+			!strings.HasPrefix(reg.Summary.StateNow[0], "[redacted: ") {
+			t.Errorf("%q must be redacted (%s): adjustments %q, stored %q", text, rule, got, reg.Summary.StateNow[0])
+		}
+	}
+	for _, keep := range []string{
+		"postgresql://app:${PGPASSWORD}@db/app",
+		"postgresql://app:$PGPASSWORD@db/app",
+		"https://user:***@host.example.test/path",
+		"Authorization: Bearer <token>",
+	} {
+		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, keep)}))
+		if adjusted(reg) != "" || reg.Summary.StateNow[0] != keep {
+			t.Errorf("control: %q must be kept as written: %q", keep, adjusted(reg))
+		}
+	}
+}
+
+// TestALongCommittedAtDropsTheSummaryNotEveryItem: Go's RFC 3339 parser accepts a fractional field
+// of any length, so an unbounded `committed_at` could carry a summary past the total on its own and
+// drop every item before dropping the summary. It is capped instead and classed as an uncitable
+// source; the arc lands.
+func TestALongCommittedAtDropsTheSummaryNotEveryItem(t *testing.T) {
+	long := `{"repo_path":"a.md","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00.` + strings.Repeat("0", 20000) + `Z"}`
+	reg, _ := decode(t, summaryJSON(map[string]string{"source": long, "state_now": `["kept"]`}))
+	if reg.Summary != nil || adjusted(reg) != AdjustmentLinePrefix+"dropped summary reason=source.committed_at" {
+		t.Fatalf("a long committed_at: summary %+v, adjustments %q", reg.Summary, adjusted(reg))
+	}
+	at := `{"repo_path":"a.md","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00.123456789+07:00"}`
+	if ok, _ := decode(t, summaryJSON(map[string]string{"source": at})); ok.Summary == nil || adjusted(ok) != "" {
+		t.Fatalf("control: the longest valid instant (%d bytes) is kept: %q", MaxCommittedAtBytes, adjusted(ok))
+	}
+}
+
+// TestTheWorstCaseEmptySummaryFitsTheTotal pins why the whole-summary `over-total` drop is defensive
+// only: the largest summary with every list empty — a closing condition of the character JSON
+// escapes widest, and every source field at its cap — is still under MaxSummaryBytes.
+func TestTheWorstCaseEmptySummaryFitsTheTotal(t *testing.T) {
+	s := Summary{ClosingCondition: strings.Repeat("<", MaxClosingConditionBytes),
+		Source:   Source{RepoPath: strings.Repeat("r", MaxRepoPathBytes), Commit: strings.Repeat("a", 64), CommittedAt: strings.Repeat("9", MaxCommittedAtBytes)},
+		StateNow: []string{}, NextSteps: []string{}, TaskRefs: []string{}, Aliases: []string{}}
+	if n := summaryBytes(s); n > MaxSummaryBytes {
+		t.Fatalf("the worst-case empty summary is %d bytes, over %d: the defensive drop is reachable", n, MaxSummaryBytes)
+	}
+}
+
+// TestAClippedLineReportsTheLengthItWasGivenAndTheLengthItCompared: `bytes=` is the item's length
+// as the pod received it, and when sanitizing changed that length the line adds `sanitized_bytes=`,
+// the length compared with the cap. 200 U+2028 (3 bytes each) become 200 spaces.
+func TestAClippedLineReportsTheLengthItWasGivenAndTheLengthItCompared(t *testing.T) {
+	text := strings.Repeat(" ", 200) + strings.Repeat("x", 450)
+	reg, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, text)}))
+	want := AdjustmentLinePrefix + "sanitized summary.next_steps[0] replaced=200\n" +
+		AdjustmentLinePrefix + "clipped summary.next_steps[0] bytes=1050 max=500 sanitized_bytes=650"
+	if adjusted(reg) != want {
+		t.Fatalf("adjustments:\n%s\nwant:\n%s", adjusted(reg), want)
+	}
+	plain, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, strings.Repeat("x", 650))}))
+	if adjusted(plain) != AdjustmentLinePrefix+"clipped summary.next_steps[0] bytes=650 max=500" {
+		t.Fatalf("control: no sanitized_bytes when sanitizing changed nothing: %q", adjusted(plain))
+	}
+}
+
+// TestARedactedAliasIsDroppedNotStoredAsAJunkName: `[redacted: github-token]` would fold to the alias
+// `redacted-github-token`; the alias is dropped instead, after its redaction line.
+func TestARedactedAliasIsDroppedNotStoredAsAJunkName(t *testing.T) {
+	token := "gh" + "p_" + strings.Repeat("Ab3", 12)
+	reg, _ := decode(t, summaryJSON(map[string]string{"aliases": jsonList(1, token) + ``}))
+	reg2, _ := decode(t, summaryJSON(map[string]string{"aliases": `["` + token + `","ok"]`}))
+	for _, r := range []Registration{reg, reg2} {
+		for _, a := range r.Summary.Aliases {
+			if strings.Contains(a, "redacted") {
+				t.Fatalf("a redacted alias was stored: %q", r.Summary.Aliases)
+			}
+		}
+	}
+	if adjusted(reg2) != AdjustmentLinePrefix+"redacted summary.aliases[0] rule=github-token\n"+AdjustmentLinePrefix+"dropped summary.aliases[0] reason=redacted" ||
+		strings.Join(reg2.Summary.Aliases, "|") != "ok" {
+		t.Fatalf("adjustments %q, aliases %q", adjusted(reg2), reg2.Summary.Aliases)
 	}
 }
 
