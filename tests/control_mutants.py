@@ -2052,12 +2052,41 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="an-older-jwks-refresh-overwrites-a-newer-one",
         path="internal/identity/jwks.go",
-        old="\tif attempt < k.recorded {",
-        new="\tif false && attempt < k.recorded {",
+        old="\tif attempt < k.committed {",
+        new="\tif false && attempt < k.committed {",
         killer="TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne",
         why="committing in FINISH order looks harmless because each read is valid on its own; "
         "with a timer and a SIGHUP in flight, the read that started before a `kid` was removed "
         "can finish after the one that saw the removal and put the revoked key back.",
+    ),
+    Mutant(
+        name="a-failed-jwks-refresh-advances-the-committed-generation",
+        path="internal/identity/jwks.go",
+        old="\tk.attempted = now\n\tif err != nil {\n",
+        new="\tk.attempted = now\n\tif err != nil {\n\t\tk.committed = attempt\n",
+        killer="TestANewerFAILEDReadDoesNotDiscardAnOlderSuccessfulOne",
+        why="\"every attempt that finishes moves the clock forward\" reads as the simple rule, "
+        "and it lets a newer read that saw NO keys (a 500, a half-written file) discard the "
+        "older read that carried a `kid` removal, leaving the revoked key verifying.",
+    ),
+    Mutant(
+        name="a-discarded-jwks-refresh-reports-success",
+        path="internal/identity/jwks.go",
+        old="\tif attempt < k.committed {\n\t\treturn k.lastErr\n",
+        new="\tif attempt < k.committed {\n\t\treturn nil\n",
+        killer="TestRunDoesNotReportSuccessForARefreshItsSetDiscarded",
+        why="\"a discarded read did no harm, so it succeeded\" is the tempting return; every "
+        "caller then reports a state the set is not in — `Run` logs a recovery and resets its "
+        "backoff while the set is failing, and the SIGHUP verdict claims an edit applied.",
+    ),
+    Mutant(
+        name="an-older-jwks-failure-overwrites-a-newer-success",
+        path="internal/identity/jwks.go",
+        old="\tif attempt < k.committed {",
+        new="\tif attempt < k.committed && err == nil {",
+        killer="TestAnOlderFAILUREFinishingAfterANewerSuccessIsDiscarded",
+        why="discarding only stale SUCCESSES looks sufficient — a failure installs no keys — "
+        "but it lets a late failure flip a healthy set to failing behind a newer success.",
     ),
     Mutant(
         name="sighup-re-reads-a-url-sourced-key-set",

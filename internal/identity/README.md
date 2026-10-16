@@ -549,10 +549,13 @@ What is new:
   signal would only add a network call to every token reload. The refresh timer re-reads the file
   too, so a signal applies an edit NOW and is never the only way it is applied.
 - **refreshes commit in START order, not finish order.** The timer and a SIGHUP can overlap, and
-  the read that began first can finish last; `Refresh` numbers each attempt and discards a result
-  older than the newest one committed, so a read taken before a `kid` was removed cannot put it
-  back (`TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne`). The guard is in the shared
-  `Refresh`, so it holds for a URL source too.
+  the read that began first can finish last. `Refresh` numbers each attempt and discards any result
+  — success or failure — older than the newest attempt that SUCCEEDED, so a read taken before a
+  `kid` was removed cannot put it back. Only a success advances that number: a newer read that
+  FAILED saw no keys, so it cannot make an older read's view of an edit stale. A discarded call
+  returns the outcome that is actually committed, never a bare success, so the SIGHUP verdict and
+  `Run`'s "succeeded" line describe the real state. Pinned by `jwksorder_test.go`; the guard is in
+  the shared `Refresh`, so it holds for a URL source too.
 - **one source, not two.** A URL and a file together is `ErrJWKSTwoSources`, the ruling
   `secretFrom` makes for the proxy secret: a precedence rule makes a rotation of the losing source
   look applied.

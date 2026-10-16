@@ -80,10 +80,11 @@ type KeySet struct {
 	lastErr   error
 	fetches   uint64
 	failures  uint64
-	// started numbers every `Refresh` as it BEGINS; recorded is the number of the newest
-	// attempt whose outcome has been committed. See `Refresh`'s ordering guard.
-	started  uint64
-	recorded uint64
+	// started numbers every `Refresh` as it BEGINS; committed is the number of the newest
+	// attempt that SUCCEEDED and installed its keys — a failure never advances it. See
+	// `Refresh`'s ordering guard.
+	started   uint64
+	committed uint64
 }
 
 // jwkKey is one parsed key, with the algorithm it may be used for.
@@ -305,17 +306,30 @@ func isLoopbackHost(host string) bool {
 // empty key set committed here would refuse every session until the next successful
 // fetch, and would report itself `fresh` while doing it.
 //
-// 🔴 AN OLDER READ NEVER OVERWRITES A NEWER ONE'S OUTCOME. Two refreshes can be in flight at
-// once — the `Run` timer and a caller's (the pod's SIGHUP re-read of a file source) — and
+// 🔴 AN OLDER READ NEVER OVERWRITES A NEWER SUCCESSFUL ONE. Two refreshes can be in flight
+// at once — the `Run` timer and a caller's (the pod's SIGHUP re-read of a file source) — and
 // because the read happens outside the lock, the one that STARTED first can FINISH last.
 // Committing in finish order would let a read taken before an operator removed a `kid`
-// re-install that key after the read that saw the removal, and the revoked key would verify
-// again until the next refresh. So each attempt is numbered when it begins, and a result
-// whose number is below the newest one already committed is DISCARDED: it changes no key,
-// no timestamp and no counter, and `Refresh` returns nil because the set it would have
-// replaced is newer than anything it read. Pinned by
-// `TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne`, which blocks the first read
-// on purpose.
+// re-install that key after the read that saw the removal. So each attempt is numbered when
+// it begins, and the rule is, exactly:
+//
+//   - a SUCCESS installs its keys, and clears the failure, unless a NEWER-started attempt
+//     has already SUCCEEDED — then it is discarded;
+//   - a FAILURE records itself (`lastErr`, `failing=true`) unless a NEWER-started attempt
+//     has already SUCCEEDED — then it is discarded;
+//   - only a success advances the committed number. A failure must not: a newer read that
+//     FAILED (a 500, a half-written file) has seen no keys at all, so it cannot make an
+//     older read's successful view of an edit stale — and advancing on it discarded exactly
+//     the read that carried a `kid` removal, leaving the revoked key verifying.
+//   - a DISCARDED call changes no key, timestamp or counter, and returns the outcome that IS
+//     committed — the current `lastErr`, nil only when that state is healthy — so every
+//     caller's verdict (the SIGHUP line, `Run`'s backoff and its "succeeded" line, the startup
+//     refusal) describes the state the set is actually in.
+//
+// So when the newest attempt failed and an older one finishing later succeeded, the older
+// one's keys are what serve and the set reports healthy: they are the newest keys anybody
+// read. Pinned by `TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne` and its
+// siblings in `jwksorder_test.go`, which hold the first read at the source on purpose.
 func (k *KeySet) Refresh(ctx context.Context) error {
 	k.mu.Lock()
 	k.started++
@@ -328,16 +342,16 @@ func (k *KeySet) Refresh(ctx context.Context) error {
 
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if attempt < k.recorded {
-		return nil
+	if attempt < k.committed {
+		return k.lastErr
 	}
-	k.recorded = attempt
 	k.attempted = now
 	if err != nil {
 		k.failures++
 		k.lastErr = err
 		return err
 	}
+	k.committed = attempt
 	k.keys = keys
 	k.fetched = true
 	k.fetchedAt = now
