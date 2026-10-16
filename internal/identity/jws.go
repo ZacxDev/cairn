@@ -124,6 +124,26 @@ type Claims struct {
 	// Read so a caller can refuse an anonymous session; NOT used for authorization,
 	// which is `control.Resolve`'s answer and nothing else's.
 	Role string `json:"role"`
+	// ID is RFC 7519's `jti`, read for the AUDIT LINE and for nothing else — it is what
+	// lets one request's record be joined to the issuer's own record of minting it.
+	//
+	// ⚠ DECODED LENIENTLY, BECAUSE BEFORE THIS FIELD EXISTED A `jti` OF ANY SHAPE WAS
+	// IGNORED. RFC 7519 §4.1.7 says it is a string; a provider that emits a number would
+	// otherwise turn a token that verified yesterday into a claims refusal today. A
+	// non-string `jti` reads as absent. See `jwtID`.
+	ID jwtID `json:"jti"`
+}
+
+// jwtID decodes `jti` as a string and reads every other JSON shape as ABSENT rather than
+// refusing the token. Nothing authorizes from it, so leniency here widens nothing.
+type jwtID string
+
+func (j *jwtID) UnmarshalJSON(raw []byte) error {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		*j = jwtID(s)
+	}
+	return nil
 }
 
 // audience decodes RFC 7519's `aud`, which is EITHER a string OR an array of strings.
@@ -295,21 +315,39 @@ const maxTokenBytes = 8 << 10
 // the refusal reason depend on content that was never authenticated, which is an
 // oracle. The claims check exists, and it runs on verified bytes only.
 func Verify(token string, opts VerifyOptions) (Claims, error) {
+	claims, _, err := verifyToken(token, opts)
+	if err != nil {
+		return Claims{}, err
+	}
+	return claims, nil
+}
+
+// verifyToken is [Verify] plus ONE extra fact: whether step 7 — the signature, over a key
+// in the configured set — had already succeeded when the token was refused.
+//
+// 🔴 THAT BOOLEAN IS THE ONLY INPUT `SupabaseJWT` MAY DECIDE "THIS REFUSAL IS NOT A
+// GUESS" FROM, AND IT IS SET IN EXACTLY ONE PLACE: immediately after `verifySignature`
+// returns nil. It is not derived from the error's TEXT or from `ErrTokenClaims` — an
+// error can be wrapped or re-spelled by a later edit, while this flag can only become
+// true by passing the signature check. When verified is true the returned claims are the
+// decoded payload (possibly the zero value, if the payload was not a JSON claim set), so a
+// refusal can still carry the `sub`/`jti` the ISSUER signed into it for the audit line.
+func verifyToken(token string, opts VerifyOptions) (claims Claims, verified bool, err error) {
 	if len(token) == 0 || len(token) > maxTokenBytes {
-		return Claims{}, fmt.Errorf("%w: %d bytes", ErrTokenMalformed, len(token))
+		return Claims{}, false, fmt.Errorf("%w: %d bytes", ErrTokenMalformed, len(token))
 	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return Claims{}, fmt.Errorf("%w: %d dot-separated parts, want 3", ErrTokenMalformed, len(parts))
+		return Claims{}, false, fmt.Errorf("%w: %d dot-separated parts, want 3", ErrTokenMalformed, len(parts))
 	}
 
 	headerBytes, err := decodeSegment(parts[0])
 	if err != nil {
-		return Claims{}, fmt.Errorf("%w: header: %v", ErrTokenMalformed, err)
+		return Claims{}, false, fmt.Errorf("%w: header: %v", ErrTokenMalformed, err)
 	}
 	var header jwsHeader
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		return Claims{}, fmt.Errorf("%w: header is not JSON", ErrTokenMalformed)
+		return Claims{}, false, fmt.Errorf("%w: header is not JSON", ErrTokenMalformed)
 	}
 	// 🔴 `crit` IS REFUSED RATHER THAN IGNORED, WHICH IS WHAT RFC 7515 §4.1.11 REQUIRES.
 	// The header field means "the recipient MUST understand these extensions or reject
@@ -317,57 +355,62 @@ func Verify(token string, opts VerifyOptions) (Claims, error) {
 	// extension was enforced — so the safe answer for a verifier that implements no
 	// extensions is to reject every token that names one.
 	if len(header.Crit) != 0 {
-		return Claims{}, fmt.Errorf("%w: the header declares `crit` extensions this verifier does not implement", ErrTokenMalformed)
+		return Claims{}, false, fmt.Errorf("%w: the header declares `crit` extensions this verifier does not implement", ErrTokenMalformed)
 	}
 	// `typ` is optional in JWS and Supabase sets `JWT`. Anything else is a different
 	// media type being passed off as a session token.
 	if header.Typ != "" && !strings.EqualFold(header.Typ, "JWT") {
-		return Claims{}, fmt.Errorf("%w: typ %q is not JWT", ErrTokenMalformed, header.Typ)
+		return Claims{}, false, fmt.Errorf("%w: typ %q is not JWT", ErrTokenMalformed, header.Typ)
 	}
 
 	alg := Alg(header.Alg)
 	// 🔴 THE ALGORITHM-CONFUSION REFUSAL, AND IT IS UNCONDITIONAL. See `symmetricAlg`.
 	if symmetricAlg(alg) {
-		return Claims{}, fmt.Errorf("%w: %q", ErrTokenAlgSymmetric, header.Alg)
+		return Claims{}, false, fmt.Errorf("%w: %q", ErrTokenAlgSymmetric, header.Alg)
 	}
 	if !accepts(opts.Algs, alg) {
 		// Covers `none`, every algorithm this build cannot verify, and every algorithm
 		// it can verify but this deployment did not configure — one refusal, because
 		// they are one question: is this algorithm acceptable HERE.
-		return Claims{}, fmt.Errorf("%w: %q", ErrTokenAlg, header.Alg)
+		return Claims{}, false, fmt.Errorf("%w: %q", ErrTokenAlg, header.Alg)
 	}
 	if opts.Keys == nil {
-		return Claims{}, fmt.Errorf("%w: no key resolver configured", ErrNoKey)
+		return Claims{}, false, fmt.Errorf("%w: no key resolver configured", ErrNoKey)
 	}
 	verifyKey, err := opts.Keys.key(header.Kid, alg)
 	if err != nil {
-		return Claims{}, err
+		return Claims{}, false, err
 	}
 
 	signature, err := decodeSegment(parts[2])
 	if err != nil {
-		return Claims{}, fmt.Errorf("%w: signature segment: %v", ErrTokenMalformed, err)
+		return Claims{}, false, fmt.Errorf("%w: signature segment: %v", ErrTokenMalformed, err)
 	}
 	// The signing input is the two segments AS SENT, joined by the dot — not a
 	// re-encoding of the decoded values. A re-encode would normalise padding or field
 	// order and verify a signature over bytes the issuer never signed.
 	signingInput := []byte(parts[0] + "." + parts[1])
 	if err := verifySignature(alg, verifyKey, signingInput, signature); err != nil {
-		return Claims{}, err
+		return Claims{}, false, err
 	}
+	// 🔴 THE ONE PLACE `verified` BECOMES TRUE. Everything below runs on bytes the
+	// configured issuer's key signed. See `verifyToken`'s doc.
 
 	payload, err := decodeSegment(parts[1])
 	if err != nil {
-		return Claims{}, fmt.Errorf("%w: payload segment: %v", ErrTokenMalformed, err)
+		// Unreachable in practice — the signature was computed over this exact segment,
+		// so an issuer would have had to sign a non-base64url payload — and kept on the
+		// COUNTED side anyway, because "verified" is claimed only for a decoded payload.
+		return Claims{}, false, fmt.Errorf("%w: payload segment: %v", ErrTokenMalformed, err)
 	}
-	var claims Claims
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return Claims{}, fmt.Errorf("%w: payload is not a JSON claim set (%v)", ErrTokenClaims, err)
+	var decoded Claims
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return Claims{}, true, fmt.Errorf("%w: payload is not a JSON claim set (%v)", ErrTokenClaims, err)
 	}
-	if err := checkClaims(claims, opts); err != nil {
-		return Claims{}, err
+	if err := checkClaims(decoded, opts); err != nil {
+		return decoded, true, err
 	}
-	return claims, nil
+	return decoded, true, nil
 }
 
 // symmetricAlg reports whether alg is a shared-secret (HMAC) JWS algorithm.

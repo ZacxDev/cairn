@@ -112,6 +112,22 @@ type Identity struct {
 	// look up. `identity=` is what identifies such a request, and it carries the
 	// principal's display name.
 	Fingerprint string
+	// Token is the verified bearer token's own `sub` and `jti`, for the audit line's
+	// `sub=`/`jti=` fields, and it is nil for every backend that did not verify a signed
+	// token (a machine token, a cookie session, a proxy assertion).
+	//
+	// 🔴 AUDIT-ONLY. It is what joins one request's record to the issuer's record of
+	// minting that token; it is NOT a second identity and NO ROUTE MAY BRANCH ON IT — the
+	// package doc's no-discriminator rule. Who the request is stays `Principal`.
+	Token *TokenFacts
+}
+
+// TokenFacts is what an audit line records about a verified signed token.
+type TokenFacts struct {
+	// Subject is the token's `sub`.
+	Subject string
+	// ID is the token's `jti`, empty when it carried none (or a non-string one).
+	ID string
 }
 
 // Valid answers whether this Identity names anybody at all.
@@ -164,6 +180,12 @@ type Refusal struct {
 	Backend string
 	// Reason is the specific check that failed.
 	Reason string
+	// absent marks a refusal whose backend found NO credential of its kind on the
+	// request at all. Only the trusted-header backend sets it (neither its identity header
+	// nor its secret header was sent). It is read by [Chain] alone, to decide whether a
+	// [VerifiedClaimsRefusal] from another backend may stand for the whole request —
+	// never by a serving path, and never rendered.
+	absent bool
 }
 
 func (r *Refusal) Error() string {
@@ -177,6 +199,21 @@ func (r *Refusal) Unwrap() error { return control.ErrNoCredential{} }
 // refuse builds a Refusal. A helper rather than a literal at each site so the backend
 // name is spelled once per backend.
 func refuse(backend, reason string) error { return &Refusal{Backend: backend, Reason: reason} }
+
+// refuseAbsent is `refuse` for a request carrying no credential of this backend's kind.
+// The sentence is identical; only [Chain] can tell the difference. See `Refusal.absent`.
+func refuseAbsent(backend, reason string) error {
+	return &Refusal{Backend: backend, Reason: reason, absent: true}
+}
+
+// readsBearer is implemented by the backends that read the `Authorization: Bearer`
+// credential. They read ONE credential between them, so when one of them verified that
+// credential's signature, another one's miss on the same bytes is not a second
+// credential that was presented. See [Chain].
+type readsBearer interface{ readsBearerCredential() }
+
+func (*MachineToken) readsBearerCredential() {}
+func (*SupabaseJWT) readsBearerCredential()  {}
 
 // Chain tries each authenticator in order and takes the first that succeeds.
 //
@@ -224,7 +261,26 @@ func refuse(backend, reason string) error { return &Refusal{Backend: backend, Re
 type Chain []Authenticator
 
 // Authenticate runs the chain.
+//
+// 🔴 WHEN EVERY BACKEND REFUSES, THE ANSWER IS NORMALLY THE CHAIN'S OWN REFUSAL — AND A
+// [VerifiedClaimsRefusal] ONLY WHEN IT IS THE WHOLE STORY. That type tells `internal/api`
+// not to count the refusal toward the client lockout, so it may stand for the request
+// only when the request presented nothing ELSE that could be a guess: every other refusal
+// must come from a backend reading the same bearer credential ([readsBearer]) or be
+// marked absent. Otherwise one genuine expired token sent beside a guessed proxy secret or
+// identity header would make the guess uncounted.
+//
+// ⚠ ONLY THE TRUSTED-HEADER BACKEND MARKS ITSELF ABSENT, AND THAT IS THE LOAD-BEARING HALF:
+// `cmd/cairn-server`'s chain is machine token + JWT + (optionally) trusted header, and
+// without the mark the trusted header's refusal would read as "presented" on EVERY request,
+// so a pod with both armed would count every claim-time refusal. The cookie backend does
+// NOT mark itself: no chain whose refusal `internal/api` reads carries one (the API pod
+// builds its chain with a nil cookie backend), and the browser surface that does carry one
+// counts no bearer failure at all. So in a chain WITH a cookie backend the verified
+// refusal never stands — the fail-closed direction, pinned by a test.
 func (c Chain) Authenticate(r *http.Request) (Identity, error) {
+	var verified error
+	otherPresented := false
 	for _, backend := range c {
 		if backend == nil {
 			// A nil member is a wiring mistake, not a credential outcome. It is
@@ -234,6 +290,18 @@ func (c Chain) Authenticate(r *http.Request) (Identity, error) {
 		}
 		got, err := backend.Authenticate(r)
 		if err != nil {
+			var v *VerifiedClaimsRefusal
+			var rf *Refusal
+			switch {
+			case errors.As(err, &v):
+				verified = err
+			case isBearerReader(backend):
+				// The same bearer bytes another backend may have verified.
+			case errors.As(err, &rf) && rf.absent:
+				// Nothing of this backend's kind was presented.
+			default:
+				otherPresented = true
+			}
 			continue
 		}
 		if !got.Valid() {
@@ -246,8 +314,13 @@ func (c Chain) Authenticate(r *http.Request) (Identity, error) {
 		}
 		return got, nil
 	}
+	if verified != nil && !otherPresented {
+		return Identity{}, verified
+	}
 	return Identity{}, refuse("chain", "no configured backend recognised this request")
 }
+
+func isBearerReader(a Authenticator) bool { _, ok := a.(readsBearer); return ok }
 
 // ErrNoBackends refuses a chain with nothing in it, at CONFIGURATION time.
 //
