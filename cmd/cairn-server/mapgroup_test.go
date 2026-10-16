@@ -36,7 +36,7 @@ func TestMapGroupThenUnmapGroupWriteOneRecordEach(t *testing.T) {
 		t.Fatalf("rc=%d stderr=%s", rc, errOut.String())
 	}
 	line := regexp.MustCompile(`^cairn-control: group-mapped provider=issuer group=admins object=project:` +
-		regexp.QuoteMeta(string(a.Project)) + ` verbs=read,write epoch=([0-9]+)\n$`)
+		regexp.QuoteMeta(string(a.Project)) + ` verbs=read,write effective=read epoch=([0-9]+)\n$`)
 	if !line.MatchString(out.String()) {
 		t.Fatalf("stdout is not the one machine-readable line: %q", out.String())
 	}
@@ -45,6 +45,7 @@ func TestMapGroupThenUnmapGroupWriteOneRecordEach(t *testing.T) {
 		t.Fatalf("the journal grew by %d event(s) and holds %d mapping(s)", after.Epoch-before.Epoch, len(after.GroupMaps))
 	}
 	for _, want := range []string{"reaches EVERY scope of project", "including every scope added to it later",
+		"WARNING — write is recorded and has NO EFFECT", "this mapping confers read",
 		"$" + identity.EnvSupabaseGroupsClaim} {
 		if !strings.Contains(errOut.String(), want) {
 			t.Errorf("stderr does not say %q:\n%s", want, errOut.String())
@@ -205,11 +206,64 @@ func TestTheBinaryActuallyDispatchesMapGroupAndUnmapGroup(t *testing.T) {
 	if n := len(modelOf(t, journal).GroupMaps); n != 1 {
 		t.Fatalf("the child reported success and the journal holds %d mapping(s)", n)
 	}
+	// The flag help is a contract: it must say verbs are RECORDED and CAPPED, never that the
+	// group "gets" them.
+	_, help := run("-h")
+	for _, want := range []string{
+		"the comma-separated verbs RECORDED for the group on the object (read, write, admin). A federated " +
+			"principal is CAPPED AT READ when the mapping is resolved, so write and admin are recorded and " +
+			"have no effect, and a set without read is refused.",
+		"at -group-verbs CAPPED AT READ;",
+	} {
+		if !strings.Contains(strings.Join(strings.Fields(help), " "), want) {
+			t.Errorf("`-h` does not say %q:\n%s", want, help)
+		}
+	}
 	if code, body := run(append([]string{"-unmap-group"}, key...)...); code != 0 ||
 		!strings.Contains(body, "cairn-control: group-unmapped provider=issuer group=admins") {
 		t.Fatalf("`-unmap-group` exited %d:\n%s", code, body)
 	}
 	if n := len(modelOf(t, journal).GroupMaps); n != 0 {
 		t.Fatalf("after the unmap the journal holds %d mapping(s)", n)
+	}
+}
+
+// TestAGroupMappingWithoutReadIsRefusedAndWritesNothing: under the read ceiling a set with
+// no `read` reaches nothing, so it is a refusal rather than an inert record.
+//
+// RED at 2e9c545: there `-group-verbs write` exited 0 and appended a mapping that conferred
+// nothing on any request.
+func TestAGroupMappingWithoutReadIsRefusedAndWritesNothing(t *testing.T) {
+	journal, env, a, _ := aJournalWithTwoSeparateUsers(t)
+	for _, verbs := range []string{"write", "admin", "write,admin"} {
+		before := modelOf(t, journal).Epoch
+		var out, errOut bytes.Buffer
+		rc := runGroupMap(env, false, groupMapFlagsFor(false, "writers", "issuer", string(a.Scopes[0].ID), verbs), &out, &errOut)
+		if rc != exitConfig || out.Len() != 0 {
+			t.Errorf("-group-verbs %s: rc=%d stdout=%q, want %d and nothing", verbs, rc, out.String(), exitConfig)
+		}
+		if !strings.Contains(errOut.String(), "a federated mapping without read reaches nothing under the read ceiling") {
+			t.Errorf("-group-verbs %s: the refusal does not name the reason:\n%s", verbs, errOut.String())
+		}
+		if after := modelOf(t, journal).Epoch; after != before {
+			t.Errorf("-group-verbs %s: the journal moved %d -> %d", verbs, before, after)
+		}
+	}
+}
+
+// TestAReadOnlyGroupMappingPrintsNoInertVerbWarning is an INVARIANT guard (true at 2e9c545
+// too): with nothing above the ceiling there is nothing to warn about, and the line's two
+// sets agree.
+func TestAReadOnlyGroupMappingPrintsNoInertVerbWarning(t *testing.T) {
+	_, env, a, _ := aJournalWithTwoSeparateUsers(t)
+	var out, errOut bytes.Buffer
+	if rc := runGroupMap(env, false, groupMapFlagsFor(false, "readers", "issuer", string(a.Scopes[0].ID), "read"), &out, &errOut); rc != 0 {
+		t.Fatalf("rc=%d %s", rc, errOut.String())
+	}
+	if !strings.Contains(out.String(), " verbs=read effective=read epoch=") {
+		t.Errorf("stdout: %q", out.String())
+	}
+	if strings.Contains(errOut.String(), "NO EFFECT") {
+		t.Errorf("a read-only mapping was warned about:\n%s", errOut.String())
 	}
 }

@@ -303,3 +303,47 @@ func TestNarrowCarriesTheFederationReport(t *testing.T) {
 		t.Fatal("a user's authority claims to be federated")
 	}
 }
+
+// TestTheFederatedCeilingIsReadAndCannotBeRebound pins the ceiling's VALUE (read and
+// nothing else) and that what a caller does to the returned set reaches nothing. An
+// invariant guard on the second half: `VerbSet` is a value type.
+func TestTheFederatedCeilingIsReadAndCannotBeRebound(t *testing.T) {
+	c := FederatedVerbCeiling()
+	if c != NewVerbSet(VerbRead) {
+		t.Fatalf("the ceiling is %s, want read", c)
+	}
+	c = c.Union(AllSet)
+	_ = c
+	if got := FederatedVerbCeiling(); got != NewVerbSet(VerbRead) {
+		t.Fatalf("widening a returned copy widened the ceiling: %s", got)
+	}
+}
+
+// TestMapGroupRefusesASetTheCeilingCapsToNothing is the writer half of the no-read refusal,
+// and the Effective field the operator mode prints.
+func TestMapGroupRefusesASetTheCeilingCapsToNothing(t *testing.T) {
+	store, path, owner := aProvisionedOwner(t)
+	ctx := context.Background()
+	req := GroupMapRequest{Provider: fedProvider, Group: "writers", ObjectKind: ObjectScope,
+		ObjectID: owner.Scopes[0].ID, Verbs: NewVerbSet(VerbWrite, VerbAdmin), At: provisionClock}
+	before := journalBytes(t, path)
+	if _, err := MapGroup(ctx, store, req); !errors.Is(err, ErrGroupMapReachesNothing) {
+		t.Fatalf("a write,admin mapping: %v", err)
+	}
+	if !bytes.Equal(before, journalBytes(t, path)) {
+		t.Fatal("a refused mapping changed the journal")
+	}
+	req.Verbs = NewVerbSet(VerbRead, VerbWrite)
+	w, err := MapGroup(ctx, store, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Verbs != NewVerbSet(VerbRead, VerbWrite) || w.Effective != NewVerbSet(VerbRead) {
+		t.Fatalf("written %s effective %s, want read,write and read", w.Verbs, w.Effective)
+	}
+	// A record that ALREADY holds a no-read mapping still replays: the rule is the writer's.
+	if _, err := Replay(append(worldEvents(), Event{Kind: EventGroupMapped, At: at(40), Provider: fedProvider,
+		Group: "writers", ObjectKind: ObjectScope, ObjectID: sAtlasNotes, Verbs: NewVerbSet(VerbWrite)})); err != nil {
+		t.Fatalf("a journal holding a write-only mapping no longer replays: %v", err)
+	}
+}

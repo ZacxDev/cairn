@@ -37,8 +37,8 @@ func registerGroupMapFlags() *groupMapFlags {
 		mapGroup: flag.Bool("map-group", false,
 			"MAP ONE GROUP to ONE scope or project: append ONE group-mapped record to the control "+
 				"journal named by $"+EnvControlJournal+", and exit. Every caller whose verified token "+
-				"claims the group reaches the object at -group-verbs on their next request, when group "+
-				"federation is on; a PROJECT object also covers every scope added to it later. Requires "+
+				"claims the group reaches the object on their next request, when group federation is on, "+
+				"at -group-verbs CAPPED AT READ; a PROJECT object also covers every scope added to it later. Requires "+
 				"-group, -group-provider, -group-object and -group-verbs"),
 		unmapGroup: flag.Bool("unmap-group", false,
 			"REMOVE ONE mapping: append ONE group-unmapped record naming -group, -group-provider and "+
@@ -55,8 +55,10 @@ func registerGroupMapFlags() *groupMapFlags {
 			"the `id` of the scope (scp_…) or project (prj_…) the group reaches; the kind is read "+
 				"from the prefix"),
 		verbs: flag.String("group-verbs", "",
-			"for -map-group: the comma-separated `verbs` the group gets on the object (read, write, "+
-				"admin). Required — there is no default; -unmap-group refuses it"),
+			"for -map-group: the comma-separated `verbs` RECORDED for the group on the object (read, "+
+				"write, admin). A federated principal is CAPPED AT READ when the mapping is resolved, so "+
+				"write and admin are recorded and have no effect, and a set without read is refused. "+
+				"Required — there is no default; -unmap-group refuses it"),
 	}
 }
 
@@ -146,6 +148,10 @@ func runGroupMap(env map[string]string, unmap bool, f *groupMapFlags, out, errOu
 	}
 	if err != nil {
 		switch {
+		case errors.Is(err, control.ErrGroupMapReachesNothing):
+			warn("subsystem-store-api: -map-group refused, and nothing was written: -group-verbs " +
+				verbs.String() + " has no read in it, and a federated mapping without read reaches " +
+				"nothing under the read ceiling. Add read")
 		case errors.Is(err, control.ErrNoSuchObject):
 			warn(fmt.Sprintf("subsystem-store-api: %s refused: this control journal holds no %s with "+
 				"id %q, so nothing was written. Journal %s", mode, kind, object, journal))
@@ -160,9 +166,16 @@ func runGroupMap(env map[string]string, unmap bool, f *groupMapFlags, out, errOu
 		event = control.EventGroupUnmapped
 	}
 	fmt.Fprintln(out, reloadSafe(fmt.Sprintf(
-		"cairn-control: %s provider=%s group=%s object=%s:%s verbs=%s epoch=%d",
+		"cairn-control: %s provider=%s group=%s object=%s:%s verbs=%s effective=%s epoch=%d",
 		event, written.Key.Provider, written.Key.Group, written.Key.ObjectKind, written.Key.ObjectID,
-		written.Verbs, written.Epoch)))
+		written.Verbs, written.Effective, written.Epoch)))
+	// 🔴 SAID FOR EVERY RECORD WHOSE VERBS EXCEED WHAT THEY CONFER, on an unmap too: the line
+	// above prints both sets, and this names the difference so nobody reads `verbs=` as access.
+	if inert := written.Verbs.Minus(written.Effective); !inert.Empty() {
+		warn(fmt.Sprintf("subsystem-store-api: WARNING — %s is recorded and has NO EFFECT: a federated "+
+			"principal is capped at read when the mapping is resolved, so this mapping confers %s",
+			inert, written.Effective))
+	}
 	if !unmap && kind == control.ObjectProject {
 		warn(fmt.Sprintf("subsystem-store-api: group %q now reaches EVERY scope of project %s, "+
 			"including every scope added to it later — that is what mapping a project means", group, object))

@@ -22,7 +22,7 @@ import (
 //     not in, which reaches that group's mapped objects and no others — and, because `sub`
 //     is the issuer's text too and names the principal in every audit line, it can put any
 //     subject's name on those reads. Both stay inside the READ ceiling
-//     (`FederatedVerbCeiling`): nothing is ever written under a federated name.
+//     (`FederatedVerbCeiling()`): nothing is ever written under a federated name.
 //  2. NOTHING IS WRITTEN ON A READ. A federated principal is computed per request from the
 //     claim and the map, so there is no account to provision, no row to clean up and no
 //     read route that becomes a user-creation endpoint (the hazard
@@ -150,7 +150,12 @@ func (a Authorization) Federation() (Federation, bool) {
 	return f, true
 }
 
-// FederatedVerbCeiling is the most a federated principal may do to any scope: READ.
+// FederatedVerbCeiling returns the most a federated principal may do to any scope: READ.
+//
+// ⚠ A FUNCTION RETURNING A FRESH VALUE, NOT AN EXPORTED VAR. A package var is assignable
+// by any importer at runtime, so the ceiling would be one assignment away from wide open;
+// a function whose body is the literal set cannot be rebound. (`VerbSet` is a value type,
+// so what a caller does to the returned copy reaches nothing either.)
 //
 // 🔴 A CEILING AT RESOLVE TIME, NOT A REFUSAL AT MAP TIME, AND IT LIVES HERE AND NOWHERE
 // ELSE. `-map-group` still records whatever verbs the operator wrote — the journal is the
@@ -167,7 +172,7 @@ func (a Authorization) Federation() (Federation, bool) {
 // principal's `<provider>:<subject>` display, so a federated write would land with a
 // trailer the grammar reports as malformed — unattributable, and not idempotent on a
 // re-post. Writes wait for an actor spelling that can express a federated principal.
-var FederatedVerbCeiling = NewVerbSet(VerbRead)
+func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead) }
 
 // PrefixFederated is the id prefix of a federated principal.
 const PrefixFederated = "fed"
@@ -179,7 +184,7 @@ var ErrFederatedSubject = errors.New("control: a federated principal needs a pro
 // token's (provider, subject) and its claimed groups.
 //
 // 🔴 THE AUTHORITY IS ∪ OVER THE CLAIMED GROUPS OF EACH LIVE MAPPING'S OBJECT, AT THE
-// MAPPING'S VERBS CAPPED BY `FederatedVerbCeiling` (read), AND NOTHING ELSE. No membership,
+// MAPPING'S VERBS CAPPED BY `FederatedVerbCeiling()` (read), AND NOTHING ELSE. No membership,
 // no grant, no credential narrowing: a federated principal is not a subject of any of those (see `KindFederated`), so the only
 // source is the map. Every group is consulted — a mutant that stops at the first mapped
 // group, or that counts an unmapped one, is a row in `tests/control_mutants.py`.
@@ -208,7 +213,7 @@ func ResolveFederated(m Model, provider, subject string, claimed []string) (Prin
 				continue
 			}
 			mapped = true
-			a.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling))
+			a.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling()))
 		}
 		if mapped {
 			report.Mapped = append(report.Mapped, g)
@@ -285,6 +290,10 @@ var (
 	ErrGroupNotMapped = errors.New("control: that group has no live mapping to that object")
 	// ErrGroupMapVerbs refuses a mapping that confers nothing.
 	ErrGroupMapVerbs = errors.New("control: a group mapping needs at least one verb")
+	// ErrGroupMapReachesNothing refuses a mapping whose verbs the read ceiling caps to
+	// NOTHING — `write` or `admin` without `read`. Recorded, it would read like access in the
+	// journal and confer none on any request.
+	ErrGroupMapReachesNothing = errors.New("control: a federated mapping without read reaches nothing under the read ceiling")
 )
 
 // GroupMapRequest is a request to map or unmap one (provider, group) → object.
@@ -303,9 +312,13 @@ type GroupMapRequest struct {
 
 // GroupMapWritten is what `MapGroup` or `UnmapGroup` wrote.
 type GroupMapWritten struct {
-	Key   GroupMapKey
-	Verbs VerbSet
-	Epoch uint64
+	Key GroupMapKey
+	// Verbs is what the record carries; Effective is what a federated principal actually
+	// gets from it — `Verbs` capped by `FederatedVerbCeiling()`. They differ exactly when
+	// the operator recorded a verb above read.
+	Verbs     VerbSet
+	Effective VerbSet
+	Epoch     uint64
 }
 
 // MapGroup appends ONE `group-mapped` record.
@@ -345,6 +358,13 @@ func writeGroupMap(ctx context.Context, s Store, req GroupMapRequest, kind Event
 	if kind == EventGroupMapped && req.Verbs.Empty() {
 		return GroupMapWritten{}, ErrGroupMapVerbs
 	}
+	// 🔴 HERE, AT THE WRITER, AND NOT IN `apply`. A mapping capped to nothing is refused for
+	// every future writer of one; a journal that already holds one still replays (the
+	// record is inert, not malformed), so no existing file stops loading.
+	if kind == EventGroupMapped && req.Verbs.Intersect(FederatedVerbCeiling()).Empty() {
+		return GroupMapWritten{}, fmt.Errorf("%w: %s was asked for, and every one of those is capped away",
+			ErrGroupMapReachesNothing, req.Verbs)
+	}
 	current, err := s.Model(ctx)
 	if err != nil {
 		return GroupMapWritten{}, fmt.Errorf("reading the control journal: %w", err)
@@ -376,7 +396,7 @@ func writeGroupMap(ctx context.Context, s Store, req GroupMapRequest, kind Event
 	if err != nil {
 		return GroupMapWritten{}, err
 	}
-	return GroupMapWritten{Key: key, Verbs: verbs, Epoch: after.Epoch}, nil
+	return GroupMapWritten{Key: key, Verbs: verbs, Effective: verbs.Intersect(FederatedVerbCeiling()), Epoch: after.Epoch}, nil
 }
 
 // ObjectKindOfID infers an object's kind from its id prefix — `scp_…` is a scope, `prj_…`

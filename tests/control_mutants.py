@@ -7331,11 +7331,12 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="federation-counts-only-the-first-mapped-group",
         path="internal/control/group_map.go",
-        old="\t\t\tmapped = true\n\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling))\n",
-        new="\t\t\tmapped = true\n\t\t\tif len(report.Mapped) == 0 {\n\t\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling))\n\t\t\t}\n",
+        old="\t\t\tmapped = true\n\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling()))\n",
+        new="\t\t\tmapped = true\n\t\t\tif len(report.Mapped) == 0 {\n\t\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling()))\n\t\t\t}\n",
         killer="TestTheAuthorizationMatrixIsExactlyThis",
         why="'first matching group wins' is how a role lookup is often written; it makes a caller in "
-        "two groups reach only one of them (F2's write, F3's beacon-secrets write).",
+        "two groups reach only one of them — F2's second group's scope (atlas-runbook, read under "
+        "the ceiling) goes unread.",
     ),
     Mutant(
         name="federation-reports-an-unmapped-group-as-mapped",
@@ -7397,7 +7398,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="federation-read-ceiling-removed",
         path="internal/control/group_map.go",
-        old="gm.Verbs.Intersect(FederatedVerbCeiling))\n",
+        old="gm.Verbs.Intersect(FederatedVerbCeiling()))\n",
         new="gm.Verbs)\n",
         killer="TestTheAuthorizationMatrixIsExactlyThis",
         extra_killers=("TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite",),
@@ -7409,10 +7410,69 @@ MUTANTS: tuple[Mutant, ...] = (
         path="internal/control/resolve.go",
         old="func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {\n",
         new="func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {\n"
-        "\tverbs = verbs.Intersect(FederatedVerbCeiling)\n",
+        "\tverbs = verbs.Intersect(FederatedVerbCeiling())\n",
         killer="TestTheAuthorizationMatrixIsExactlyThis",
         why="the shared expansion is the tempting single place for the cap; there it also strips "
         "write from every user reached through a grant (carol, alice, bob's beacon-secrets cells).",
+    ),
+    Mutant(
+        name="map-group-no-read-refusal-removed",
+        path="internal/control/group_map.go",
+        old="\tif kind == EventGroupMapped && req.Verbs.Intersect(FederatedVerbCeiling()).Empty() {\n",
+        new="\tif false && kind == EventGroupMapped && req.Verbs.Intersect(FederatedVerbCeiling()).Empty() {\n",
+        killer="TestAGroupMappingWithoutReadIsRefusedAndWritesNothing",
+        extra_killers=("TestMapGroupRefusesASetTheCeilingCapsToNothing",),
+        why="`-group-verbs write` then exits 0 and records a mapping that confers nothing on any "
+        "request while reading like access in the journal.",
+    ),
+    Mutant(
+        name="map-group-inert-verb-warning-removed",
+        path="cmd/cairn-server/mapgroup.go",
+        old="\tif inert := written.Verbs.Minus(written.Effective); !inert.Empty() {\n",
+        new="\tif inert := written.Verbs.Minus(written.Effective); false && !inert.Empty() {\n",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        why="the operator who typed write is told nothing about it having no effect.",
+    ),
+    Mutant(
+        name="map-group-inert-verbs-computed-against-the-wrong-set",
+        path="cmd/cairn-server/mapgroup.go",
+        old="\tif inert := written.Verbs.Minus(written.Effective); !inert.Empty() {\n",
+        new="\tif inert := written.Verbs.Minus(written.Verbs); !inert.Empty() {\n",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        why="a warning whose set is always empty is present in the source and never fires — the "
+        "SPELLED-guard shape.",
+    ),
+    Mutant(
+        name="map-group-effective-set-is-the-recorded-set",
+        path="internal/control/group_map.go",
+        old="Effective: verbs.Intersect(FederatedVerbCeiling()),",
+        new="Effective: verbs,",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        extra_killers=("TestMapGroupRefusesASetTheCeilingCapsToNothing",),
+        why="the success line then prints `effective=read,write`, the untruth the field exists to end.",
+    ),
+    Mutant(
+        name="federated-ceiling-widened",
+        path="internal/control/group_map.go",
+        old="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead) }",
+        new="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead, VerbWrite) }",
+        killer="TestTheFederatedCeilingIsReadAndCannotBeRebound",
+        extra_killers=("TestTheAuthorizationMatrixIsExactlyThis",
+                       "TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite"),
+        why="one verb added to the literal and federated writes land with unparseable trailers again.",
+    ),
+    Mutant(
+        name="federated-ceiling-is-a-shared-package-value",
+        path="internal/control/group_map.go",
+        old="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead) }",
+        new="var federatedCeiling = NewVerbSet(VerbRead)\n\nfunc FederatedVerbCeiling() VerbSet { return federatedCeiling }",
+        killer="TestTheFederatedCeilingIsReadAndCannotBeRebound",
+        equivalent=True,
+        equivalent_reason="`VerbSet` is a uint8 value: the function returns a copy, so no caller "
+        "can mutate the shared value through what it receives, and the var is unexported so no other "
+        "package can rebind it. No behavioural test can tell the two apart; the property that "
+        "mattered — no EXPORTED, assignable ceiling — is what the function shape removes.",
+        why="listed so a reader finding it SURVIVED reads it as a value-type fact, not a gap.",
     ),
     Mutant(
         name="federation-audit-drops-the-groups-field",
