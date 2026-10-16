@@ -471,6 +471,77 @@ older than the bound regardless of `exp` — and the authority side (what the pr
 do) is bounded instead by `control.Cache`'s refresh. Narrowing the token side properly is
 P5/P6's, with a session store.
 
+## 🔴 The client lockout counts GUESSES, not tokens the issuer signed
+
+`internal/api` counts every failed authentication against the caller's client address,
+and five in a window lock that address out. A signed token whose **signature verified**
+under a key in the configured set and which was then refused — on `exp`, `nbf`, `iat`,
+max age, `iss`, `aud`, an empty `sub`, a payload that is not a claim set, a required
+`role`, or a subject this control plane holds no user for — is **not counted**. It is
+answered with the same uniform 401 and audited `status=claims-refused`.
+
+| refusal | counted toward the lockout |
+|---|---|
+| signature verified, then a claim check refused it | **no** — `claims-refused` |
+| signature verified, subject unknown to this control plane | **no** — `claims-refused` |
+| signature verified, `role` is not `CAIRN_OIDC_REQUIRE_ROLE` | **no** — `claims-refused` |
+| a signature that does not verify (a held `kid`, a different key) | yes |
+| a `kid` the verifier holds no key for | yes |
+| a refused algorithm (`none`, any `HS*`, anything not RS256/ES256) | yes |
+| a malformed token, a `crit` header, a non-JWT `typ` | yes |
+| a wrong machine token, an unknown credential of any other kind | yes |
+| a verified-but-refused bearer sent **beside** a session cookie or a proxy identity/secret header | yes — see below |
+
+**Why it is safe.** Reaching `claims-refused` requires a valid signature under a key the
+verifier trusts. Anyone who can produce one already holds the issuer's signing key, and
+with it can mint a token that PASSES — so exempting them from a guessing limit buys them
+nothing. **Why it is needed.** A clock skew or a key-rotation mistake at the issuer makes
+every token it signed fail a claim check at once; when many callers arrive through one
+egress address, five such failures locked every one of them out for the whole lockout
+window, stretching an issuer-side outage past the issuer's fix.
+
+🔴 **THE DECISION IS MADE FROM A FLAG, NEVER FROM AN ERROR'S TEXT.** `verifyToken` sets
+`verified` in exactly one place — beside `verifySignature`'s success — and
+`VerifiedClaimsRefusal` has one constructor, called only from
+`SupabaseJWT.AuthenticateToken`. `internal/api` asks `errors.As` for that type. Its
+`Error()` is the wrapped refusal's sentence unchanged, and `Unwrap` keeps
+`errors.Is(err, control.ErrNoCredential{})` and `errors.As(err, &*UnprovisionedSubject)`
+answering as before.
+
+🔴 **AND THE CHAIN LETS IT STAND ONLY WHEN NOTHING ELSE WAS PRESENTED.** Without that, one
+genuine expired token sent as the bearer would carry an uncounted stream of guesses at a
+second credential on the same request. So `Chain` returns a `VerifiedClaimsRefusal` only
+when every other backend either reads the same bearer (`MachineToken`, `SupabaseJWT`) or
+found nothing of its own kind (no session cookie; neither the proxy's identity header nor
+its secret header) — otherwise its own counted refusal. The trusted-header backend's rung
+order and sentences are untouched; only the `absent` mark is added.
+
+**Mixed streams are pinned as a decision:** a `claims-refused` request records neither a
+failure nor a success, so it can neither lock an address out nor forgive a streak of bad
+signatures. Tests: `internal/api/lockout_claims_test.go` (the seam, at three claim types,
+with bad signatures as the positive control in the same harness) and
+`internal/identity/verifiedrefusal_test.go` (which refusals carry the mark, and the chain).
+
+⚠ **`cmd/cairn-ui` is not changed and does not need to be.** Its browser surface counts
+failures only on the credential sign-in form (a machine token, never a JWT) and its OAuth
+callback deliberately does not count; its listeners (`internal/clientapi`,
+`internal/worker`, `internal/presence`) accept machine tokens only.
+
+### The audit line's `sub=`, `jti=` and `groups=`
+
+A request whose bearer token's signature verified — authenticated, or `claims-refused` —
+gets three fields **appended after `status=`**: `sub=` and `jti=` from the signed token
+(`-` when absent; a non-string `jti` reads as absent rather than refusing the token, since
+it was ignored before), and `groups=` from `Identity.Groups`. Every other line is
+byte-identical to before, which is what keeps `tests/dualrun/`'s line-for-line comparison
+with the oracle unmoved. Values pass through `auditField` (a space becomes `_`, a control
+character `?`), and each group's own `,` becomes `?`, so a value cannot forge a field, a
+line or a second group.
+
+⚠ **`groups=` READS `-` ON EVERY LINE TODAY.** No backend populates `Identity.Groups` yet;
+the format is settled here so it moves once. **CLOSING CONDITION:** a backend that sets it,
+with a test reading a non-`-` `groups=` value out of `internal/api`'s audit line.
+
 ## The IdP outage, measured by killing the dependency
 
 `TestAnIdentityProviderOutageDoesNotStopAnAlreadyIssuedSession` is four claims:

@@ -69,7 +69,7 @@ func (c *CookieSession) Authenticate(r *http.Request) (Identity, error) {
 		// must be cheap and it must not be distinguishable from a wrong cookie by
 		// anything that reaches the wire. `internal/ui`'s uniform 401 is what ensures
 		// the second half.
-		return Identity{}, refuse(CookieSessionBackend, "no session cookie")
+		return Identity{}, refuseAbsent(CookieSessionBackend, "no session cookie")
 	}
 
 	rec, live, err := c.sessions.Lookup(cookie.Value)
