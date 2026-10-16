@@ -654,6 +654,7 @@ read's output or exit code.
 | `GET /api/v1/arc/{home}/{slug}` | one registered arc — **Go pod only**; `arc-unregistered` when it is not visible to you |
 | `PUT /api/v1/arc/{home}/{slug}` | register or update one arc (write verb on every declared scope; `409 registrations-unconfigured` with no `-arc-journal`) — **Go pod only** |
 | `GET /api/v1/sources/{scope}` | the scope's declared code sources, read from `$CAIRN_SOURCE_JOURNAL` — an environment variable with no flag, a file OUTSIDE the store root, read-only to the pod; `sources-unconfigured` when unset — **Go pod only** |
+| `GET /api/v1/whoami` | the caller's OWN authority, as JSON (`X-Store-Status: whoami`): `{"principal", "status", "groups": {"mapped", "unmapped"}, "scopes"}`. `status` is `mapped` / `groups-unmapped` / `no-groups` for a group-federated caller and `not-federated` for any other; `groups` partitions only the groups the caller's OWN token claimed, `scopes` is the scope names it may read, every list sorted and never `null`. A self-view, never an enumeration of the group map; an unauthenticated caller gets the uniform 401 — **Go pod only**, and a pod without it answers `404 no-route` |
 | `POST /api/v1/entry/{scope}/{ref}/bullets` | append ONE attributed bullet (the actor comes from the token, never the body) |
 | `PUT /api/v1/entry/{scope}/{ref}` | whole-file replace via `If-Match`, or create via `If-None-Match: *` |
 

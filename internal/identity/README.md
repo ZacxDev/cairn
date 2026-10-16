@@ -602,9 +602,10 @@ and could only ever be a claim about the journal at startup). Pinned by
 control.
 
 ⚠ **WHAT IT DOES NOT DO, YET.** No federated writes (the read ceiling above, with its closing
-condition). No self-view route: the `Federation` report is carried on the authority and
-read by nothing on the wire — there is no `whoami` route today. Each of those is a separate
-change. And `-group-provider` must equal `CAIRN_OIDC_PROVIDER`, which nothing can check —
+condition). The `Federation` report is served to its OWN caller by `GET /api/v1/whoami`
+(`internal/api/whoami.go`): the status, the mapped/unmapped split of the caller's claimed
+groups, and the scope names it reads — nothing about the map or any other principal. A
+federated write is a separate change. And `-group-provider` must equal `CAIRN_OIDC_PROVIDER`, which nothing can check —
 the same two-halves-of-one-key caveat as `-create-user -provider`.
 ## 🔴 What a 401 means, and what the client lockout counts
 

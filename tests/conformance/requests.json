@@ -1459,6 +1459,56 @@
       "go_only_why": "`sources/<scope>` is served by the Go server only - decision 10 of the scope-refs plan extends `cmd/cairn-server` and not the oracle, on the arcs precedent. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`) over the world's SEEDED sources journal (`run_go.sh` passes it as $CAIRN_SOURCE_JOURNAL; the oracle is never told), a CHANGE DETECTOR rather than an oracle witness; the literal-body contract lives in `internal/api/sources_test.go`, which also pins the two states this one-boot corpus cannot send (unconfigured, and the 503)."
     },
     {
+      "id": "whoami-authorized",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/whoami",
+      "principal": "wide-reader",
+      "why": "the ordinary self-view of a mapped token row: `not-federated`, no groups, and the six scopes it reads, as names, sorted - exactly the set `recall` would answer for.",
+      "go_only": true,
+      "go_only_why": "`whoami` is served by the Go server only, on the arcs/sources precedent: it reports the caller's own authority from the control plane's federation report and read set, and the oracle has neither. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; this one-boot corpus runs on a token file, so it can send only NON-federated callers. The federated bodies (`mapped`, `groups-unmapped`, `no-groups`) are pinned as literal bytes in `internal/api/whoami_test.go`."
+    },
+    {
+      "id": "whoami-authorized-head",
+      "phase": "read",
+      "method": "HEAD",
+      "target": "/api/v1/whoami",
+      "principal": "wide-reader",
+      "why": "HEAD keeps every header and sends no body; head_matches_get pins its Content-Length against the GET's.",
+      "go_only": true,
+      "go_only_why": "`whoami` is served by the Go server only, on the arcs/sources precedent: it reports the caller's own authority from the control plane's federation report and read set, and the oracle has neither. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; this one-boot corpus runs on a token file, so it can send only NON-federated callers. The federated bodies (`mapped`, `groups-unmapped`, `no-groups`) are pinned as literal bytes in `internal/api/whoami_test.go`."
+    },
+    {
+      "id": "whoami-narrow-reader",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/whoami",
+      "principal": "narrow-reader",
+      "why": "a caller that reads ONE scope sees exactly that one: alpha-notes exists and is absent from its view, so the route is a self-view and not an enumeration of the store.",
+      "go_only": true,
+      "go_only_why": "`whoami` is served by the Go server only, on the arcs/sources precedent: it reports the caller's own authority from the control plane's federation report and read set, and the oracle has neither. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; this one-boot corpus runs on a token file, so it can send only NON-federated callers. The federated bodies (`mapped`, `groups-unmapped`, `no-groups`) are pinned as literal bytes in `internal/api/whoami_test.go`."
+    },
+    {
+      "id": "whoami-legacy-token",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/whoami",
+      "principal": "legacy",
+      "why": "a bare row is unrestricted for reads, and its view ENUMERATES the scopes the model holds rather than claiming a wildcard - the same set its reads are narrowed with.",
+      "go_only": true,
+      "go_only_why": "`whoami` is served by the Go server only, on the arcs/sources precedent: it reports the caller's own authority from the control plane's federation report and read set, and the oracle has neither. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; this one-boot corpus runs on a token file, so it can send only NON-federated callers. The federated bodies (`mapped`, `groups-unmapped`, `no-groups`) are pinned as literal bytes in `internal/api/whoami_test.go`."
+    },
+    {
+      "id": "whoami-unauthenticated",
+      "phase": "read",
+      "method": "GET",
+      "target": "/api/v1/whoami",
+      "principal": null,
+      "why": "no Authorization header: the uniform 401, a member of that relation. The route adds no refusal of its own.",
+      "go_only": true,
+      "go_only_why": "`whoami` is served by the Go server only, on the arcs/sources precedent: it reports the caller's own authority from the control plane's federation report and read set, and the oracle has neither. The golden is recorded from the Go server (`recorded_from: cmd/cairn-server`), a CHANGE DETECTOR rather than an oracle witness; this one-boot corpus runs on a token file, so it can send only NON-federated callers. The federated bodies (`mapped`, `groups-unmapped`, `no-groups`) are pinned as literal bytes in `internal/api/whoami_test.go`."
+    },
+    {
       "id": "arcs-check-all-scopes",
       "phase": "read",
       "method": "GET",
@@ -1923,7 +1973,7 @@
   ],
   "relations": {
     "_comment": ["TWO PROPERTIES THAT ARE RELATIONSHIPS BETWEEN RESPONSES. No per-response", "golden can hold either: each case has its own file, and each would keep", "passing if one of them grew a distinguishing header, because whoever", "regenerated would have recorded the divergence."],
-    "uniform_401": ["recall-bad-token", "recall-unauthenticated", "recall-no-client-ip", "recall-duplicate-client-ip", "root-path", "api-prefix-without-trailing-slash", "unlisted-path-with-valid-token", "options-root", "trace-root", "invented-verb-root", "raw-malformed-absolute-target", "snapshot-unauthenticated", "post-bullets-unauthenticated", "post-bullets-bad-token", "put-entry-unauthenticated", "sessions-unauthenticated", "arcs-unauthenticated", "arc-unauthenticated", "put-arc-unauthenticated", "sources-unauthenticated"],
+    "uniform_401": ["recall-bad-token", "recall-unauthenticated", "recall-no-client-ip", "recall-duplicate-client-ip", "root-path", "api-prefix-without-trailing-slash", "unlisted-path-with-valid-token", "options-root", "trace-root", "invented-verb-root", "raw-malformed-absolute-target", "snapshot-unauthenticated", "post-bullets-unauthenticated", "post-bullets-bad-token", "put-entry-unauthenticated", "sessions-unauthenticated", "arcs-unauthenticated", "arc-unauthenticated", "put-arc-unauthenticated", "sources-unauthenticated", "whoami-unauthenticated"],
     "refused_equals_absent": [
       {
         "name": "arcs",
@@ -2018,6 +2068,11 @@
         "name": "sources",
         "head": "sources-authorized-head",
         "get": "sources-authorized"
+      },
+      {
+        "name": "whoami",
+        "head": "whoami-authorized-head",
+        "get": "whoami-authorized"
       },
       {
         "name": "sessions",

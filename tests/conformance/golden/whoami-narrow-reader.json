@@ -1,0 +1,37 @@
+{
+  "body": {
+    "bytes": 116,
+    "kind": "text_lines",
+    "sha256": "ad717cc64eabe0e54402cf30b8d1d94852677122a2377e23db177044a911e92a",
+    "text_lines": [
+      "{\"principal\":\"narrow-reader\",\"status\":\"not-federated\",\"groups\":{\"mapped\":[],\"unmapped\":[]},\"scopes\":[\"beta-notes\"]}",
+      ""
+    ]
+  },
+  "case": "whoami-narrow-reader",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "116"
+    ],
+    [
+      "Content-Type",
+      "application/json"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "whoami"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}
