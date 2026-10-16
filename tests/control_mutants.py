@@ -1978,10 +1978,11 @@ MUTANTS: tuple[Mutant, ...] = (
         new="if false && errors.As(err, &verified) {",
         killer="TestASignedTokenFailingAClaimCheckDoesNotLockTheClientOut",
         extra_killers=("TestClaimsRefusalsNeitherAddToNorForgiveTheFailureCount",),
-        why="the defect this narrowing exists for, restored: an issuer-side clock skew "
-        "or key-rotation mistake makes every token it signed fail a claim check, and five "
-        "of those from one egress address lock every caller behind it out for the whole "
-        "lockout window.",
+        why="the defect this narrowing exists for, restored: a clock skew between the pod "
+        "and the issuer, or an `iss`/`aud` misconfiguration, makes every genuine token fail "
+        "a claim-time check at once, and five of those from one egress address lock every "
+        "caller behind it out for the whole lockout window. (A key rotation is NOT this "
+        "case: an unknown kid fails the signature and is counted.)",
     ),
     Mutant(
         name="every-authentication-refusal-is-exempt-from-the-lockout",
@@ -2021,7 +2022,7 @@ MUTANTS: tuple[Mutant, ...] = (
         new="if verified != nil && (!otherPresented || true) {",
         killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
         why="one genuine expired token sent as the bearer would then carry an uncounted "
-        "stream of guesses at a session cookie or a proxy secret on the same request.",
+        "stream of guesses at a proxy identity or secret header on the same request.",
     ),
     Mutant(
         name="the-audit-line-drops-jti",
