@@ -7320,6 +7320,73 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestTheRegisteredFlagCountInProseMatchesTheCode",
         why="proves the new mode is IN the flag-count gate.",
     ),
+    # --- group federation (`control.ResolveFederated`, `CAIRN_OIDC_GROUPS_CLAIM`) ---
+    Mutant(
+        name="federation-counts-only-the-first-mapped-group",
+        path="internal/control/group_map.go",
+        old="\t\t\tmapped = true\n\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs)\n",
+        new="\t\t\tmapped = true\n\t\t\tif len(report.Mapped) == 0 {\n\t\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs)\n\t\t\t}\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="'first matching group wins' is how a role lookup is often written; it makes a caller in "
+        "two groups reach only one of them (F2's write, F3's beacon-secrets write).",
+    ),
+    Mutant(
+        name="federation-reports-an-unmapped-group-as-mapped",
+        path="internal/control/group_map.go",
+        old="\t\tmapped := false\n",
+        new="\t\tmapped := true\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="an unmapped group then counts toward `mapped`, so a caller whose groups are all unmapped "
+        "is told `mapped` and the projects-unmapped answer a self-view serves becomes unreachable.",
+    ),
+    Mutant(
+        name="federation-claim-names-are-not-validated",
+        path="internal/control/group_map.go",
+        old="\t\tif err := ValidGroupName(g); err != nil {\n\t\t\treturn nil, fmt.Errorf(\"%w: %v\", ErrGroupsClaim, err)",
+        new="\t\tif err := ValidGroupName(g); false && err != nil {\n\t\t\treturn nil, fmt.Errorf(\"%w: %v\", ErrGroupsClaim, err)",
+        killer="TestAMalformedClaimIsRefusedWhole",
+        extra_killers=("TestAMalformedGroupsClaimRefusesTheWholeToken",),
+        why="'an unmapped name matches nothing anyway' reads as a reason to skip the check — and a "
+        "claim the issuer got wrong is then read partially instead of refused.",
+    ),
+    Mutant(
+        name="federation-ignores-the-provider-namespace",
+        path="internal/control/group_map.go",
+        old="\t\t\tif gm.Provider != provider || gm.Group != g {\n",
+        new="\t\t\tif gm.Group != g {\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="a group name looks global; it is the issuer's vocabulary, and another issuer's `readers` "
+        "would reach this issuer's callers (F1's atlas-runbook).",
+    ),
+    Mutant(
+        name="group-unmapped-is-not-applied",
+        path="internal/control/journal.go",
+        old="\t\tdelete(m.GroupMaps, key)\n",
+        new="\t\t_ = key\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        extra_killers=("TestMapGroupAndUnmapGroupRefuseBeforeWritingAnything",),
+        why="an unmap that replays clean and removes nothing — the group keeps reaching the object "
+        "(F5's atlas-runbook admin).",
+    ),
+    Mutant(
+        name="identity-valid-refuses-a-federated-principal",
+        path="internal/identity/identity.go",
+        old="\treturn i.Principal.Kind.IsPrincipal() && i.Principal.ID",
+        new="\treturn i.Principal.Kind.Valid() && i.Principal.ID",
+        killer="TestTheServerServesAFederatedPrincipalExactlyItsMappedScope",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="`Kind.Valid` reads as 'a real kind', and is the journal's SUBJECT check; using it here "
+        "makes every federated token a uniform 401 — the seam neither half sees alone.",
+    ),
+    Mutant(
+        name="federation-reads-the-claim-with-the-mode-off",
+        path="internal/identity/supabase.go",
+        old="\tif s.groupsClaim != \"\" {\n\t\tgroups, err := claimedGroups(",
+        new="\tif true {\n\t\tgroups, err := claimedGroups(",
+        killer="TestWithTheModeOffAGroupsClaimIsIgnored",
+        why="the compatibility claim: a deployment that never set the variable must resolve journal "
+        "users exactly as before, whatever claims its issuer happens to emit.",
+    ),
 )
 
 

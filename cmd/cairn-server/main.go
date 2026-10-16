@@ -93,7 +93,8 @@ const (
 	// six flags in `main` — `store`, `host`, `port`, `token-file`, `routes`, `arc-journal` — plus
 	// `-create-user`'s seven, `-issue-credential`'s seven, `-revoke-credential`'s two,
 	// `-set-member`'s four, `-rename-user`'s three, `-create-scope`'s three and
-	// `-remove-member`'s one — it reuses `-set-member`'s two ids — (counts pinned against the
+	// `-remove-member`'s one — it reuses `-set-member`'s two ids — and `-map-group`'s six, which
+	// `-unmap-group` shares (counts pinned against the
 	// code by `TestTheRegisteredFlagCountInProseMatchesTheCode`), and no exit-code flag among
 	// them.
 	// The no-exit-code-flag sweep was measured at `e11c3a7` by reading every file under
@@ -245,6 +246,7 @@ func main() {
 	rename := registerRenameUserFlags()
 	createScope := registerCreateScopeFlags()
 	removeMember := registerRemoveMemberFlags(setMember)
+	groupMap := registerGroupMapFlags()
 	flag.Parse()
 
 	// 🔴 TWO MODES AT ONCE IS A REFUSAL, NOT A PRECEDENCE. Checking `-routes` first and
@@ -271,6 +273,8 @@ func main() {
 		{"-rename-user", *rename.enabled},
 		{"-create-scope", *createScope.enabled},
 		{"-remove-member", *removeMember.enabled},
+		{"-map-group", *groupMap.mapGroup},
+		{"-unmap-group", *groupMap.unmapGroup},
 	}
 	var asked []string
 	for _, m := range modes {
@@ -334,6 +338,10 @@ func main() {
 		// No `*store`, for `-set-member`'s reason: it addresses a project and a user by id and
 		// chooses no scope display name.
 		os.Exit(runRemoveMember(envalias.Environ(), removeMember, os.Stdout, os.Stderr))
+	}
+	if *groupMap.mapGroup || *groupMap.unmapGroup {
+		// No `*store`: a mapping addresses an object by id and chooses no scope name.
+		os.Exit(runGroupMap(envalias.Environ(), *groupMap.unmapGroup, groupMap, os.Stdout, os.Stderr))
 	}
 	if *revoke.enabled {
 		// No `*store`: a revocation names a credential by id and touches no scope.
@@ -510,6 +518,9 @@ func main() {
 	if err := srv.UseAuthenticator(identities); err != nil {
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: "+err.Error()))
 		os.Exit(exitConfig)
+	}
+	if supabase != nil && supabase.GroupsClaim() != "" {
+		announceGroupFederation(supabase, sessions, warn)
 	}
 	if supabase != nil {
 		// 🔴 THE FIRST FETCH IS AT STARTUP AND ITS FAILURE IS FATAL, WHERE EVERY LATER
@@ -737,6 +748,35 @@ func joinPrefixes[T fmt.Stringer](items []T) string {
 // Control characters become `?`; SPACES ARE LEFT ALONE, because a refusal is prose
 // rather than a whitespace-delimited field record and folding its spaces would make
 // every reload line unreadable.
+// announceGroupFederation says, at startup, that group federation is on — and how many
+// journal users it makes unreachable through the verifier.
+//
+// 🔴 A WARNING, NOT A REFUSAL, AND THE CHOICE IS ABOUT WHAT A REFUSAL WOULD COUPLE. With the
+// mode on, every token from the verifier resolves federated and a journal user under the same
+// provider namespace is never consulted (`identity.SupabaseJWT.AuthenticateToken`). Refusing
+// to start while such a user exists would make the pod's AVAILABILITY depend on a journal row
+// — one `-create-user` with the wrong `-provider` and the next restart is a crash loop — and
+// it could only ever be a claim about the journal at startup, since a user created afterwards
+// is read on the next refresh with no restart. So the count is said loudly, once, and the
+// README names the rule; a deployment that wants both kinds of caller gives them two
+// provider namespaces, which needs two verifiers and is not a configuration this build has.
+func announceGroupFederation(s *identity.SupabaseJWT, sessions identity.ModelSource, warn func(string)) {
+	warn(fmt.Sprintf(
+		"subsystem-store-api: identity: GROUP FEDERATION IS ON — every verified token is resolved "+
+			"from its %q claim and the journal's group map (provider %q), and NOTHING is written "+
+			"on a read. The issuer is trusted to assert group membership; a group reaches only what "+
+			"-map-group mapped it to", s.GroupsClaim(), s.Provider()))
+	if sessions == nil {
+		return
+	}
+	if n := sessions.Model().UsersUnderProvider(s.Provider()); n > 0 {
+		warn(fmt.Sprintf(
+			"subsystem-store-api: identity: WARNING — the journal holds %d user(s) under provider %q, and "+
+				"NONE of them is reachable through this verifier while group federation is on: a token "+
+				"for one resolves to its claimed groups, not to that user's memberships and grants", n, s.Provider()))
+	}
+}
+
 func reloadSafe(line string) string {
 	var b strings.Builder
 	for _, r := range line {

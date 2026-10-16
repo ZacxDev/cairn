@@ -117,10 +117,18 @@ Those are different facts about the world and both must be consulted. One-rule-o
 requires one *function*, not one *table* — `Resolve`, and nothing else in the codebase
 may decide what a principal can see.
 
+⚠ **A THIRD SOURCE EXISTS FOR ONE PRINCIPAL KIND, AND IT SHARES `Resolve`'S EXPANSION RATHER
+THAN COPYING IT.** A *federated* principal (`KindFederated`, § *Group federation* below) has no
+membership and no grant — it is never a journal subject — so its authority comes from the
+operator's group map alone, computed by `ResolveFederated`. Both functions expand an object
+through the one `addObject` and finish through the one `finish`, so "which scopes does a project
+object cover" has one answer for a grant and a mapping alike.
+
 ## The gate
 
 `TestTheAuthorizationMatrixIsExactlyThis` is a **ledger over the whole relationship**,
-not a sample: five principals × four scopes × three verbs, every cell written out, and
+not a sample: five user principals and seven federated ones × four scopes × three verbs, every
+cell written out, and
 the test refuses to run if the model holds a principal or a scope the table does not
 name — it fails when the set **grows** as well as when it shrinks.
 
@@ -140,9 +148,11 @@ produce the same row:
 PERFECTLY SELF-CONSISTENT AND MEASURES NOTHING.** This repository has already paid for
 that shape once: `tests/parity/README.md` records the P2 harness reporting 72 PASS /
 0 FAIL while the pod refused every request, because two clients failing identically
-compare equal. So the allow count is pinned from both sides — **32 of 60 cells allow**,
-not 0 and not 60 — and any fixture change moves that number and forces whoever made it
-to say what they expected.
+compare equal. So the allow count is pinned from both sides — **39 of 144 cells allow**
+(32 of the 60 user cells, 7 of the 84 federated ones), not 0 and not 144 — and any fixture
+change moves that number and forces whoever made it to say what they expected. The user rows
+are walked on the model that also holds the group map, so a mapping that leaked into `Resolve`
+would move a user cell.
 
 ## The materialized cache — P3b piece (a)
 
@@ -1209,6 +1219,36 @@ EMPTY set and an unknown credential are refused; a revoked credential is narrowe
 authenticates nothing either way). ⚠ **Credentials issued before this change keep every verb
 until re-issued**, and an older build's rollback needs the recipe in the plan's decision 17 —
 remove only the `credential-verbs-narrowed` lines, after revoking the credential.
+
+## Group federation — `ResolveFederated` and the group map
+
+The opt-in mode is described for operators in `internal/identity/README.md` § *Group
+federation*; what binds an edit HERE:
+
+- **The map is `Model.GroupMaps`**, keyed by the whole mapping `(provider, group, object_kind,
+  object_id)`, written by exactly two event kinds — `group-mapped {provider, group, object_kind,
+  object_id, verbs}` and `group-unmapped` (the same key, no verbs) — through `MapGroup` /
+  `UnmapGroup` (`cairn-server -map-group` / `-unmap-group`). `apply` refuses a second LIVE mapping
+  of one key (no merge, no replace: unmap then map to change verbs), an unmap of a key with no
+  live mapping, a mapping with no verbs, an unmap carrying verbs, an object the model does not
+  hold, and a group name outside `ValidGroupName`.
+- **`KindFederated` is a principal kind and never a subject.** `Kind.Valid` — the check every
+  `granted` and `credential-issued` record is held to — answers false for it, so nothing in the
+  journal can name one and the map stays its ONLY source of authority. `Kind.IsPrincipal` is the
+  separate question `identity.Identity.Valid` asks.
+- **`ResolveFederated` reads; it never writes.** It takes a `Model` value and returns a
+  principal, an `Authorization` and, on that authorization, a `Federation` report (status
+  `no-groups` / `groups-unmapped` / `mapped`, and the claimed groups split mapped/unmapped).
+  `Narrow` carries the report through unchanged.
+- **One claim predicate.** `NormalizeClaimedGroups` validates every name with `ValidGroupName`
+  (the operator mode's rule too), deduplicates, sorts, and bounds the count at 64 AFTER
+  deduplication. One bad name refuses the whole list.
+- ⚠ **Roll-forward.** Both kinds are new, and an older build refuses an unknown kind whole —
+  measured on the base commit, a journal holding one `group-mapped` line replays to
+  `unknown event kind "group-mapped": this build defines [...] — a journal written by a newer
+  build is refused whole`. Roll every reader before writing the first mapping.
+- The battery's rows are the `federation-*`, `group-unmapped-*` and
+  `identity-valid-refuses-a-federated-principal` ones.
 
 ## What this package structurally cannot see
 

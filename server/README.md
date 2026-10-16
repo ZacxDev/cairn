@@ -1475,6 +1475,34 @@ cairn-server -remove-member \
 - `member-removed` is an event kind every build already replays; running surfaces pick it up on
   their next journal refresh.
 
+**Mapping a group for group federation** is `-map-group`: ONE `group-mapped` record, read only
+by a pod with `$CAIRN_OIDC_GROUPS_CLAIM` set ([`internal/identity/README.md`](../internal/identity/README.md)
+§ *Group federation*). `-unmap-group` writes ONE `group-unmapped` record naming the same key.
+
+```sh
+cairn-server -map-group \
+  -group readers -group-provider <the pod's $CAIRN_OIDC_PROVIDER> \
+  -group-object scp_… -group-verbs read
+# stdout, exit 0:  cairn-control: group-mapped provider=… group=readers object=scope:scp_… verbs=read epoch=<n>
+cairn-server -unmap-group -group readers -group-provider … -group-object scp_…
+# stdout, exit 0:  cairn-control: group-unmapped provider=… group=readers object=scope:scp_… verbs=read epoch=<n>
+```
+
+- `-group-object` takes a scope id (`scp_…`) or a project id (`prj_…`); the kind is read from the
+  prefix. 🔴 **A project object covers every scope the project gains LATER** — that is how a
+  reserved admin group is made to reach everything without editing the map, and it is the thing to
+  check before mapping one.
+- `-group-provider` must equal the API pod's `$CAIRN_OIDC_PROVIDER` (or its default); nothing can
+  check that the two agree, and a mismatch is a mapping no token ever matches.
+- Exit **78** = nothing was written: a missing flag, an object the journal does not hold, a group
+  name outside `[a-z0-9-]{1,40}`, a verb that is not one, a second live mapping of the same key
+  (unmap it first to change its verbs), an unmap of a key with no live mapping, or `-group-verbs`
+  on an unmap.
+- ⚠ **`group-mapped` and `group-unmapped` are NEW event kinds, and an older build refuses an
+  unknown kind whole** — it would serve its last-known-good authority, or none on a cold start.
+  **Roll every binary that reads the journal first** (`cairn-server`, `cairn-ui`, and any verifier
+  that replays it), then write the first mapping.
+
 ### When the journal will not parse
 
 Fail-closed, in both directions, and the two directions look nothing alike:

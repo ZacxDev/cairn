@@ -159,8 +159,27 @@ const (
 	KindProject Kind = "project"
 )
 
-// Valid answers whether k is a kind this package defines.
+// KindFederated is a PRINCIPAL-ONLY kind: a caller authenticated by an issuer this
+// deployment trusts to assert group membership, whose authority is computed from its
+// claimed groups and the operator's group map on every request (`ResolveFederated`).
+//
+// 🔴 IT IS NOT A SUBJECT, AND `Kind.Valid` ANSWERS FALSE FOR IT ON PURPOSE. Nothing in the
+// journal names a federated principal — no grant, no credential, no membership — because
+// such a principal is never written down: it exists for the length of one request. A grant
+// naming one would be a SECOND source of its authority beside the group map, which is the
+// two-structures-one-fact shape this package exists to refuse. `Valid` is what every
+// `granted` and `credential-issued` record is checked with, so leaving this kind out of it
+// is what makes such a record a replay refusal rather than a convention.
+const KindFederated Kind = "federated"
+
+// Valid answers whether k is a kind that may be a grant's or a credential's SUBJECT —
+// a user or a project. `KindFederated` is deliberately not one; see its comment.
 func (k Kind) Valid() bool { return k == KindUser || k == KindProject }
+
+// IsPrincipal answers whether k is a kind a REQUEST may resolve to: a subject kind, or
+// `KindFederated`. It is the question `identity.Identity.Valid` asks, and the only one a
+// federated principal answers yes to — every journal-facing check asks `Valid`.
+func (k Kind) IsPrincipal() bool { return k.Valid() || k == KindFederated }
 
 // ObjectKind discriminates what a grant is ABOUT.
 type ObjectKind string
@@ -342,6 +361,12 @@ type Model struct {
 	// scanned at every resolve.
 	Memberships map[ID]map[ID]Membership
 	userProject map[ID]map[ID]Membership
+	// GroupMaps is the operator-written group map: which (provider, group) pairs reach
+	// which object, at which verbs. Keyed by the whole mapping, so one group may reach
+	// several objects and one object may be reached by several groups. Only `group-mapped`
+	// and `group-unmapped` write it; only `ResolveFederated` reads it for authority. See
+	// `group_map.go`.
+	GroupMaps map[GroupMapKey]GroupMap
 	// heldDisplayNames is every display a user has RELEASED by a rename — display name, email
 	// or `<provider>:<subject>`, as the audit line writes it and case-folded — to that user, so
 	// it is not reissued to another. See `refuseTakenUserDisplayName` for why history and not
@@ -373,6 +398,7 @@ func NewModel() Model {
 		Credentials: map[ID]Credential{},
 		Memberships: map[ID]map[ID]Membership{},
 		userProject: map[ID]map[ID]Membership{},
+		GroupMaps:   map[GroupMapKey]GroupMap{},
 
 		heldDisplayNames: map[string]ID{},
 	}
@@ -421,6 +447,9 @@ func (m Model) clone() Model {
 		out.userProject[k] = maps.Clone(inner)
 	}
 	maps.Copy(out.heldDisplayNames, m.heldDisplayNames)
+	// A `GroupMap` holds a `VerbSet`, which is a value type, so copying the entries copies
+	// everything — no inner map to walk.
+	maps.Copy(out.GroupMaps, m.GroupMaps)
 	return out
 }
 
