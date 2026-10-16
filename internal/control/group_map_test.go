@@ -266,7 +266,7 @@ func TestTheGroupMapRoundTripsThroughTheDurableFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := m.GroupMapsOf()
+	got := sortedGroupMaps(m)
 	if len(got) != 1 || got[0].Group != "admins" || got[0].ObjectKind != ObjectProject ||
 		got[0].ObjectID != owner.Project || got[0].Verbs != NewVerbSet(VerbRead, VerbWrite) {
 		t.Fatalf("read back %+v", got)

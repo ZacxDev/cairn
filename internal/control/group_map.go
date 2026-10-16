@@ -237,9 +237,6 @@ func sortedGroupMaps(m Model) []GroupMap {
 	return out
 }
 
-// GroupMapsOf lists the live mappings, in a fixed order. For an operator's listing.
-func (m Model) GroupMapsOf() []GroupMap { return sortedGroupMaps(m) }
-
 // UsersUnderProvider counts journal users created under `provider`.
 //
 // ⚠ IT EXISTS FOR ONE WARNING: with group federation on, every token from the verifier
