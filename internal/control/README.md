@@ -1236,6 +1236,11 @@ federation*; what binds an edit HERE:
   `granted` and `credential-issued` record is held to — answers false for it, so nothing in the
   journal can name one and the map stays its ONLY source of authority. `Kind.IsPrincipal` is the
   separate question `identity.Identity.Valid` asks.
+- **The read ceiling is in `ResolveFederated` and nowhere else.** Every mapping is intersected
+  with `FederatedVerbCeiling` (read) as it is folded in; the journal keeps the verbs the operator
+  wrote. Not in `addObject`, which every grant also passes through, and not in `Narrow`, which
+  every credential does — the `federation-ceiling-applies-to-every-principal` row is that
+  mistake.
 - **`ResolveFederated` reads; it never writes.** It takes a `Model` value and returns a
   principal, an `Authorization` and, on that authorization, a `Federation` report (status
   `no-groups` / `groups-unmapped` / `mapped`, and the claimed groups split mapped/unmapped).

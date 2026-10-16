@@ -1492,6 +1492,10 @@ cairn-server -unmap-group -group readers -group-provider … -group-object scp_�
   prefix. 🔴 **A project object covers every scope the project gains LATER** — that is how a
   reserved admin group is made to reach everything without editing the map, and it is the thing to
   check before mapping one.
+- 🔴 **Verbs above `read` are RECORDED but CAPPED.** `-group-verbs read,write` writes both into
+  the journal, and a federated principal resolves to `read` only (`control.FederatedVerbCeiling`):
+  a federated write is answered `403 legacy-cannot-write` and writes nothing. The record is kept
+  so a later build that can attribute a federated write needs no map rewrite.
 - A federated request's audit line carries ` sub=… jti=… groups=…` after `status=` (the
   normalised claimed groups, `-` when none); no other line changes. A caller whose groups reach
   nothing is answered `scope-absent`, never 401.

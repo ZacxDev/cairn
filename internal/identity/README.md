@@ -495,7 +495,7 @@ every token this verifier accepts is resolved by `control.ResolveFederated`:
 - **who** — a *federated principal*, kind `federated`, id derived from `(provider, sub)` (stable
   across requests, naming no journal row), displayed `<provider>:<sub>` in the audit line;
 - **what** — the union, over the token's claimed groups, of each live mapping's object at its
-  verbs. The map is the control journal's `group-mapped` / `group-unmapped` records, written by
+  verbs **capped at `read`** (`control.FederatedVerbCeiling`; see the read ceiling below). The map is the control journal's `group-mapped` / `group-unmapped` records, written by
   `cairn-server -map-group` / `-unmap-group` and by nothing else. A mapping names a scope, or a
   **project** — which covers every scope the project gains later, so a reserved admin group mapped
   to a project reaches everything present and future without the map being edited;
@@ -506,9 +506,14 @@ every token this verifier accepts is resolved by `control.ResolveFederated`:
 
 What bounds it, each structural rather than documented:
 
-1. **The claim selects; it never names.** A token can claim a group, never a scope, project or
-   verb. An unmapped group contributes nothing. The worst an issuer that lies can do is claim a
-   group the caller is not in, which reaches that group's mapped objects and no others.
+1. **The claim selects; it never names a scope, project or verb.** A token can claim a group,
+   and an unmapped group contributes nothing. ⚠ **But two things in a token are the issuer's
+   text, not one: the groups AND `sub`.** In this mode `sub` names the principal — it is the
+   `identity=<provider>:<sub>` of every audit line — and nothing in this control plane vouches
+   for it. So an issuer that lies can claim a group the caller is not in (reaching that group's
+   mapped objects and no others) AND can put any subject's name on those reads in the audit
+   trail. Both are bounded by the read ceiling: it reaches only what its claimed groups map to,
+   and can write nothing under anybody's name.
 2. **Nothing is written on a read.** No user, no membership, no grant: the principal exists for
    one request. That is why this is not the self-serve signup § *A verified token for an unknown
    user is a refusal* forbids.
@@ -518,6 +523,28 @@ What bounds it, each structural rather than documented:
    authenticates and reaches nothing. Duplicates are folded, not refused.
 4. **One function decides.** `ResolveFederated` expands objects with the same `addObject` `Resolve`
    uses for a grant, and the matrix test pins federated rows beside the user rows over one model.
+
+🔴 **THE READ CEILING: A FEDERATED PRINCIPAL READS, AND NEVER WRITES.** `-map-group` records
+whatever verbs the operator writes — `write` and `admin` included — and `ResolveFederated`
+caps every mapping at `read` as it folds it in (`control.FederatedVerbCeiling`). The cap lives
+there, not in `Narrow`, because `Narrow` is a credential's narrowing and every principal passes
+through it. A federated `POST`/`PUT` is therefore answered exactly as any principal holding the
+write verb nowhere is — `403` with `X-Store-Status: legacy-cannot-write`, nothing written — and
+that is an authorization answer after a successful authentication: never a 401, never counted
+toward the lockout. **Why:** every written bullet carries an attribution trailer whose actor
+class (`internal/write`'s `attributionActorClass`, `[a-z0-9][a-z0-9-]{0,31}`) cannot spell a
+federated display `<provider>:<sub>`; measured without the cap, a federated write landed with a
+trailer the grammar reports as malformed, and a re-post of the same text from a second session
+appended a duplicate instead of answering `duplicate`. **CLOSING CONDITION for federated
+writes:** an actor class (and the matching strip, pinned against the oracle) that can express a
+federated principal, plus a write test showing a federated bullet with a PARSEABLE trailer and
+an idempotent re-post — then, and only then, the ceiling may be raised.
+
+🔴 **THE ISSUER MUST EMIT GROUP NAMES IN `[a-z0-9-]{1,40}`, AT MOST 64 OF THEM.** An
+off-the-shelf groups claim — mixed case (`Engineering`), a path (`/team/x`), an email address
+— is not in that alphabet, and one such name refuses the WHOLE token, which is a 401 COUNTED
+toward the client lockout: every caller behind the issuer's egress address shares that bucket.
+Configure a mapper or transform at the issuer so the claim carries names in the alphabet.
 
 🔴 **THE ISSUER MUST ALWAYS SEND THE CLAIM.** A missing groups claim refuses the token; an
 empty array is the only way to say "this caller has no groups". The two are kept apart on
@@ -574,8 +601,8 @@ and could only ever be a claim about the journal at startup). Pinned by
 `TestFederatedModeIsOnePathAndDoesNotConsultAJournalUser`, whose mode-off arm is the positive
 control.
 
-⚠ **WHAT IT DOES NOT DO, YET.** No verb ceiling: a mapping's verbs are what the group gets, write
-and admin included. No self-view route: the `Federation` report is carried on the authority and
+⚠ **WHAT IT DOES NOT DO, YET.** No federated writes (the read ceiling above, with its closing
+condition). No self-view route: the `Federation` report is carried on the authority and
 read by nothing on the wire — there is no `whoami` route today. Each of those is a separate
 change. And `-group-provider` must equal `CAIRN_OIDC_PROVIDER`, which nothing can check —
 the same two-halves-of-one-key caveat as `-create-user -provider`.
