@@ -63,9 +63,12 @@ func claimedGroups(token, name string) ([]string, error) {
 		groups = []string{}
 	}
 	// Validated here AND in `control.ResolveFederated` — the same predicate, so the two
-	// cannot disagree; this call is what makes the refusal name the claim.
-	if _, err := control.NormalizeClaimedGroups(groups); err != nil {
+	// cannot disagree; this call is what makes the refusal name the claim. The NORMALISED
+	// list is returned, so the audit line records exactly the set authority was computed
+	// from rather than the bytes the issuer happened to send.
+	normalized, err := control.NormalizeClaimedGroups(groups)
+	if err != nil {
 		return nil, fmt.Errorf("groups claim %q: %w", name, err)
 	}
-	return groups, nil
+	return normalized, nil
 }

@@ -99,6 +99,13 @@ type Identity struct {
 	// would trade a real refusal for a cosmetic one. The name it lands on is the one
 	// the server already uses for this value.
 	Auth control.Authorization
+	// Groups is a FEDERATED token's claimed groups as `control.NormalizeClaimedGroups`
+	// returned them — validated, deduplicated, sorted — for the audit line's `groups=`
+	// field. nil for every identity that group federation did not produce.
+	//
+	// 🔴 AUDIT-ONLY, `Token`'s rule: no route may branch on it. What the groups REACH is
+	// `Auth`, computed from the same normalised list by `control.ResolveFederated`.
+	Groups []string
 	// Fingerprint is the audit line's `token=` field: the 12-hex `authz.TokenID` of
 	// the presented bearer token.
 	//
@@ -112,6 +119,22 @@ type Identity struct {
 	// look up. `identity=` is what identifies such a request, and it carries the
 	// principal's display name.
 	Fingerprint string
+	// Token is the verified bearer token's own `sub` and `jti`, for the audit line's
+	// `sub=`/`jti=` fields, and it is nil for every backend that did not verify a signed
+	// token (a machine token, a cookie session, a proxy assertion).
+	//
+	// 🔴 AUDIT-ONLY. It is what joins one request's record to the issuer's record of
+	// minting that token; it is NOT a second identity and NO ROUTE MAY BRANCH ON IT — the
+	// package doc's no-discriminator rule. Who the request is stays `Principal`.
+	Token *TokenFacts
+}
+
+// TokenFacts is what an audit line records about a verified signed token.
+type TokenFacts struct {
+	// Subject is the token's `sub`.
+	Subject string
+	// ID is the token's `jti`, empty when it carried none (or a non-string one).
+	ID string
 }
 
 // Valid answers whether this Identity names anybody at all.

@@ -124,6 +124,26 @@ type Claims struct {
 	// Read so a caller can refuse an anonymous session; NOT used for authorization,
 	// which is `control.Resolve`'s answer and nothing else's.
 	Role string `json:"role"`
+	// ID is RFC 7519's `jti`, read for the AUDIT LINE and for nothing else — it is what
+	// lets one request's record be joined to the issuer's own record of minting it.
+	//
+	// ⚠ DECODED LENIENTLY, BECAUSE BEFORE THIS FIELD EXISTED A `jti` OF ANY SHAPE WAS
+	// IGNORED. RFC 7519 §4.1.7 says it is a string; a provider that emits a number would
+	// otherwise turn a token that verified yesterday into a claims refusal today. A
+	// non-string `jti` reads as absent. See `jwtID`.
+	ID jwtID `json:"jti"`
+}
+
+// jwtID decodes `jti` as a string and reads every other JSON shape as ABSENT rather than
+// refusing the token. Nothing authorizes from it, so leniency here widens nothing.
+type jwtID string
+
+func (j *jwtID) UnmarshalJSON(raw []byte) error {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		*j = jwtID(s)
+	}
+	return nil
 }
 
 // audience decodes RFC 7519's `aud`, which is EITHER a string OR an array of strings.

@@ -116,7 +116,15 @@ func TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing(t *testing
 	if who.Auth.Allows(made.Scopes[0].ID, control.VerbWrite) {
 		t.Fatal("the group was mapped read-only and the token can write")
 	}
-	report, ok := who.Auth.Federation()
+	// The audit facts: the token's own sub, and the NORMALISED claim (sorted) — not the
+	// order the issuer sent.
+	if who.Token == nil || who.Token.Subject != testStranger {
+		t.Fatalf("the federated identity carries token facts %+v, want sub %s", who.Token, testStranger)
+	}
+	if strings.Join(who.Groups, ",") != "ghost,notes-readers" {
+		t.Fatalf("Identity.Groups = %v, want the normalised [ghost notes-readers]", who.Groups)
+	}
+		report, ok := who.Auth.Federation()
 	if !ok || report.Status != control.FederationMapped ||
 		strings.Join(report.Mapped, ",") != "notes-readers" || strings.Join(report.Unmapped, ",") != "ghost" {
 		t.Fatalf("federation report = %+v (%v)", report, ok)

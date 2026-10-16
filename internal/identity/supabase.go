@@ -267,7 +267,14 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 		if err != nil {
 			return Identity{}, refuse(SupabaseBackend, err.Error())
 		}
-		return Identity{Principal: principal, Auth: auth}, nil
+		return Identity{
+			Principal: principal,
+			Auth:      auth,
+			// The token's own `sub`/`jti` and the normalised claimed groups go to the audit
+			// line — see `Identity.Token` and `Identity.Groups`.
+			Token:  &TokenFacts{Subject: claims.Subject, ID: string(claims.ID)},
+			Groups: groups,
+		}, nil
 	}
 
 	user, known := model.UserByProviderSubject(s.provider, claims.Subject)

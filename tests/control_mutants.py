@@ -7394,6 +7394,35 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the compatibility claim: a deployment that never set the variable must resolve journal "
         "users exactly as before, whatever claims its issuer happens to emit.",
     ),
+    Mutant(
+        name="federation-audit-drops-the-groups-field",
+        path="internal/api/server.go",
+        old="\tif _, federated := rq.auth.Federation(); federated {\n",
+        new="\tif _, federated := rq.auth.Federation(); false && federated {\n",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        why="the field is the only record of WHICH groups granted a federated read; a line without it "
+        "names the caller and not the authority they used.",
+    ),
+    Mutant(
+        name="federation-audit-renders-the-unnormalised-claim",
+        path="internal/identity/groups.go",
+        old="\treturn normalized, nil\n",
+        new="\t_ = normalized\n\treturn groups, nil\n",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="returning what the issuer sent reads as faithful; it records an order and duplicates "
+        "authority was never computed from, so two identical authorities audit differently.",
+    ),
+    Mutant(
+        name="federation-does-not-set-the-token-facts",
+        path="internal/identity/supabase.go",
+        old="\t\t\tToken:  &TokenFacts{Subject: claims.Subject, ID: string(claims.ID)},\n",
+        new="",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="the user path sets them; a second return that forgets to leaves federated requests — the "
+        "ones an issuing service most needs to join on `jti` — with no `sub=`/`jti=`.",
+    ),
 )
 
 
