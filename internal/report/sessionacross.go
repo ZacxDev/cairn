@@ -13,7 +13,8 @@ import (
 // PAGE, AND A STRUCTURED ANSWER ONLY. There is no `RenderText` here and no pod route: nothing in the
 // CLI or the conformance corpus prints this, so no printed byte moved to add it. It lives in this
 // package rather than in `internal/ui` for ONE reason — the arc rule (an arc exists for a caller iff
-// its HOME scope is readable, operator decision Q1) is applied in this package and nowhere else, and
+// its HOME scope is readable, or it opted in through a readable declared scope — Q1 as
+// `arcs.Registration.VisibleTo` widens it) is applied in this package and nowhere else, and
 // this answer lists arcs. A browser that re-derived "may this caller see this arc" would be a second
 // place deciding it.
 //
@@ -26,7 +27,7 @@ import (
 // `TestASessionSeenOnlyInAnUnreadableScopeIsTheSameAnswerAsANeverWrittenOne` pins that relation.
 
 // SessionAcrossReport is one session's attributed writes over every readable scope, plus the arcs
-// (homed in a readable scope) that list it as a member.
+// (visible to the caller, `arcs.Registration.VisibleTo`) that list it as a member.
 type SessionAcrossReport struct {
 	// ID is the session id exactly as asked — opaque, byte-exact, never folded.
 	ID string
@@ -34,7 +35,7 @@ type SessionAcrossReport struct {
 	// FIRST: by the session's latest bullet date in that scope, descending; a scope where every one
 	// of its bullets is undated sorts after every dated one; ties by scope name, byte-wise.
 	Scopes []SessionInScope
-	// Arcs are the registrations homed in a readable scope whose member list names this session, in
+	// Arcs are the registrations visible to the caller (`VisibleTo`) whose member list names this session, in
 	// `arcs.Snapshot.Sorted` order (home, then slug).
 	Arcs []SessionArc
 	// Coverage SUMS `touch.Writes`'s counts over EVERY readable scope — the denominator the page
@@ -187,7 +188,7 @@ func walkReadable(storeRoot string, visible store.ScopeSet, snap *arcs.Snapshot,
 			// A member list naming one session twice lists the arc ONCE, with the first role — what
 			// the single-id walk's `break` did before the two walks became one.
 			seen := map[string]bool{}
-			if !visible.Allows(reg.Home) {
+			if !reg.VisibleTo(visible) {
 				continue
 			}
 			for _, m := range reg.Members {

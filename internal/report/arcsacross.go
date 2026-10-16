@@ -12,7 +12,8 @@ import (
 // ARCS-FIRST PAGE (`GET /arcs`), AND A STRUCTURED ANSWER ONLY. There is no `RenderText` here and no
 // pod route: nothing in the CLI or the conformance corpus prints this, so no printed byte moved to
 // add it. It lives in this package for `SessionAcross`'s one reason — the arc rule (an arc exists
-// for a caller iff its HOME scope is readable, operator decision Q1) is applied in this package and
+// for a caller iff its HOME scope is readable or it opted in through a readable declared scope —
+// operator decision Q1 as `arcs.Registration.VisibleTo` widens it) is applied in this package and
 // nowhere else, and this answer lists arcs.
 //
 // 🔴 ONE WHOLE-STORE WALK, NOT ONE PER ARC (decision 10 of `claudedocs/plan-cairn-arcs-presence.md`).
@@ -28,7 +29,7 @@ import (
 // bullet date is returned AS WRITTEN — possibly in the future, because a bullet's date is the
 // writer's word on a `put` — and the browser clamps it.
 
-// ArcsAcrossReport is every registration homed in a readable scope, plus each one's newest
+// ArcsAcrossReport is every registration visible to the caller (`arcs.Registration.VisibleTo`), plus each one's newest
 // attributed member bullet over the readable scopes.
 type ArcsAcrossReport struct {
 	// Configured is false when no journal was handed in — the designed off state — so an empty Arcs
@@ -51,7 +52,7 @@ type ArcAcross struct {
 	// Members is the registration's member count.
 	Members int
 	// MemberSessions is the registration's member session ids, in the registration's order. The
-	// arc page already lists them to anybody who can see the arc (its home is readable); the
+	// arc page already lists them to anybody who can see the arc (`VisibleTo`); the
 	// arcs-first page carries them so it can ask `presence.Store.For` per member for its
 	// "live pane" badge (S4) — it never renders them.
 	MemberSessions []string
@@ -105,7 +106,7 @@ func ArcsAcross(storeRoot string, visible store.ScopeSet, snap *arcs.Snapshot) (
 		}
 	}
 	for _, reg := range snap.Sorted() {
-		if !visible.Allows(reg.Home) {
+		if !reg.VisibleTo(visible) {
 			continue
 		}
 		line := ArcAcross{Home: reg.Home, Slug: reg.Slug, Status: reg.Status,

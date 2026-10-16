@@ -72,8 +72,9 @@ func TestAMemberThatCanNeverJoinATrailerIsCountedNotStored(t *testing.T) {
 
 func TestThePayloadValidatorRefusesWhatItCannotStoreHonestly(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
-		{`{"schema":2}`, "schema must be 1"},
-		{`{}`, "schema must be 1"},
+		// Schema 2 exists now (`summary.go`), so the unknown schema is 3.
+		{`{"schema":3}`, "schema must be 1 or 2"},
+		{`{}`, "schema must be 1 or 2"},
 		{`{"schema":1,"status":"maybe"}`, "status must be open, closed or unknown"},
 		{`{"schema":1,"closing_kind":"vibes"}`, "closing_kind must be"},
 		// 🔴 UNKNOWN FIELDS ARE REFUSED — the plan's "never stored" list enforced by construction.

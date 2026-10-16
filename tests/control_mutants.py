@@ -1606,7 +1606,9 @@ MUTANTS: tuple[Mutant, ...] = (
         name="arcs-check-ignores-the-home-visibility",
         pkgs=PKGS + ("./internal/report/",),
         path="internal/report/arcscheck.go",
-        old="\t\tif !visible.Allows(reg.Home) {",
+        # ⚠ RE-ANCHORED AT ARC SCHEMA 2: the home check became the one predicate
+        # `arcs.Registration.VisibleTo` (home, or an opted-in declared scope). Same site, same claim.
+        old="\t\tif !reg.VisibleTo(visible) {",
         new="\t\tif false {",
         killer="TestAnArcHomedInAnUnreadableScopeIsNotChecked",
         why="the arc orphan check (S5) is a FOURTH reader of operator decision Q1 — an arc "
@@ -1618,6 +1620,73 @@ MUTANTS: tuple[Mutant, ...] = (
         "arc homed in an unreadable scope that declares a readable absent scope, so the "
         "mutant both leaks the name and turns the exit to 9; its positive control is the "
         "same registry for a caller who CAN read the home.",
+    ),
+    # 🔴 ARC SCHEMA 2: THE OPT-IN WIDENS Q1, AND THE WIDENING IS ONE PREDICATE. Four rows: the
+    # predicate ignoring the flag in each DIRECTION, and the listing and the show each reverting
+    # to the home-only rule while the other keeps the predicate — the disagreement a per-site
+    # `Allows(reg.Home)` regrows.
+    Mutant(
+        name="arc-visibility-ignores-the-opt-in",
+        pkgs=PKGS + ("./internal/arcs/", "./internal/report/"),
+        path="internal/arcs/summary.go",
+        old="\tif !r.VisibleToDeclaredScopes {\n\t\treturn false\n\t}",
+        new="\tif true {\n\t\treturn false\n\t}",
+        killer="TestVisibleToIsTheHomeOrAnOptedInDeclaredScope",
+        extra_killers=("TestTheDeclaredScopeOptInIsAVisibilityMatrix", "TestTheListingAndTheShowAgreeAboutEveryArc",
+                       "TestEveryArcReaderHonoursTheOptInAndOnlyTheOptIn"),
+        why="the schema-1 rule, kept: an opted-in arc is then invisible to every declared-scope "
+        "reader, the summary it was registered to show reaches nobody it was meant for, and every "
+        "refusal-equals-absence test stays green because hiding is the safe direction.",
+    ),
+    Mutant(
+        name="arc-visibility-treats-every-arc-as-opted-in",
+        pkgs=PKGS + ("./internal/arcs/", "./internal/report/"),
+        path="internal/arcs/summary.go",
+        old="\tif !r.VisibleToDeclaredScopes {\n\t\treturn false\n\t}",
+        new="\tif false {\n\t\treturn false\n\t}",
+        killer="TestVisibleToIsTheHomeOrAnOptedInDeclaredScope",
+        extra_killers=("TestTheDeclaredScopeOptInIsAVisibilityMatrix", "TestTheListingAndTheShowAgreeAboutEveryArc",
+                       "TestEveryArcReaderHonoursTheOptInAndOnlyTheOptIn"),
+        why="'declared scopes are readable to their readers anyway' is the tempting simplification — "
+        "but the opt-in is PER ARC, and without it every arc that ever declared a scope shows its "
+        "home, slug and summary to that scope's readers: a schema-1 arc's visibility widened by an "
+        "upgrade nobody opted into.",
+    ),
+    Mutant(
+        name="arcs-check-judges-a-home-the-caller-cannot-read",
+        pkgs=PKGS + ("./internal/report/",),
+        path="internal/report/arcscheck.go",
+        old="\t\tif visible.Allows(reg.Home) && !exists[reg.Home] {",
+        new="\t\tif !exists[reg.Home] {",
+        killer="TestEveryArcReaderHonoursTheOptInAndOnlyTheOptIn",
+        why="the existence test was correct while every checked arc had a readable home; an opted-in "
+        "arc visible through a declared scope does not, and the narrowed index holds no unreadable "
+        "scope, so the unguarded test reports `home-scope-absent` — a false exit 9 whose sentence "
+        "claims the caller reads the home by grant. This draft of schema 2 shipped it until its own "
+        "relationship test asserted the check was clean.",
+    ),
+    Mutant(
+        name="arc-listing-keeps-the-home-only-rule",
+        pkgs=PKGS + ("./internal/report/",),
+        path="internal/report/arcs.go",
+        old="\t\tif !reg.VisibleTo(visible) {",
+        new="\t\tif !visible.Allows(reg.Home) {",
+        killer="TestTheListingAndTheShowAgreeAboutEveryArc",
+        extra_killers=("TestTheDeclaredScopeOptInIsAVisibilityMatrix", "TestEveryArcReaderHonoursTheOptInAndOnlyTheOptIn"),
+        why="the listing's loop is where the home check was open-coded before schema 2, and leaving "
+        "one copy behind is the one-rule-two-places failure: the show finds an arc the listing "
+        "never names.",
+    ),
+    Mutant(
+        name="arc-show-keeps-the-home-only-rule",
+        pkgs=PKGS + ("./internal/report/",),
+        path="internal/report/arcs.go",
+        old="\tif err != nil || !found || !reg.VisibleTo(visible) {",
+        new="\tif err != nil || !found || !visible.Allows(key.Home) {",
+        killer="TestTheListingAndTheShowAgreeAboutEveryArc",
+        extra_killers=("TestTheDeclaredScopeOptInIsAVisibilityMatrix", "TestEveryArcReaderHonoursTheOptInAndOnlyTheOptIn"),
+        why="the mirror image: the listing names an arc whose show answers arc-unregistered, so a "
+        "reader is offered a row they cannot open.",
     ),
     Mutant(
         name="read-set-uses-the-write-verb",
@@ -3744,7 +3813,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-session-report-lists-arcs-homed-in-an-unreadable-scope",
         path="internal/report/sessionacross.go",
-        old="\t\t\tif !visible.Allows(reg.Home) {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tfor _, m := range reg.Members {",
+        # ⚠ RE-ANCHORED AT ARC SCHEMA 2 (`arcs.Registration.VisibleTo`), as the row above.
+        old="\t\t\tif !reg.VisibleTo(visible) {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tfor _, m := range reg.Members {",
         new="\t\t\tfor _, m := range reg.Members {",
         killer="TestTheSessionAcrossAnswerGroupsReadableScopesNewestFirstAndDropsTheHiddenOne",
         extra_killers=("TestTheSessionPageAggregatesReadableScopesNewestFirstAndOmitsAnUnreadableOne",
@@ -3888,7 +3958,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="ui-arcs-index-lists-arcs-homed-in-an-unreadable-scope",
         path="internal/report/arcsacross.go",
-        old="\t\tif !visible.Allows(reg.Home) {\n\t\t\tcontinue\n\t\t}\n",
+        # ⚠ RE-ANCHORED AT ARC SCHEMA 2 (`arcs.Registration.VisibleTo`).
+        old="\t\tif !reg.VisibleTo(visible) {\n\t\t\tcontinue\n\t\t}\n",
         new="",
         killer="TestAnArcHomedInAnUnreadableScopeIsNeverListedEvenWhenItsMembersWroteWhereYouRead",
         extra_killers=("TestTheArcsPageListsLiveArcsNewestFirstAndCountsTheHidden",

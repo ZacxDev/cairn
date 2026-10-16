@@ -1,0 +1,104 @@
+package report
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/ZacxDev/cairn/internal/arcs"
+)
+
+// 🔴 EVERY ARC READER IN THIS PACKAGE ANSWERS THE SAME VISIBILITY QUESTION — the schema-2 opt-in
+// as a RELATIONSHIP across all five, over `sessionAcrossStore`'s world (north and south readable,
+// east NOT). Two arcs homed in the hidden east scope, both declaring the readable south scope, both
+// naming `s-roam-01`; one opted in, its twin did not. Each reader must show the opted-in arc and
+// hide the twin. A reader that kept the home-only rule while the rest learned the opt-in fails its
+// own row; one that ignored the flag fails the twin's.
+func optInSnapshot() *arcs.Snapshot {
+	reg := func(slug string, optIn bool) arcs.Registration {
+		r := arcs.Registration{Schema: arcs.Schema, Home: "east-notes", Slug: slug, Status: arcs.StatusOpen,
+			ClosingKind: arcs.ClosingCheck, DeclaredScopes: []string{"east-notes", "south-notes"},
+			Members:      []arcs.Member{{Session: "s-roam-01", Role: "wrote"}},
+			RegisteredBy: "fixture-registrar", RegisteredAt: "2000-01-06T07:08:09Z"}
+		if optIn {
+			r.Schema, r.VisibleToDeclaredScopes = arcs.SchemaSummary, true
+		}
+		return r
+	}
+	snap := arcs.Snapshot{Latest: map[arcs.Key]arcs.Registration{}}
+	for _, r := range []arcs.Registration{reg("opted-arc", true), reg("twin-arc", false)} {
+		snap.Latest[r.Key()] = r
+	}
+	return &snap
+}
+
+func TestEveryArcReaderHonoursTheOptInAndOnlyTheOptIn(t *testing.T) {
+	root := sessionAcrossStore(t)
+	snap := optInSnapshot()
+	seen := map[string]map[string]bool{}
+	note := func(reader, slug string) {
+		if seen[reader] == nil {
+			seen[reader] = map[string]bool{}
+		}
+		seen[reader][slug] = true
+	}
+
+	listing, err := Arcs(root, "south-notes", northSouth, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range listing.Arcs {
+		note("Arcs", a.Slug)
+	}
+	for _, slug := range []string{"opted-arc", "twin-arc"} {
+		shown, err := Arc(root, "east-notes", slug, northSouth, snap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if shown.Status == StatusArcFound {
+			note("Arc", slug)
+		}
+	}
+	across, err := ArcsAcross(root, northSouth, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range across.Arcs {
+		note("ArcsAcross", a.Slug)
+	}
+	check, err := ArcsCheck(root, "south-notes", true, northSouth, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The check names no arc it found clean, so its witness is the COUNT: the home-only rule
+	// checks 0 arcs, a rule ignoring the flag checks 2, and only the opt-in rule checks 1.
+	switch check.Checked {
+	case 1:
+		note("ArcsCheck", "opted-arc")
+	case 2:
+		note("ArcsCheck", "opted-arc")
+		note("ArcsCheck", "twin-arc")
+	}
+	// 🔴 AND THE CHECK JUDGES ONLY A HOME THE CALLER CAN READ: the opted-in arc's home (east) is
+	// not in the narrowed index, which a home-existence test would read as `home-scope-absent` — a
+	// false finding claiming a grant the caller does not hold. Clean, exit 0, the exception line said.
+	if len(check.Findings) != 0 || check.Status != StatusArcsCheckClean ||
+		!strings.Contains(check.RenderText(), "\n  "+ArcsCheckOptInLine+"\n") {
+		t.Errorf("the check over an opted-in arc with an unreadable home: status %s, findings %+v\n%s",
+			check.Status, check.Findings, check.RenderText())
+	}
+	sessions, err := SessionsAcross(root, northSouth, snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range sessions.Sessions {
+		for _, a := range s.Arcs {
+			note("SessionsAcross", a.Slug)
+		}
+	}
+
+	for _, reader := range []string{"Arcs", "Arc", "ArcsAcross", "ArcsCheck", "SessionsAcross"} {
+		if got := seen[reader]; len(got) != 1 || !got["opted-arc"] {
+			t.Errorf("%s saw %v — want exactly the opted-in arc", reader, got)
+		}
+	}
+}

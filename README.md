@@ -392,8 +392,9 @@ members an earlier push measured for it, marked carried. Registering needs the *
 the home scope and on every declared scope (a scope you may not write answers like one that does
 not exist); the bare legacy row may read arcs and may not register one.
 
-**Visibility:** an arc exists for you only when its HOME scope is readable to you; its other scopes
-are listed only if readable too, and hidden ones are omitted, not counted. `arcs --scope X` lists an
+**Visibility:** an arc exists for you only when its HOME scope is readable to you — or, for an arc
+that **opted in** (schema 2, below), when any of its declared scopes is; its other scopes are listed
+only if readable too, and hidden ones are omitted, not counted. `arcs --scope X` lists an
 arc as `declared` when it names X, or `inferred` when one of its member sessions wrote an
 attributed bullet in X without the arc declaring it — a join over self-reported trailers, labelled
 as such. All three verbs print the pod's body verbatim (registrations are not in the cache) and use
@@ -417,9 +418,60 @@ member session with no attributed write in any scope you can read, and a writing
 turning either into a finding would hold the check non-zero forever. **Exit `10`**: no `-arc-journal`
 on the pod, a journal it cannot read, a pod that did not answer, or a pod too old to know
 `?check=1` (it answers a listing, which the client refuses to read as a pass). Only arcs whose HOME
-you can read are checked. ⚠ One pod per run: the scope picks the instance, and a multi-instance
+you can read are checked — plus any that opted in through a declared scope you can read (schema 2,
+below), whose home is then judged only if you can read it. ⚠ One pod per run: the scope picks the instance, and a multi-instance
 host is not fanned out. `tests/arcs/e2e.sh` is the end-to-end check over both real binaries
 (`--self-test` proves it goes RED on a sabotaged build).
+
+### Arc schema 2: a summary, and showing an arc to its declared scopes
+
+A `schema: 2` payload may add two OPTIONAL fields; everything else is as above.
+
+- **`summary`** — the registering tool's own account of where the arc stands, so a reader can ask
+  the store "how far along is this" instead of the handoff document's repository:
+  `closing_condition` (string, optional), `state_now` (list), `next_steps` (list, **ranked** — order
+  is kept), `source` (**required**: `repo_path` relative to the repo, `commit` as a full 40- or 64-hex
+  id, `committed_at` RFC 3339), `task_refs` (list, no whitespace) and `aliases` (list, folded like a
+  slug, deduplicated, sorted). `arc-show` prints it after the members, provenance line first
+  (`summary: the registering tool's own word, read from <repo_path> at commit <commit> (committed
+  <committed_at>)`); a listing row gains ` · aliases a, b`.
+- **`visible_to_declared_scopes: true`** — the arc's **opt-in**: it is also shown, on `arc-show`,
+  `arcs`, `arcs --check` and the browser's arcs and session pages, to readers of **any declared
+  scope**, whether or not they can read its home. Its body then carries `visibility exception: …`
+  and its listing row ` · declared-visible`, so the answer says why it is there. Unset or `false`
+  is exactly the home-only rule.
+
+**Who may opt in:** whoever may register the arc at all — the **write** verb on the home and on
+every declared scope, unchanged. That is what makes the opt-in safe to honour: an arc is put in front
+of a scope's readers only by somebody who may write that scope. ⚠ The check runs at registration; a
+registrant whose write is revoked later leaves the arc visible there until the next push.
+
+**Bounds — refused, never truncated** (a cut "next step" is a different instruction):
+`closing_condition` ≤ 1000 bytes; `state_now`/`next_steps` ≤ 20 items of ≤ 500 bytes; `task_refs` ≤
+32 of ≤ 200; `aliases` ≤ 16 of ≤ 64; `repo_path` ≤ 256; the stored summary ≤ 16 KiB in all. Every
+string must be one non-blank line of valid UTF-8 with no control character or Unicode line
+separator (the answer is lines, and an embedded newline could print a line that reads as the pod's
+own), and is refused on a **confident secret** — the same rule subset memos refuse on. A refusal
+names the field, never the value. Unknown fields are still refused, at every depth.
+
+**Compatibility — what was measured against the previous release** (old = a build without schema 2):
+
+| direction | what happens |
+|---|---|
+| an old client → a new pod | unchanged. Schema-1 registrations are accepted, and both read verbs print the pod's body verbatim, so an old client shows a summary and the opt-in lines as a new one does. Every arc answer about schema-1 arcs is **byte-identical** to the old pod's, headers included |
+| a new client → an old pod | the old pod refuses any schema-2 payload with a 400. `arc-register` recognises that pod's own refusal (exact lines, measured), re-sends the same registration as **schema 1** without `summary` and `visible_to_declared_scopes`, and says so on stderr: `… predates arc schema 2 and refused the schema-2 payload — re-sending as schema 1: … the summary and the declared-scope visibility opt-in are NOT stored`. The exit is the registration's own. Any other refusal is reported as itself |
+| a journal written by a new pod, read by an old one | a record that uses neither new field is written as **schema 1**, byte for byte, so it still reads. A record that uses one is **skipped** by the old pod and counted as damage (`⚠ the registration journal holds record(s) that could not be read`, and an operator-log line); the arc shows its last schema-1 state, or is not shown at all if it never had one. Nothing is deleted: rolling forward again shows it |
+
+⚠ **So roll every binary that reads the arc journal before any tooling sends schema 2** —
+`cairn-server` and `cairn-ui` both do. A **schema-1 push never erases** a summary or the opt-in a
+schema-2 push recorded: a host still running older tooling cannot say either, so both are kept and
+the answer says `⚠ summary carried from an earlier registration …`. A schema-2 push that omits them
+clears them.
+
+⚠ **Not on the browser's arc page yet.** The arc page prints no summary, and it addresses an arc by
+its home scope's id among the scopes you can read, so an opted-in arc whose home you cannot read is
+listed on the arcs and scope pages **without a link** to it. `cairn arc-show` and
+`GET /api/v1/arc/<home>/<slug>` serve both.
 
 ## Scope memos — messages between agent sessions
 

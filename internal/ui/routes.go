@@ -135,7 +135,7 @@ var routes = map[routeKey]route{
 	// read-only), so neither cross-site gate gains a case; both would apply by METHOD if a write row
 	// were ever added. See `handleArcPage`.
 	{"GET", "/arc"}: {(*Server).handleArcPage, classContent},
-	// 🔴 THE ARCS-FIRST PAGE (S1 of the arcs/presence plan): every arc homed in a readable scope, live
+	// 🔴 THE ARCS-FIRST PAGE (S1 of the arcs/presence plan): every arc visible to the caller (`VisibleTo`), live
 	// ones first. A fixed path whose only operand (`?all=1`) is a view toggle, never an authority input;
 	// `content`, because which arcs exist is itself an answer about authority (Q1). GET only — the UI
 	// never registers an arc. `/` is NOT replaced (plan decision 13, open question P1). See

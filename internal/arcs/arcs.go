@@ -33,7 +33,10 @@ import (
 	"github.com/ZacxDev/cairn/internal/write"
 )
 
-// Schema is the one payload and record schema this package reads and writes.
+// Schema is the schema-1 payload and record schema: everything an arc carried before a summary
+// existed. A record that uses neither a summary nor the declared-scope opt-in is ALWAYS written
+// under it, whichever schema its payload named — see `summary.go`'s header for why that is the
+// roll-back property. [SchemaSummary] is the other one.
 const Schema = 1
 
 // The three statuses. 🔴 `unknown` IS A STATUS, NOT A MISSING VALUE (operator decision Q4): a
@@ -106,6 +109,20 @@ type Registration struct {
 	// the append route writes as a trailer's actor. RegisteredAt is the pod clock, RFC 3339 UTC.
 	RegisteredBy string `json:"registered_by"`
 	RegisteredAt string `json:"registered_at"`
+	// SCHEMA 2 (`summary.go`). Both are `omitempty`, so a record using neither marshals to
+	// exactly the schema-1 bytes.
+	//
+	// VisibleToDeclaredScopes is the arc's OPT-IN to be shown to readers of any declared scope
+	// ([Registration.VisibleTo]). Summary is the tool's bounded account of where the arc stands.
+	VisibleToDeclaredScopes bool     `json:"visible_to_declared_scopes,omitempty"`
+	Summary                 *Summary `json:"summary,omitempty"`
+	// SummaryCarried is set by the POD, never the payload: the summary and the opt-in were kept
+	// from an earlier registration because the push that replaced it was SCHEMA 1, which cannot
+	// carry either — merge rule 7's "an unmeasured leg never erases a measured one", one level up.
+	SummaryCarried bool `json:"summary_carried,omitempty"`
+	// payloadSchema is the schema the PAYLOAD named (never stored): [Merge] carries the summary
+	// only across a schema-1 push.
+	payloadSchema int
 }
 
 // Key is the arc's identity: `(home scope, slug)`, both normalized.
@@ -141,6 +158,9 @@ type payload struct {
 	CommitsUnstamped *int            `json:"commits_unstamped"`
 	ReportedAt       *string         `json:"reported_at"`
 	Members          []payloadMember `json:"members"`
+	// Schema 2 only; a schema-1 payload naming either is refused.
+	VisibleToDeclaredScopes *bool    `json:"visible_to_declared_scopes"`
+	Summary                 *Summary `json:"summary"`
 }
 
 type payloadMember struct {
@@ -166,9 +186,12 @@ func NormalizeKey(home, slug string) (Key, error) {
 // says how many, so the tooling can report them rather than lose them silently.
 //
 // 🔴 UNKNOWN FIELDS ARE REFUSED, NOT IGNORED. The plan's "never stored" list — the doc body,
-// commit subjects and SHAs, the tooling's free-text notes, transcript text, any filesystem path
-// — is enforced here by construction: a key this function does not name cannot reach the
-// journal, and a sender who added one is told rather than silently dropped.
+// commit subjects, the tooling's free-text notes, transcript text — is enforced here by
+// construction: a key this function does not name cannot reach the journal, and a sender who
+// added one is told rather than silently dropped. ⚠ SCHEMA 2 NARROWED THAT LIST ON PURPOSE: its
+// `summary` carries bounded free text the tool chose to publish, one commit id and one
+// repository-relative path (`summary.go`'s header says what guards them). Nothing else free-form
+// is accepted, at either schema.
 func DecodePayload(body []byte, home, slug string) (reg Registration, unjoinable int, err error) {
 	key, err := NormalizeKey(home, slug)
 	if err != nil {
@@ -183,11 +206,23 @@ func DecodePayload(body []byte, home, slug string) (reg Registration, unjoinable
 	if _, err := dec.Token(); err != io.EOF {
 		return Registration{}, 0, payloadErr("body must be ONE JSON object; trailing data follows it")
 	}
-	if p.Schema == nil || *p.Schema != Schema {
-		return Registration{}, 0, payloadErr("schema must be %d", Schema)
+	if p.Schema == nil || (*p.Schema != Schema && *p.Schema != SchemaSummary) {
+		return Registration{}, 0, payloadErr("schema must be %d or %d", Schema, SchemaSummary)
+	}
+	if *p.Schema == Schema && (p.Summary != nil || p.VisibleToDeclaredScopes != nil) {
+		return Registration{}, 0, payloadErr("summary and visible_to_declared_scopes need schema %d", SchemaSummary)
 	}
 	reg = Registration{Schema: Schema, Home: key.Home, Slug: key.Slug,
-		Status: StatusUnknown, ClosingKind: ClosingNone}
+		Status: StatusUnknown, ClosingKind: ClosingNone, payloadSchema: *p.Schema}
+	if p.VisibleToDeclaredScopes != nil {
+		reg.VisibleToDeclaredScopes = *p.VisibleToDeclaredScopes
+	}
+	if reg.Summary, err = decodeSummary(p.Summary); err != nil {
+		return Registration{}, 0, err
+	}
+	if reg.usesSchemaTwo() {
+		reg.Schema = SchemaSummary
+	}
 	if p.Status != nil {
 		switch *p.Status {
 		case StatusOpen, StatusClosed, StatusUnknown:
@@ -303,9 +338,19 @@ func validTime(s string) bool {
 // the new push DID measure replaces the old one outright — that is what "replaces" means.
 //
 // `prev` is nil for a first registration, which carries nothing.
+//
+// 🔴 AND A SCHEMA-1 PUSH NEVER ERASES A SUMMARY OR THE OPT-IN. A host still running schema-1
+// tooling cannot SAY either, so its push is no evidence they changed: both are carried from `prev`
+// and the record says so (`SummaryCarried`). A schema-2 push that omits them DID speak, and clears
+// them — that is "replaces".
 func Merge(prev *Registration, next Registration) Registration {
 	if prev == nil {
 		return next
+	}
+	if next.payloadSchema == Schema && prev.usesSchemaTwo() {
+		next.Summary, next.VisibleToDeclaredScopes = prev.Summary, prev.VisibleToDeclaredScopes
+		next.SummaryCarried = true
+		next.Schema = SchemaSummary
 	}
 	named := map[string]bool{}
 	for _, m := range next.Members {
@@ -341,7 +386,20 @@ func sameState(a, b Registration) bool {
 // meet, plus the two pod-stamped fields. A line failing it is SKIPPED and counted, never
 // applied — see `Read`.
 func validRecord(r Registration) bool {
-	if r.Schema != Schema || r.Home == "" || r.Slug == "" ||
+	// Schema 1 is exactly "uses nothing schema 2 added"; schema 2 must use something, so ONE
+	// arc state has ONE spelling in the file.
+	switch {
+	case r.Schema == Schema && (r.usesSchemaTwo() || r.SummaryCarried):
+		return false
+	case r.Schema == SchemaSummary && !r.usesSchemaTwo():
+		return false
+	case r.Schema != Schema && r.Schema != SchemaSummary:
+		return false
+	}
+	if !validSummary(r.Summary) {
+		return false
+	}
+	if r.Home == "" || r.Slug == "" ||
 		store.NormalizeRef(r.Home) != r.Home || store.NormalizeRef(r.Slug) != r.Slug {
 		return false
 	}
