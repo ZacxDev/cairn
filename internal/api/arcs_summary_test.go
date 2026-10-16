@@ -171,8 +171,8 @@ func TestTheSummaryIsServedAsTheToolsDatedWord(t *testing.T) {
 	want := "\nmembers: 0, ordered by session id (byte-wise)\n\n" +
 		"summary: the registering tool's own word, read from docs/handoff-gadget.md at commit 0123456789abcdef0123456789abcdef01234567 (committed 2000-01-04T00:00:00Z)\n" +
 		"closing condition (stated): the gadget answers on the new port\n" +
-		"state now: 2\n- the port moved\n- the old listener is still up\n" +
-		"next steps (ranked): 2\n1. drain the old listener\n2. close the arc\n" +
+		"state now: 2\n  the port moved\n  the old listener is still up\n" +
+		"next steps (ranked): 2\n  drain the old listener\n  close the arc\n" +
 		"task refs: tracker:T-1\naliases: gadget-move"
 	// The served body ends in one newline the renderer does not write (`serveReport`).
 	if !strings.HasSuffix(got, want+"\n") {
@@ -226,5 +226,54 @@ func TestASchemaTwoPayloadIsRefusedOnTheWireLikeAnyBadBody(t *testing.T) {
 	}
 	if again := h.do(t, "GET", "/api/v1/arcs/alpha-notes", wideToken, nil, ""); strings.Contains(again.body, "gadget-move") {
 		t.Fatalf("a refused registration was recorded (%s):\n%s", journal, again.body)
+	}
+}
+
+// TestWhatAnOptInExposesToADeclaredScopeReader is the MEASURED list behind the README's opt-in
+// warning: everything the beta-only reader is served about an alpha-homed arc once it opts in. The
+// arc carries a reader member kept by merge rule 7 (`carried`), so that line is exercised too. The
+// NEGATIVE half is what stays hidden: alpha's revision header, and alpha as a "wrote in" scope.
+func TestWhatAnOptInExposesToADeclaredScopeReader(t *testing.T) {
+	h := newHarness(t)
+	withJournal(t, h)
+	first := `{"schema":1,"status":"open","declared_scopes":["beta-notes"],"writers_measured":true,"readers_measured":true,` +
+		`"commits_total":4,"commits_unstamped":1,"reported_at":"2000-01-02T03:04:05Z",` +
+		`"members":[{"session":"s-0042","role":"originated","first_seen":"2000-01-01T00:00:00Z"},{"session":"s-0077","role":"resumed","first_seen":""}]}`
+	second := `{"schema":2,"status":"open","declared_scopes":["beta-notes"],"writers_measured":true,"readers_measured":false,` +
+		`"commits_total":4,"commits_unstamped":1,"reported_at":"2000-01-02T03:04:05Z","visible_to_declared":true,` +
+		`"members":[{"session":"s-0042","role":"originated","first_seen":"2000-01-01T00:00:00Z"}],` + summaryOf + `}`
+	for _, body := range []string{first, second} {
+		if put := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, body); put.status != 200 {
+			t.Fatalf("register: %d %q", put.status, put.body)
+		}
+	}
+	got := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", narrowToken, nil, "")
+	if got.headers.Get("X-Store-Status") != "arc-found" {
+		t.Fatalf("the declared-scope reader must see the opted-in arc:\n%s", got.body)
+	}
+	for name, want := range map[string]string{
+		"home and slug":          "cairn-arc: status=arc-found home=alpha-notes slug=gadget-move",
+		"status":                 "\nstatus: open\n",
+		"registered_by and time": "\nregistered: 2000-01-05T00:00:00Z by wide-reader · reported by the tool at 2000-01-02T03:04:05Z\n",
+		"tooling coverage":       "\ntooling coverage: 1 of 4 commits carry no session id · writers: measured · readers: NOT measured\n",
+		"carried count":          "1 member(s) carried from an earlier registration",
+		"member id, role, first": "\n- s-0042 · originated · first seen 2000-01-01T00:00:00Z · wrote in: none readable to you",
+		"carried member":         "\n- s-0077 · resumed · first seen unknown · wrote in: none readable to you · carried",
+		"declared, narrowed":     "\ndeclared scopes readable to you: beta-notes (",
+		"summary":                "\nsummary: the registering tool's own word, read from docs/handoff-gadget.md",
+	} {
+		if !strings.Contains(got.body, want) {
+			t.Fatalf("%s is not served to the declared-scope reader (the README lists it):\n%s", name, got.body)
+		}
+	}
+	absent := h.do(t, "GET", "/api/v1/arc/ghost-void/gadget-move", narrowToken, nil, "")
+	home := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, "")
+	if got.headers.Get("X-Store-Revision") != absent.headers.Get("X-Store-Revision") ||
+		home.headers.Get("X-Store-Revision") == got.headers.Get("X-Store-Revision") {
+		t.Fatalf("the home's revision must stay hidden: declared %q, absent %q, home reader %q",
+			got.headers.Get("X-Store-Revision"), absent.headers.Get("X-Store-Revision"), home.headers.Get("X-Store-Revision"))
+	}
+	if strings.Contains(got.body, "declared scopes readable to you: alpha-notes") {
+		t.Fatalf("an unreadable scope was named:\n%s", got.body)
 	}
 }

@@ -83,7 +83,29 @@ var (
 
 // scanner is ONE secret scanner per process, built lazily: `memo.NewScanner`'s fresh in-memory key,
 // read only for `Hit.Rule`, so its key is never observable.
-var scanner = sync.OnceValues(memo.NewScanner)
+//
+// 🔴 ONLY A SUCCESS IS CACHED. A construction error is returned to this call and the next call
+// tries again; caching it (`sync.OnceValues`) would make one transient failure refuse every
+// summary for the life of the process. `newScanner` is a variable so a test can make it fail.
+var (
+	scannerMu  sync.Mutex
+	scannerOK  *redact.Redactor
+	newScanner = memo.NewScanner
+)
+
+func scanner() (*redact.Redactor, error) {
+	scannerMu.Lock()
+	defer scannerMu.Unlock()
+	if scannerOK != nil {
+		return scannerOK, nil
+	}
+	scan, err := newScanner()
+	if err != nil {
+		return nil, err
+	}
+	scannerOK = scan
+	return scan, nil
+}
 
 // secretRule is the first CONFIDENT rule `s` hits, or "". The confident subset is memo's, spelled
 // once there: the rules that match a credential by its own shape. The broad rules (`key-context`,

@@ -131,3 +131,18 @@ func TestTheAliasesSegmentIsAlwaysTheRowsLastSegment(t *testing.T) {
 		}
 	}
 }
+
+// TestSummaryItemsArePrintedVerbatim: the producer owns numbering. Items it ranked itself — gaps
+// included — print as sent, each indented under its heading, never re-numbered (`1. 1. a`) or
+// re-bulleted. The same holds for `state now`.
+func TestSummaryItemsArePrintedVerbatim(t *testing.T) {
+	rep := ArcReport{Status: StatusArcFound, Reg: arcs.Registration{Summary: &arcs.Summary{
+		StateNow: []string{"- moved", "plain"}, NextSteps: []string{"1. a", "3. b"},
+		Source:   arcs.Source{RepoPath: "docs/h.md", Commit: strings.Repeat("0", 40), CommittedAt: "2000-01-04T00:00:00Z"},
+		TaskRefs: []string{}, Aliases: []string{}}}}
+	got := strings.Join(rep.SummaryLines(), "\n")
+	want := "state now: 2\n  - moved\n  plain\nnext steps (ranked): 2\n  1. a\n  3. b\n"
+	if !strings.Contains(got, want) || strings.Contains(got, "1. 1.") {
+		t.Fatalf("items must print verbatim:\n%s", got)
+	}
+}

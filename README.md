@@ -434,7 +434,10 @@ A `schema: 2` payload may add two OPTIONAL fields; everything else is as above.
   id, `committed_at` RFC 3339), `task_refs` (list, no whitespace) and `aliases` (list, folded like a
   slug, deduplicated, sorted). `arc-show` prints it after the members, provenance line first
   (`summary: the registering tool's own word, read from <repo_path> at commit <commit> (committed
-  <committed_at>)`); a listing row gains ` · aliases a, b`.
+  <committed_at>)`); a listing row gains ` · aliases a, b`. **`state_now` and `next_steps` items
+  are printed VERBATIM, in the order sent**, one per line under `state now: N` / `next steps
+  (ranked): N`, each indented two spaces. The pod adds no number and no bullet: **the producer owns
+  any numbering** (send `3. drain` for a rank with a gap, and it prints `  3. drain`).
 - **`visible_to_declared: true`** — the arc's **opt-in**: it is also shown, on `arc-show`,
   `arcs`, `arcs --check` and the browser's arcs and session pages, to readers of **any declared
   scope**, whether or not they can read its home. Its body then carries `visibility exception
@@ -459,6 +462,24 @@ with it `false`) makes an opted-in arc home-only again, and a **schema-1 push cl
 stored as schema 1. ⚠ So a host whose tooling still sends schema 1 drops an arc's summary and
 opt-in on its next push; upgrade every host that registers the same arc together.
 
+**What opting in exposes to a reader of a declared scope who cannot read the home** — measured, not
+inferred. On the API (`arc-show`, pinned by `TestWhatAnOptInExposesToADeclaredScopeReader`): the
+**home scope's name and the slug**; the status and closing kind; **`registered_by`** (the
+registrant's display name), `registered_at` and the tool's `reported_at`; the tooling coverage
+counts (commits, unstamped commits, which legs were measured); **every member's session id, role
+and first-seen time**, including **carried** members and their count; the declared scopes that
+reader can read; and **the whole summary**. A listing row adds aliases and ` · declared-visible`;
+`arcs --check` counts the arc and can report one of its readable declared scopes absent. In the
+browser (read from `internal/ui/arcs.go`'s `arcRow` and `internal/ui/arcsindex.go`'s
+`arcsIndexRow`): the scope page lists the arc with its **member session ids as chips**, its
+status, provenance, closing kind and registration time; the arcs page lists it with its status,
+member count and last-updated time; a session page lists it (home, slug, status, role) for a
+member session the reader can open. **Not exposed:** what members wrote in scopes that reader
+cannot read (`wrote in:` names readable scopes only), a declared scope it cannot read, the home's
+`X-Store-Revision` (identical to an absent arc's — pinned), and other people's live-pane badges —
+the presence badge on the arcs page answers only for a session the VIEWER owns
+(`internal/presence/presence.go`'s owner predicate `visible`), so opting in shows nobody else's.
+
 **Who may opt in:** whoever may register the arc at all — the **write** verb on the home and on
 every declared scope, unchanged. That is what makes the opt-in safe to honour: an arc is put in front
 of a scope's readers only by somebody who may write that scope. ⚠ The check runs at registration; a
@@ -472,16 +493,23 @@ registrant whose write is revoked later leaves the arc visible there until the n
 | `state_now` | 20 items, each ≤ 500 bytes |
 | `next_steps` | 20 items, each ≤ 500 bytes |
 | `task_refs` | 32 items, each ≤ 200 bytes, no whitespace |
-| `aliases` | 16 items, each ≤ 64 bytes as sent |
-| `source.repo_path` | 256 bytes, repository-relative, no `.` or `..` segment |
-| `source.commit` | a full lower-case commit id, 40 or 64 hex |
-| the whole stored summary | 16 KiB (binds on its own: 20 + 20 items at the item cap exceed it) |
+| `aliases` | 16 items as sent (counted before folding and deduplication), each ≤ 64 bytes as sent; each must fold to a non-empty slug |
+| `source` | **required** whenever `summary` is sent |
+| `source.repo_path` | ≤ 256 bytes; `/`-separated segments of `[A-Za-z0-9._-]` only — so no leading or trailing `/`, no empty segment, no space or backslash — and no segment that is exactly `.` or `..` |
+| `source.commit` | a full lower-case hex commit id, exactly 40 or 64 characters |
+| `source.committed_at` | RFC 3339 (Go's `time.RFC3339` parse; fractional seconds accepted) |
+| the whole stored summary | 16 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) — binds on its own: 20 + 20 items at the item cap exceed it |
 
-Every
-string must be one non-blank line of valid UTF-8 with no control character or Unicode line
-separator (the answer is lines, and an embedded newline could print a line that reads as the pod's
-own), and is refused on a **confident secret** — the same rule subset memos refuse on. A refusal
-names the field, never the value. Unknown fields are still refused, at every depth.
+The **text fields** — `closing_condition` (when sent), every `state_now`, `next_steps`, `task_refs`
+and `aliases` item — must each be non-blank (not empty and not only whitespace), valid UTF-8, and
+**one line**: no character Go's `unicode.IsControl` reports (tab and newline included) and no
+U+2028/U+2029, because the answer is lines and an embedded newline could print a line that reads as
+the pod's own. Each is also refused on a **confident secret** — the same rule subset memos refuse
+on. `task_refs` items must contain no whitespace at all. `repo_path`, `commit` and `committed_at`
+are checked by the shape rules above, not the secret scan. The empty lists are allowed. A schema-1
+payload carrying `summary` or `visible_to_declared` is refused (`need schema 2`), and
+`visible_to_declared` must be a JSON boolean. A refusal names the field, never the value. Unknown
+fields are still refused, at every depth.
 
 **Compatibility — what was measured against the previous release** (old = a build without schema 2):
 

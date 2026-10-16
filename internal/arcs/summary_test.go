@@ -1,6 +1,7 @@
 package arcs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ZacxDev/cairn/internal/memo"
+	"github.com/ZacxDev/cairn/internal/redact"
 	"github.com/ZacxDev/cairn/internal/store"
 )
 
@@ -277,4 +280,39 @@ func TestAHostileAliasIsStoredInTheSlugCharsetOrRefused(t *testing.T) {
 		t.Fatalf("`/` and ` · ` fold to `-`: %q", reg.Summary.Aliases)
 	}
 	refused(t, summaryJSON(map[string]string{"aliases": `[" · "]`}), "summary.aliases[0] normalizes to nothing")
+}
+
+// TestAScannerConstructionErrorIsNotCached: the first construction fails, and that call's summary
+// is refused with the error; the SECOND call constructs again, succeeds, and is the scanner used
+// from then on. Caching the first error would refuse every summary for the life of the process.
+func TestAScannerConstructionErrorIsNotCached(t *testing.T) {
+	scannerMu.Lock()
+	saved, savedNew := scannerOK, newScanner
+	scannerOK = nil
+	calls := 0
+	newScanner = func() (*redact.Redactor, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("synthetic construction failure")
+		}
+		return memo.NewScanner()
+	}
+	scannerMu.Unlock()
+	t.Cleanup(func() {
+		scannerMu.Lock()
+		scannerOK, newScanner = saved, savedNew
+		scannerMu.Unlock()
+	})
+	body := summaryJSON(map[string]string{"state_now": `["moved"]`})
+	if _, _, err := DecodePayload([]byte(body), "alpha-notes", "gadget-rollout"); err == nil ||
+		!strings.Contains(err.Error(), "synthetic construction failure") {
+		t.Fatalf("the first call must surface the construction error, got %v", err)
+	}
+	if reg, _ := decode(t, body); reg.Summary == nil {
+		t.Fatal("the second call must construct again and decode")
+	}
+	decode(t, body)
+	if calls != 2 {
+		t.Fatalf("constructions = %d, want 2 (one failure, one success, then cached)", calls)
+	}
 }

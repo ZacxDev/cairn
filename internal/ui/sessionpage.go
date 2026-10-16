@@ -288,7 +288,7 @@ func SessionPage(v PageView) g.Node {
 			)),
 			g.If(len(actors) > 0, labelledList("Actors", "the <actor> half of each trailer, as written — self-reported",
 				h.Ul(h.Class("chips chips-alias"), g.Map(actors, plainItem)))),
-			g.If(len(rep.Arcs) > 0, labelledList("Arcs", "registered arcs homed in a scope you can read that list this session as a member",
+			g.If(len(rep.Arcs) > 0, labelledList("Arcs", "registered arcs visible to you (homed in a scope you can read, or opted in and declaring one) that list this session as a member",
 				h.Ul(h.Class("chips chips-arc"), g.Map(rep.Arcs, func(a report.SessionArc) g.Node {
 					return arcChip(a.Home, a.Slug, ids)
 				})))),

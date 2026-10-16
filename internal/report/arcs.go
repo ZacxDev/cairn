@@ -524,17 +524,24 @@ func (r ArcReport) SummaryLines() []string {
 	if s.ClosingCondition != "" {
 		lines = append(lines, "closing condition (stated): "+s.ClosingCondition)
 	}
+	// 🔴 ITEMS ARE PRINTED VERBATIM, IN ORDER — THE PRODUCER OWNS ANY NUMBERING OR BULLET. A tool
+	// that sends `3. drain` (its own rank, gaps included) would otherwise read `1. 3. drain`. Each
+	// item is indented under its heading, which adds nothing to the text and keeps an item from
+	// starting a line at column 0, where the pod's own lines start.
 	lines = append(lines, fmt.Sprintf("state now: %d", len(s.StateNow)))
 	for _, item := range s.StateNow {
-		lines = append(lines, "- "+item)
+		lines = append(lines, SummaryItemIndent+item)
 	}
 	lines = append(lines, fmt.Sprintf("next steps (ranked): %d", len(s.NextSteps)))
-	for i, item := range s.NextSteps {
-		lines = append(lines, fmt.Sprintf("%d. %s", i+1, item))
+	for _, item := range s.NextSteps {
+		lines = append(lines, SummaryItemIndent+item)
 	}
 	lines = append(lines, "task refs: "+orNone(s.TaskRefs), "aliases: "+orNone(s.Aliases))
 	return lines
 }
+
+// SummaryItemIndent prefixes every `state now` and `next steps` item line, and nothing else.
+const SummaryItemIndent = "  "
 
 func orNone(items []string) string {
 	if len(items) == 0 {
