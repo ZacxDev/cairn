@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/ZacxDev/cairn/internal/memo"
 	"github.com/ZacxDev/cairn/internal/redact"
@@ -86,74 +87,173 @@ func TestASchemaOnePayloadCannotCarrySchemaTwoFields(t *testing.T) {
 	refused(t, `{"schema":1,"summary":{}}`, "need schema 2")
 }
 
-// TestEverySummaryCapRefusesAndNeverTruncates walks each cap with a value AT it (accepted) and
-// one well PAST it (refused, naming the field). The past-cap values overshoot by more than one unit
-// so an off-by-one in the comparison cannot be what the test measures.
-func TestEverySummaryCapRefusesAndNeverTruncates(t *testing.T) {
-	q := func(s string) string { return fmt.Sprintf("%q", s) }
-	for _, tc := range []struct {
-		field, at, past, want string
-	}{
-		{"closing_condition", q(strings.Repeat("c", MaxClosingConditionBytes)), q(strings.Repeat("c", MaxClosingConditionBytes+7)), "summary.closing_condition is 1007 bytes"},
-		{"state_now", jsonList(MaxSummaryItems, "s"), jsonList(MaxSummaryItems+3, "s"), "at most 20 summary.state_now, got 23"},
-		{"state_now", jsonList(1, strings.Repeat("s", MaxSummaryItemBytes)), jsonList(1, strings.Repeat("s", MaxSummaryItemBytes+9)), "summary.state_now[0] is 509 bytes"},
-		{"next_steps", jsonList(MaxSummaryItems, "n"), jsonList(MaxSummaryItems+3, "n"), "at most 20 summary.next_steps, got 23"},
-		{"next_steps", jsonList(1, strings.Repeat("n", MaxSummaryItemBytes)), jsonList(1, strings.Repeat("n", MaxSummaryItemBytes+9)), "summary.next_steps[0] is 509 bytes"},
-		{"task_refs", jsonList(MaxTaskRefs, "t:1"), jsonList(MaxTaskRefs+3, "t:1"), "at most 32 summary.task_refs, got 35"},
-		{"task_refs", jsonList(1, strings.Repeat("t", MaxTaskRefBytes)), jsonList(1, strings.Repeat("t", MaxTaskRefBytes+9)), "summary.task_refs[0] is 209 bytes"},
-		{"aliases", jsonList(MaxAliases, "a"), jsonList(MaxAliases+3, "a"), "at most 16 summary.aliases, got 19"},
-		{"aliases", jsonList(1, strings.Repeat("a", MaxAliasBytes)), jsonList(1, strings.Repeat("a", MaxAliasBytes+9)), "summary.aliases[0] is 73 bytes"},
-	} {
-		t.Run(tc.field, func(t *testing.T) {
-			reg, _ := decode(t, summaryJSON(map[string]string{tc.field: tc.at}))
-			if reg.Summary == nil || reg.Schema != SchemaSummary {
-				t.Fatalf("a value at the cap must be accepted as schema 2: %+v", reg)
-			}
-			refused(t, summaryJSON(map[string]string{tc.field: tc.past}), tc.want)
-		})
+// adjusted is the registration's adjustment lines, one per line, as the response prints them.
+func adjusted(reg Registration) string {
+	var lines []string
+	for _, a := range reg.SummaryAdjustments() {
+		lines = append(lines, a.Line())
 	}
-	// The TOTAL cap binds on its own: every field within its own cap, the whole over 16 KiB.
-	item := strings.Repeat("x", MaxSummaryItemBytes)
-	refused(t, summaryJSON(map[string]string{"state_now": jsonList(MaxSummaryItems, item), "next_steps": jsonList(MaxSummaryItems, item)}),
-		"summary is")
-	if reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(MaxSummaryItems, item)})); reg.Summary == nil {
-		t.Fatal("control: half of that total is within the cap")
-	}
-	repo := `{"repo_path":"` + strings.Repeat("r", MaxRepoPathBytes+9) + `","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00Z"}`
-	refused(t, summaryJSON(map[string]string{"source": repo}), "summary.source.repo_path must be")
+	return strings.Join(lines, "\n")
 }
 
-// TestEverySummaryStringIsOneCleanLine: blank, control characters (a newline would let the tool
-// print a line that reads as the pod's own), line separators, invalid provenance, a confident
-// secret, whitespace in a ref, an unknown key — each refused with its own sentence. The positive
-// control is the default fixture, which decodes.
-func TestEverySummaryStringIsOneCleanLine(t *testing.T) {
-	if reg, _ := decode(t, summaryJSON(nil)); reg.Summary == nil || reg.Summary.Source.Commit != testCommit {
-		t.Fatalf("POSITIVE CONTROL: the default summary decodes: %+v", reg.Summary)
+// TestAnOverCapItemIsClippedAndNamedNeverRefused walks each byte cap with a value AT it (stored as
+// sent, no adjustment) and one well PAST it: stored clipped to exactly the cap at a rune boundary,
+// ending in `…`, and named `clipped <field> bytes=<sent> max=<cap>`. The registration always lands.
+// Over-count items are DROPPED from the end and named. A multi-byte rune straddling the cut is never
+// split.
+func TestAnOverCapItemIsClippedAndNamedNeverRefused(t *testing.T) {
+	q := func(s string) string { return fmt.Sprintf("%q", s) }
+	for _, tc := range []struct {
+		name, field, at, past, want string
+		stored                      func(Summary) string
+		max                         int
+	}{
+		{"closing", "closing_condition", q(strings.Repeat("c", MaxClosingConditionBytes)), q(strings.Repeat("c", MaxClosingConditionBytes+7)),
+			"clipped summary.closing_condition bytes=1007 max=1000", func(s Summary) string { return s.ClosingCondition }, MaxClosingConditionBytes},
+		{"state", "state_now", jsonList(1, strings.Repeat("s", MaxSummaryItemBytes)), jsonList(1, strings.Repeat("s", MaxSummaryItemBytes+9)),
+			"clipped summary.state_now[0] bytes=509 max=500", func(s Summary) string { return s.StateNow[0] }, MaxSummaryItemBytes},
+		{"next", "next_steps", jsonList(1, strings.Repeat("n", MaxSummaryItemBytes)), jsonList(1, strings.Repeat("n", MaxSummaryItemBytes+9)),
+			"clipped summary.next_steps[0] bytes=509 max=500", func(s Summary) string { return s.NextSteps[0] }, MaxSummaryItemBytes},
+		{"ref", "task_refs", jsonList(1, strings.Repeat("t", MaxTaskRefBytes)), jsonList(1, strings.Repeat("t", MaxTaskRefBytes+9)),
+			"clipped summary.task_refs[0] bytes=209 max=200", func(s Summary) string { return s.TaskRefs[0] }, MaxTaskRefBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			at, _ := decode(t, summaryJSON(map[string]string{tc.field: tc.at}))
+			if at.Summary == nil || adjusted(at) != "" || len(tc.stored(*at.Summary)) != tc.max {
+				t.Fatalf("a value AT the cap is stored as sent: %q", adjusted(at))
+			}
+			past, _ := decode(t, summaryJSON(map[string]string{tc.field: tc.past}))
+			got := tc.stored(*past.Summary)
+			if adjusted(past) != AdjustmentLinePrefix+tc.want || len(got) != tc.max || !strings.HasSuffix(got, "…") {
+				t.Fatalf("over the cap: stored %d bytes %q…, adjustments %q", len(got), got[len(got)-6:], adjusted(past))
+			}
+		})
 	}
+	// A 3-byte rune straddling the cut is kept whole or dropped, never split: 499 ASCII + one `é`-run.
+	straddle, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, strings.Repeat("x", 496)+"日本語")}))
+	if got := straddle.Summary.NextSteps[0]; !utf8.ValidString(got) || len(got) > MaxSummaryItemBytes || got != strings.Repeat("x", 496)+"…" {
+		t.Fatalf("clip split a rune or overshot: %d bytes, valid=%v, tail %q", len(got), utf8.ValidString(got), got[len(got)-6:])
+	}
+	// Over a COUNT: the tail is dropped, each named with its sent index.
+	over, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(MaxSummaryItems+2, "s")}))
+	if len(over.Summary.StateNow) != MaxSummaryItems || adjusted(over) != AdjustmentLinePrefix+"dropped summary.state_now[20] reason=over-count max=20\n"+
+		AdjustmentLinePrefix+"dropped summary.state_now[21] reason=over-count max=20" {
+		t.Fatalf("over the count: kept %d, adjustments %q", len(over.Summary.StateNow), adjusted(over))
+	}
+}
+
+// TestOverTheTotalDropsFromTheListEndsAndNamesEachDrop: every item within its own cap, the whole over
+// 16 KiB. The pod drops items from the END — the longer of state_now/next_steps first — until it
+// fits, names each with its sent index, and keeps everything else. The control is a summary half
+// that size, which is stored with no adjustment.
+func TestOverTheTotalDropsFromTheListEndsAndNamesEachDrop(t *testing.T) {
+	item := strings.Repeat("x", MaxSummaryItemBytes)
+	reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(MaxSummaryItems, item), "next_steps": jsonList(MaxSummaryItems, item)}))
+	if reg.Summary == nil || summaryBytes(*reg.Summary) > MaxSummaryBytes {
+		t.Fatalf("the summary must be kept within the total: %+v", reg.Summary)
+	}
+	dropped := strings.Count(adjusted(reg), "reason=over-total max=16384")
+	if dropped == 0 || len(reg.Summary.StateNow)+len(reg.Summary.NextSteps)+dropped != 2*MaxSummaryItems {
+		t.Fatalf("each drop is named once: kept %d+%d, named %d\n%s", len(reg.Summary.StateNow), len(reg.Summary.NextSteps), dropped, adjusted(reg))
+	}
+	if !strings.HasPrefix(adjusted(reg), AdjustmentLinePrefix+"dropped summary.state_now[19] reason=over-total") ||
+		!strings.Contains(adjusted(reg), "dropped summary.next_steps[19] reason=over-total") {
+		t.Fatalf("drops start at the lists' ends, state_now first on a tie:\n%s", adjusted(reg))
+	}
+	if half, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(MaxSummaryItems, item)})); half.Summary == nil || adjusted(half) != "" {
+		t.Fatalf("control: half of that total is stored as sent: %q", adjusted(half))
+	}
+}
+
+// TestNoSummaryProblemRefusesTheRegistration: every summary-content shape that used to refuse the
+// push now lands the arc — status and members included — with the summary adjusted and each change
+// named. The NEGATIVE half: what is NOT summary content (an unknown key, a wrong type) still refuses.
+func TestNoSummaryProblemRefusesTheRegistration(t *testing.T) {
 	// A credential-shaped value built at run time, so no literal token sits in this file.
 	token := "gh" + "p_" + strings.Repeat("Ab3", 12)
-	for _, tc := range []struct{ field, value, want string }{
-		{"state_now", `["  "]`, "summary.state_now[0] must not be blank"},
-		{"state_now", `["two\nlines"]`, "summary.state_now[0] must be one line"},
-		{"next_steps", `["status: closed\u2028x"]`, "summary.next_steps[0] must be one line"},
-		{"closing_condition", `"tab\there"`, "summary.closing_condition must be one line"},
-		{"next_steps", `["rotate ` + token + `"]`, "summary.next_steps[0] looks like it carries a credential (rule github-token)"},
-		{"task_refs", `["has space"]`, "summary.task_refs[0] must contain no whitespace"},
-		{"aliases", `["___"]`, "summary.aliases[0] normalizes to nothing"},
-		{"source", `{"repo_path":"/abs.md","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00Z"}`, "repo_path must be"},
-		{"source", `{"repo_path":"a/../b.md","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00Z"}`, "repo_path must be"},
-		{"source", `{"repo_path":"a.md","commit":"ABC","committed_at":"2000-01-04T00:00:00Z"}`, "summary.source.commit must be"},
-		{"source", `{"repo_path":"a.md","commit":"` + testCommit + `","committed_at":"yesterday"}`, "committed_at must be RFC 3339"},
-		{"source", `{"repo_path":"a.md","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00Z","subject":"x"}`, "unknown field"},
-		{"extra", `"x"`, "unknown field"},
+	for _, tc := range []struct {
+		field, value, want string
+		stored             func(*Summary) string
+	}{
+		{"state_now", `["  ","kept"]`, "dropped summary.state_now[0] reason=blank", func(s *Summary) string { return strings.Join(s.StateNow, "|") }},
+		{"state_now", `["two\nlines"]`, "sanitized summary.state_now[0] replaced=1", func(s *Summary) string { return s.StateNow[0] }},
+		{"next_steps", `["closed x\u0007y"]`, "sanitized summary.next_steps[0] replaced=2", func(s *Summary) string { return s.NextSteps[0] }},
+		{"closing_condition", `"tab\there"`, "sanitized summary.closing_condition replaced=1", func(s *Summary) string { return s.ClosingCondition }},
+		{"next_steps", `["rotate ` + token + `","kept"]`, "redacted summary.next_steps[0] rule=github-token", func(s *Summary) string { return strings.Join(s.NextSteps, "|") }},
+		{"task_refs", `["has space","t:2"]`, "dropped summary.task_refs[0] reason=whitespace", func(s *Summary) string { return strings.Join(s.TaskRefs, "|") }},
+		{"aliases", `["___","ok"]`, "dropped summary.aliases[0] reason=normalizes-to-nothing", func(s *Summary) string { return strings.Join(s.Aliases, "|") }},
 	} {
-		refused(t, summaryJSON(map[string]string{tc.field: tc.value}), tc.want)
+		body := strings.Replace(summaryJSON(map[string]string{tc.field: tc.value}), `{"schema":2,`, `{"schema":2,"status":"open","members":[{"session":"s-1","role":"wrote"}],`, 1)
+		reg, _ := decode(t, body)
+		if reg.Status != StatusOpen || len(reg.Members) != 1 || reg.Summary == nil {
+			t.Fatalf("%s %s: the arc must land with its schema-1 data: %+v", tc.field, tc.value, reg)
+		}
+		if adjusted(reg) != AdjustmentLinePrefix+tc.want {
+			t.Fatalf("%s %s: adjustments %q, want %q", tc.field, tc.value, adjusted(reg), tc.want)
+		}
+		got := tc.stored(reg.Summary)
+		if strings.Contains(got, token) || strings.ContainsAny(got, "\n\t\a ") {
+			t.Fatalf("%s: stored %q still carries what was adjusted", tc.field, got)
+		}
+		if tc.want == "redacted summary.next_steps[0] rule=github-token" && got != "[redacted: github-token]|kept" {
+			t.Fatalf("a secret-shaped item is stored as its rule, the next one as sent: %q", got)
+		}
 	}
-	// The refusal NEVER echoes the value it refused.
-	_, _, err := DecodePayload([]byte(summaryJSON(map[string]string{"next_steps": `["rotate ` + token + `"]`})), "alpha-notes", "gadget-rollout")
-	if err == nil || strings.Contains(err.Error(), token) {
-		t.Fatalf("the secret refusal must not echo the value: %v", err)
+	// A drop names the index as SENT, not the position after earlier drops: the blank ref at [1] is
+	// dropped first, so the whitespace one is still [2].
+	refs, _ := decode(t, summaryJSON(map[string]string{"task_refs": `["t:1","  ","has space"]`}))
+	if adjusted(refs) != AdjustmentLinePrefix+"dropped summary.task_refs[1] reason=blank\n"+AdjustmentLinePrefix+"dropped summary.task_refs[2] reason=whitespace" ||
+		strings.Join(refs.Summary.TaskRefs, "|") != "t:1" {
+		t.Fatalf("sent indexes: %q, kept %q", adjusted(refs), refs.Summary.TaskRefs)
+	}
+	// A source that cannot be cited drops the SUMMARY, never the arc.
+	for _, tc := range []struct{ source, reason string }{
+		{`{"repo_path":"/abs.md","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00Z"}`, "source.repo_path"},
+		{`{"repo_path":"a/../b.md","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00Z"}`, "source.repo_path"},
+		{`{"repo_path":"a.md","commit":"ABC","committed_at":"2000-01-04T00:00:00Z"}`, "source.commit"},
+		{`{"repo_path":"a.md","commit":"` + testCommit + `","committed_at":"yesterday"}`, "source.committed_at"},
+	} {
+		reg, _ := decode(t, summaryJSON(map[string]string{"source": tc.source}))
+		if reg.Summary != nil || adjusted(reg) != AdjustmentLinePrefix+"dropped summary reason="+tc.reason {
+			t.Fatalf("source %s: summary %+v, adjustments %q", tc.source, reg.Summary, adjusted(reg))
+		}
+	}
+	// Not summary CONTENT: still a refusal.
+	refused(t, summaryJSON(map[string]string{"source": `{"repo_path":"a.md","commit":"` + testCommit + `","committed_at":"2000-01-04T00:00:00Z","subject":"x"}`}), "unknown field")
+	refused(t, summaryJSON(map[string]string{"extra": `"x"`}), "unknown field")
+	refused(t, summaryJSON(map[string]string{"state_now": `"not a list"`}), "cannot unmarshal")
+	// An adjustment NEVER echoes the value it changed.
+	reg, _ := decode(t, summaryJSON(map[string]string{"next_steps": `["rotate ` + token + `"]`}))
+	if strings.Contains(adjusted(reg), token) {
+		t.Fatalf("the redaction line must not echo the value: %q", adjusted(reg))
+	}
+}
+
+// TestAPlaceholderIsNotASecret: the placeholder shapes in a credential position are kept as written
+// — `${NAME}`, an upper-case `$NAME`, `<…>`, `***` — while the SAME positions holding a real-shaped
+// value are still redacted. Both halves, so a scan that stopped looking passes neither.
+func TestAPlaceholderIsNotASecret(t *testing.T) {
+	for _, keep := range []string{
+		"postgresql://app:${PGPASSWORD}@db:5432/app",
+		"postgresql://app:$PGPASSWORD@db:5432/app",
+		"redis://:<password>@cache:6379",
+		"https://user:***@host.example.test/path",
+		"Authorization: Bearer ${API_TOKEN}",
+		"x-api-key: <your-key>",
+	} {
+		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, keep)}))
+		if adjusted(reg) != "" || reg.Summary.StateNow[0] != keep {
+			t.Fatalf("placeholder %q must be kept as written: %q", keep, adjusted(reg))
+		}
+	}
+	for real, rule := range map[string]string{
+		"postgresql://app:" + "s3cr3t-Value9" + "@db:5432/app": "url-userinfo-password",
+		"Authorization: Bearer " + "abc12345":                  "authorization",
+	} {
+		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, real)}))
+		if adjusted(reg) != AdjustmentLinePrefix+"redacted summary.state_now[0] rule="+rule {
+			t.Fatalf("POSITIVE CONTROL: %q in the same position must still be redacted (%s): %q", real, rule, adjusted(reg))
+		}
 	}
 }
 
@@ -259,7 +359,7 @@ func TestVisibleToIsTheHomeOrAnOptedInDeclaredScope(t *testing.T) {
 // TestAHostileAliasIsStoredInTheSlugCharsetOrRefused: an alias is folded to the slug charset
 // (`[a-z0-9.-]`), so a stored alias can never carry the listing row's ` · ` separator, a `/`, a
 // space or a non-ASCII character — which is what lets a consumer read the aliases segment as the
-// row's LAST ` · ` segment. One that folds to nothing is refused rather than stored empty.
+// row's LAST ` · ` segment. One that folds to nothing is dropped and named, never stored empty.
 func TestAHostileAliasIsStoredInTheSlugCharsetOrRefused(t *testing.T) {
 	slug := regexp.MustCompile(`^[a-z0-9.-]+$`)
 	hostile := []string{"one · two", "HTTP/3", "with  spaces", "naïve café", "x · declared-visible", "a,b"}
@@ -279,11 +379,14 @@ func TestAHostileAliasIsStoredInTheSlugCharsetOrRefused(t *testing.T) {
 	if !slices.Contains(reg.Summary.Aliases, "http-3") || !slices.Contains(reg.Summary.Aliases, "one-two") {
 		t.Fatalf("`/` and ` · ` fold to `-`: %q", reg.Summary.Aliases)
 	}
-	refused(t, summaryJSON(map[string]string{"aliases": `[" · "]`}), "summary.aliases[0] normalizes to nothing")
+	nothing, _ := decode(t, summaryJSON(map[string]string{"aliases": `[" · "]`}))
+	if adjusted(nothing) != AdjustmentLinePrefix+"dropped summary.aliases[0] reason=normalizes-to-nothing" {
+		t.Fatalf("an alias that folds to nothing is dropped and named: %q", adjusted(nothing))
+	}
 }
 
 // TestAScannerConstructionErrorIsNotCached: the first construction fails, and that call's summary
-// is refused with the error; the SECOND call constructs again, succeeds, and is the scanner used
+// is DROPPED (named `reason=secret-scan-unavailable`) while the arc registers; the SECOND call constructs again, succeeds, and is the scanner used
 // from then on. Caching the first error would refuse every summary for the life of the process.
 func TestAScannerConstructionErrorIsNotCached(t *testing.T) {
 	scannerMu.Lock()
@@ -304,9 +407,9 @@ func TestAScannerConstructionErrorIsNotCached(t *testing.T) {
 		scannerMu.Unlock()
 	})
 	body := summaryJSON(map[string]string{"state_now": `["moved"]`})
-	if _, _, err := DecodePayload([]byte(body), "alpha-notes", "gadget-rollout"); err == nil ||
-		!strings.Contains(err.Error(), "synthetic construction failure") {
-		t.Fatalf("the first call must surface the construction error, got %v", err)
+	if first, _ := decode(t, body); first.Summary != nil ||
+		adjusted(first) != AdjustmentLinePrefix+"dropped summary reason=secret-scan-unavailable" {
+		t.Fatalf("the first call drops the summary, names why, and still registers: %+v %q", first.Summary, adjusted(first))
 	}
 	if reg, _ := decode(t, body); reg.Summary == nil {
 		t.Fatal("the second call must construct again and decode")

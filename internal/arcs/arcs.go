@@ -116,7 +116,14 @@ type Registration struct {
 	// ([Registration.VisibleTo]). Summary is the tool's bounded account of where the arc stands.
 	VisibleToDeclared bool     `json:"visible_to_declared,omitempty"`
 	Summary           *Summary `json:"summary,omitempty"`
+	// adjustments are what `decodeSummary` changed rather than refuse (never stored): the response
+	// to the push names each one ([Registration.SummaryAdjustments]).
+	adjustments []Adjustment
 }
+
+// SummaryAdjustments is every change the pod made to this registration's summary as SENT, in the
+// order it made them; nil when it changed nothing. Only a freshly decoded payload carries them.
+func (r Registration) SummaryAdjustments() []Adjustment { return slices.Clone(r.adjustments) }
 
 // Key is the arc's identity: `(home scope, slug)`, both normalized.
 type Key struct{ Home, Slug string }
@@ -210,9 +217,7 @@ func DecodePayload(body []byte, home, slug string) (reg Registration, unjoinable
 	if p.VisibleToDeclared != nil {
 		reg.VisibleToDeclared = *p.VisibleToDeclared
 	}
-	if reg.Summary, err = decodeSummary(p.Summary); err != nil {
-		return Registration{}, 0, err
-	}
+	reg.Summary, reg.adjustments = decodeSummary(p.Summary)
 	if reg.usesSchemaTwo() {
 		reg.Schema = SchemaSummary
 	}

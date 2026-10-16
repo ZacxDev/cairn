@@ -485,31 +485,78 @@ every declared scope, unchanged. That is what makes the opt-in safe to honour: a
 of a scope's readers only by somebody who may write that scope. ⚠ The check runs at registration; a
 registrant whose write is revoked later leaves the arc visible there until the next push.
 
-**Bounds — refused, never truncated** (a cut "next step" is a different instruction):
+**A summary never refuses the registration.** The arc's schema-1 data — status, members, declared
+scopes, the opt-in — always lands; a problem in the summary is **adjusted and named**, never refused:
 
-| field | at most |
-|---|---|
-| `closing_condition` | 1000 bytes |
-| `state_now` | 20 items, each ≤ 500 bytes |
-| `next_steps` | 20 items, each ≤ 500 bytes |
-| `task_refs` | 32 items, each ≤ 200 bytes, no whitespace |
-| `aliases` | 16 items as sent (counted before folding and deduplication), each ≤ 64 bytes as sent; each must fold to a non-empty slug |
-| `source` | **required** whenever `summary` is sent |
-| `source.repo_path` | ≤ 256 bytes; `/`-separated segments of `[A-Za-z0-9._-]` only — so no leading or trailing `/`, no empty segment, no space or backslash — and no segment that is exactly `.` or `..` |
-| `source.commit` | a full lower-case hex commit id, exactly 40 or 64 characters |
-| `source.committed_at` | RFC 3339 (Go's `time.RFC3339` parse; fractional seconds accepted) |
-| the whole stored summary | 16 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) — binds on its own: 20 + 20 items at the item cap exceed it |
+| field | bound | when it is exceeded or broken |
+|---|---|---|
+| `closing_condition` | 1000 bytes | clipped |
+| `state_now`, `next_steps` | 20 items, each ≤ 500 bytes | an item over 500 bytes is clipped; items past the 20th are dropped |
+| `task_refs` | 32 items, each ≤ 200 bytes, no whitespace | clipped; past the 32nd dropped; one containing whitespace (after sanitizing) dropped |
+| `aliases` | 16 items as sent, each ≤ 64 bytes as sent, folded to a non-empty slug | clipped before folding; past the 16th dropped; one folding to nothing dropped |
+| `source` | **required** whenever `summary` is sent | an uncitable source drops the **summary** (the arc still lands) |
+| `source.repo_path` | ≤ 256 bytes; `/`-separated segments of `[A-Za-z0-9._-]` only — so no leading or trailing `/`, no empty segment, no space or backslash — and no segment that is exactly `.` or `..` | summary dropped, `reason=source.repo_path` |
+| `source.commit` | a full lower-case hex commit id, exactly 40 or 64 characters | summary dropped, `reason=source.commit` |
+| `source.committed_at` | RFC 3339 (Go's `time.RFC3339` parse; fractional seconds accepted) | summary dropped, `reason=source.committed_at` |
+| the whole stored summary | 16 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) | items are dropped from the **end** of the lists — the longer of `state_now`/`next_steps` first (`state_now` on a tie), then `task_refs`, then `aliases` — until it fits |
 
-The **text fields** — `closing_condition` (when sent), every `state_now`, `next_steps`, `task_refs`
-and `aliases` item — must each be non-blank (not empty and not only whitespace), valid UTF-8, and
-**one line**: no character Go's `unicode.IsControl` reports (tab and newline included) and no
-U+2028/U+2029, because the answer is lines and an embedded newline could print a line that reads as
-the pod's own. Each is also refused on a **confident secret** — the same rule subset memos refuse
-on. `task_refs` items must contain no whitespace at all. `repo_path`, `commit` and `committed_at`
-are checked by the shape rules above, not the secret scan. The empty lists are allowed. A schema-1
-payload carrying `summary` or `visible_to_declared` is refused (`need schema 2`), and
-`visible_to_declared` must be a JSON boolean. A refusal names the field, never the value. Unknown
-fields are still refused, at every depth.
+Every **text field** — `closing_condition` (when sent), every `state_now`, `next_steps`, `task_refs`
+and `aliases` item — goes through four steps, in this order:
+
+1. **sanitized** to one line: an invalid UTF-8 sequence becomes U+FFFD, and every character Go's
+   `unicode.IsControl` reports (tab and newline included), U+2028 and U+2029 becomes a space — the
+   answer is lines, and an embedded newline could print a line that reads as the pod's own;
+2. **dropped** if nothing but whitespace is left;
+3. **redacted**: scanned in full for a **confident secret** — the same rule subset memos refuse
+   on — and on a hit stored as `[redacted: <rule>]` (`[redacted: github-token]`). The scan treats
+   **placeholders as non-secrets**: `${NAME}`, an upper-case `$NAME`, `<anything-without-spaces>`
+   and a run of three or more `*` are removed before scanning, so
+   `postgresql://app:${PGPASSWORD}@db:5432/app` and `Authorization: Bearer <token>` are kept as
+   written, while a real value in the same position is still redacted;
+4. **clipped** to its byte cap at a UTF-8 rune boundary, ending in `…` (U+2026, whose 3 bytes count
+   within the cap).
+
+`repo_path`, `commit` and `committed_at` are checked by the shape rules above, not the secret scan.
+Empty lists are allowed, and a summary whose every item was dropped is kept, empty, with its source.
+If the secret scanner cannot be built the summary is dropped (`reason=secret-scan-unavailable`) and
+the next push tries again.
+
+**What still refuses, because it is not summary content:** a payload that is not the schema — an
+unknown key at any depth, or a wrong JSON type (`state_now` as a string, a non-boolean
+`visible_to_declared`) — a schema-1 payload carrying `summary` or `visible_to_declared` (`need
+schema 2`), a credential that may not write the home or a declared scope, and a pod with no arc
+journal. A refusal names the field, never the value.
+
+**The response names every adjustment** — the contract a registering tool parses. After the usual
+outcome line, one line per adjustment, in the order made, and **no extra line at all when the
+summary was stored as sent**: (the lines below are drawn from several pushes, to show each shape)
+
+```text
+arc-registered: alpha-notes/gadget-move · members=1 · unjoinable=0
+summary-adjusted: clipped summary.next_steps[0] bytes=503 max=500
+summary-adjusted: redacted summary.next_steps[1] rule=authorization
+summary-adjusted: sanitized summary.next_steps[7] replaced=1
+summary-adjusted: dropped summary.next_steps[8] reason=blank
+summary-adjusted: dropped summary.state_now[20] reason=over-count max=20
+summary-adjusted: dropped summary.state_now[19] reason=over-total max=16384
+summary-adjusted: dropped summary reason=source.commit
+```
+
+Each line is `summary-adjusted: <action> <field> <detail>`:
+
+- `<action>` is one of `clipped`, `redacted`, `sanitized`, `dropped`.
+- `<field>` is the field **as sent**: `summary.<list>[<index in the payload>]`,
+  `summary.closing_condition`, or `summary` for the whole summary.
+- `<detail>` is space-separated `key=value` pairs:
+  - `bytes=<sent> max=<cap>` for `clipped`;
+  - `rule=<rule>` for `redacted`;
+  - `replaced=<n>` for `sanitized`;
+  - `reason=<reason>` (plus `max=<n>` for the two caps) for `dropped`. The reasons are `blank`,
+    `whitespace`, `normalizes-to-nothing`, `over-count`, `over-total`, `source.repo_path`,
+    `source.commit`, `source.committed_at` and `secret-scan-unavailable`.
+
+An item can carry more than one line (`sanitized`, then `clipped`). The response never echoes a
+changed value. `cairn arc-register` prints this body verbatim on stdout, exit 0.
 
 **Compatibility — what was measured against the previous release** (old = a build without schema 2):
 

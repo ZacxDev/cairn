@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -212,20 +213,120 @@ func TestAPushWithoutTheOptInMakesTheArcHomeOnlyAgain(t *testing.T) {
 	}
 }
 
-// TestASchemaTwoPayloadIsRefusedOnTheWireLikeAnyBadBody: the summary's refusals reach the caller
-// as the 400 every malformed registration gets, naming the field, and write nothing.
-func TestASchemaTwoPayloadIsRefusedOnTheWireLikeAnyBadBody(t *testing.T) {
+// TestAProblemSummaryNeverRefusesTheArcAndTheResponseNamesEveryAdjustment is the WIRE contract a
+// registering tool parses: one `summary-adjusted: <action> <field> <detail>` line per change, after
+// the outcome line, in the order made — pinned as the WHOLE body. Every secret shape below is one
+// the registering side keeps verbatim and this pod used to refuse the whole arc over; each is built
+// at run time so no literal token sits in this file. The arc lands with status and members, and
+// arc-show serves the stored items. The NEGATIVE half: a payload that is not the schema still
+// refuses, and writes nothing.
+func TestAProblemSummaryNeverRefusesTheArcAndTheResponseNamesEveryAdjustment(t *testing.T) {
 	h := newHarness(t)
-	journal := withJournal(t, h)
-	got := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil,
-		`{"schema":2,"summary":{"state_now":["two\nlines"],"next_steps":[],"task_refs":[],"aliases":[],`+
-			`"source":{"repo_path":"a.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}}}`)
-	if got.status != 400 || got.headers.Get("X-Store-Status") != "bad-request" ||
-		got.body != "bad request: summary.state_now[0] must be one line with no control characters\n" {
-		t.Fatalf("a control character in the summary: %d %q", got.status, got.body)
+	withJournal(t, h)
+	long := strings.Repeat("x", 497) + "日本"
+	sk := "sk" + "-" + strings.Repeat("Ab3d", 6)
+	stripe := "sk" + "_test_" + strings.Repeat("Ab3d", 5)
+	jwt := "ey" + "J" + strings.Repeat("hbGciOiJ", 2) + ".ey" + "J" + strings.Repeat("zdWIiOiI", 2) + "." + strings.Repeat("c2lnbmF0", 2)
+	items, _ := json.Marshal([]string{long, "Authorization: Bearer " + "abc12345", "x-api-key: " + "test1234",
+		"use " + sk, "use " + stripe, jwt, "postgresql://app:${PGPASSWORD}@db:5432/app", "two\nlines", "   "})
+	body := `{"schema":2,"status":"open","members":[{"session":"s-0042","role":"originated"}],"summary":{"state_now":[],` +
+		`"next_steps":` + string(items) + `,"task_refs":[],"aliases":[],` +
+		`"source":{"repo_path":"a.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}}}`
+	got := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, body)
+	want := "arc-registered: alpha-notes/gadget-move · members=1 · unjoinable=0\n" +
+		"summary-adjusted: clipped summary.next_steps[0] bytes=503 max=500\n" +
+		"summary-adjusted: redacted summary.next_steps[1] rule=authorization\n" +
+		"summary-adjusted: redacted summary.next_steps[2] rule=authorization\n" +
+		"summary-adjusted: redacted summary.next_steps[3] rule=sk-key\n" +
+		"summary-adjusted: redacted summary.next_steps[4] rule=stripe-key\n" +
+		"summary-adjusted: redacted summary.next_steps[5] rule=jwt\n" +
+		"summary-adjusted: sanitized summary.next_steps[7] replaced=1\n" +
+		"summary-adjusted: dropped summary.next_steps[8] reason=blank\n"
+	if got.status != 200 || got.headers.Get("X-Store-Status") != "arc-registered" || got.body != want {
+		t.Fatalf("the response:\n%d %s\n%s\nwant:\n%s", got.status, got.headers.Get("X-Store-Status"), got.body, want)
 	}
-	if again := h.do(t, "GET", "/api/v1/arcs/alpha-notes", wideToken, nil, ""); strings.Contains(again.body, "gadget-move") {
-		t.Fatalf("a refused registration was recorded (%s):\n%s", journal, again.body)
+	shown := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, "").body
+	for _, line := range []string{"\nstatus: open\n", "\n- s-0042 · originated", "\nnext steps (ranked): 8\n",
+		"\n  " + strings.Repeat("x", 497) + "…\n", "\n  [redacted: authorization]\n", "\n  [redacted: jwt]\n",
+		"\n  postgresql://app:${PGPASSWORD}@db:5432/app\n", "\n  two lines\n"} {
+		if !strings.Contains(shown, line) {
+			t.Fatalf("arc-show lacks %q:\n%s", line, shown)
+		}
+	}
+	for _, secret := range []string{"abc12345", "test1234", sk, stripe, jwt} {
+		if strings.Contains(shown, secret) {
+			t.Fatalf("a redacted value was stored: %q\n%s", secret, shown)
+		}
+	}
+	bad := h.do(t, "PUT", "/api/v1/arc/alpha-notes/other-move", wideToken, nil, `{"schema":2,"summary":{"notes":"x"}}`)
+	if bad.status != 400 || !strings.Contains(bad.body, "unknown field") {
+		t.Fatalf("a payload that is not the schema still refuses: %d %q", bad.status, bad.body)
+	}
+	if again := h.do(t, "GET", "/api/v1/arcs/alpha-notes", wideToken, nil, ""); strings.Contains(again.body, "other-move") {
+		t.Fatalf("a refused registration was recorded:\n%s", again.body)
+	}
+}
+
+// TestEachFormerSummaryRefusalNowRegistersTheArc: one push per shape that used to refuse the whole
+// registration, each on its own so a regression names the shape. Every arm must answer 200 and
+// `arc-registered`, carry exactly the named adjustment line, and serve the stored item from
+// arc-show. Built from strings only, so the file compiles against a build that predates the change.
+func TestEachFormerSummaryRefusalNowRegistersTheArc(t *testing.T) {
+	src := `"source":{"repo_path":"a.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}`
+	list := func(items ...string) string { b, _ := json.Marshal(items); return string(b) }
+	big := strings.Repeat("y", 500)
+	many := make([]string, 20)
+	for i := range many {
+		many[i] = big
+	}
+	for _, tc := range []struct {
+		name, summary, line, served string
+	}{
+		{"over-long item", `"state_now":` + list(strings.Repeat("z", 612)) + `,"next_steps":[]`,
+			"summary-adjusted: clipped summary.state_now[0] bytes=612 max=500", "\n  " + strings.Repeat("z", 497) + "…\n"},
+		{"placeholder in a password position", `"state_now":` + list("postgresql://app:${PGPASSWORD}@db:5432/app") + `,"next_steps":[]`,
+			"", "\n  postgresql://app:${PGPASSWORD}@db:5432/app\n"},
+		{"placeholder token", `"state_now":` + list("Authorization: Bearer <token>") + `,"next_steps":[]`,
+			"", "\n  Authorization: Bearer <token>\n"},
+		{"secret-shaped item", `"state_now":` + list("Authorization: Bearer "+"abc12345") + `,"next_steps":[]`,
+			"summary-adjusted: redacted summary.state_now[0] rule=authorization", "\n  [redacted: authorization]\n"},
+		{"control character", `"state_now":` + list("a\tb") + `,"next_steps":[]`,
+			"summary-adjusted: sanitized summary.state_now[0] replaced=1", "\n  a b\n"},
+		{"blank item", `"state_now":` + list(" ", "kept") + `,"next_steps":[]`,
+			"summary-adjusted: dropped summary.state_now[0] reason=blank", "\n  kept\n"},
+		{"over the total", `"state_now":` + list(many...) + `,"next_steps":` + list(many...),
+			"summary-adjusted: dropped summary.state_now[19] reason=over-total max=16384", "\nnext steps (ranked): "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			withJournal(t, h)
+			body := `{"schema":2,"status":"open","members":[{"session":"s-0042","role":"originated"}],"summary":{` +
+				tc.summary + `,"task_refs":[],"aliases":[],` + src + `}}`
+			got := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, body)
+			outcome := "arc-registered: alpha-notes/gadget-move · members=1 · unjoinable=0\n"
+			if got.status != 200 || !strings.HasPrefix(got.body, outcome) {
+				t.Fatalf("the arc must register: %d %q", got.status, got.body)
+			}
+			lines := strings.TrimPrefix(got.body, outcome)
+			if tc.line == "" && lines != "" || tc.line != "" && !strings.HasPrefix(lines, tc.line+"\n") {
+				t.Fatalf("adjustment lines %q, want first %q", lines, tc.line)
+			}
+			shown := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, "").body
+			if !strings.Contains(shown, "\nstatus: open\n") || !strings.Contains(shown, tc.served) {
+				t.Fatalf("arc-show must serve the stored item %q:\n%s", tc.served, shown)
+			}
+		})
+	}
+}
+
+// TestASummaryStoredAsSentAddsNoLineToTheResponse: no adjustment, no line — so a clean schema-2
+// push answers exactly the one outcome line a schema-1 push does.
+func TestASummaryStoredAsSentAddsNoLineToTheResponse(t *testing.T) {
+	h := newHarness(t)
+	withJournal(t, h)
+	got := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, arcV2(false))
+	if got.status != 200 || got.body != "arc-registered: alpha-notes/gadget-move · members=0 · unjoinable=0\n" {
+		t.Fatalf("a clean summary: %d %q", got.status, got.body)
 	}
 }
 

@@ -26,9 +26,12 @@ import (
 // 🔴 THIS DELIBERATELY NARROWS THE SCHEMA-1 "NEVER STORED" RULE, AND ONLY HERE. Schema 1 stored no
 // free text and no commit SHA by construction (`DecodePayload`'s comment). A summary is free text the
 // tooling chose to publish, plus the ONE commit it was read at; nothing else free-form reaches the
-// journal, and an unknown field is still refused. Every string is bounded, refused on a control
-// character, and refused on a confident secret hit (`memo`'s subset of `internal/redact`) — never
-// truncated and never redacted in place, so what is stored is exactly what the tool sent or nothing.
+// journal, and an unknown field is still refused. Every string is bounded and kept to one clean line,
+// and a confident secret hit (`memo`'s subset of `internal/redact`) is stored as `[redacted: <rule>]`.
+// 🔴 NONE OF THAT REFUSES THE REGISTRATION: an over-cap item is clipped, a control character
+// replaced, a secret redacted, an item over a count or the total dropped — and the response to the
+// push names every adjustment (`Adjustment`), so the tool always learns what was stored differently.
+// The arc's schema-1 data lands whatever its summary held, as it did before schema 2 existed.
 //
 // 🔴 A RECORD IS SCHEMA 2 IFF IT CARRIES A SUMMARY OR THE OPT-IN. A schema-2 payload carrying
 // neither is stored as schema 1, byte-identical to what a schema-1 payload produces — so a pod rolled
@@ -39,10 +42,12 @@ import (
 // SchemaSummary is the schema a record carrying a summary or the opt-in is written under.
 const SchemaSummary = 2
 
-// The summary's bounds. 🔴 OVER-CAP IS REFUSED, NEVER TRUNCATED: a truncated "next step" is a
-// different instruction, and a reader cannot tell it was cut. The per-field caps are generous
-// against a handoff's real sections; MaxSummaryBytes bounds the whole independently (20 items at the
-// item cap overshoot it), because every byte is paid on every later read — nothing is compacted.
+// The summary's bounds. 🔴 OVER-CAP IS CLIPPED OR DROPPED, NEVER REFUSED, AND ALWAYS NAMED: an item
+// over its byte cap is clipped at a rune boundary and ends in `…`, so a reader can see it was cut and
+// the push's response says which. (Refusing was the first design, and measured against real handoff
+// documents it dropped the whole registration — status and members — over one long bullet.)
+// MaxSummaryBytes bounds the whole independently (20 items at the item cap overshoot it), because
+// every byte is paid on every later read — nothing is compacted.
 const (
 	MaxClosingConditionBytes = 1000
 	MaxSummaryItems          = 20
@@ -109,15 +114,25 @@ func scanner() (*redact.Redactor, error) {
 
 // secretRule is the first CONFIDENT rule `s` hits, or "". The confident subset is memo's, spelled
 // once there: the rules that match a credential by its own shape. The broad rules (`key-context`,
-// `entropy`) are not refusals anywhere in this tree, for memo's measured reason — they damage
-// honest prose at a rate a refusal would turn into rejected handoffs.
+// `entropy`) are not acted on anywhere in this tree, for memo's measured reason — they damage
+// honest prose at a rate that would redact ordinary handoff text.
+//
+// 🔴 PLACEHOLDERS ARE NOT SECRETS. The scan runs over the text with every PLACEHOLDER removed —
+// `${NAME}`, an upper-case `$NAME`, `<anything-without-spaces>` and a run of three or more `*` — so
+// `postgresql://app:${PGPASSWORD}@db/app` and `Authorization: Bearer <token>` are kept as written,
+// while a real value in the same position still hits. Only the SCAN sees the masked text; what is
+// stored is the original. ⚠ The limit: a real credential that itself contains one of those shapes
+// (a `$UPPER` run inside a token) is scanned without it and may be missed.
 func secretRule(s string) (string, error) {
 	scan, err := scanner()
 	if err != nil {
 		return "", err
 	}
-	return firstConfident(scan, s), nil
+	return firstConfident(scan, placeholder.ReplaceAllString(s, "")), nil
 }
+
+// placeholder is every shape the scan treats as a stand-in for a value, never a value.
+var placeholder = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*|<[^<>\s]{1,64}>|\*{3,}`)
 
 func firstConfident(scan *redact.Redactor, s string) string {
 	_, hits := scan.String(s)
@@ -130,114 +145,244 @@ func firstConfident(scan *redact.Redactor, s string) string {
 	return ""
 }
 
-// checkText is the rule every summary string meets: non-blank, valid UTF-8, within `max` bytes, no
-// control character and no Unicode line or paragraph separator — because the rendered answer is
-// LINES, and a newline inside a "state now" bullet would let a registration print a line that reads
-// as the pod's own (`status: closed`) — and no confident secret. The refusal names the FIELD, never
-// the value.
-func checkText(field, s string, max int) error {
-	if strings.TrimSpace(s) == "" {
-		return payloadErr("%s must not be blank", field)
+// Adjustment is one change the pod made to a summary rather than refuse the registration. 🔴 THE
+// RESPONSE NAMES EVERY ONE (`Adjustment.Line`), so the tool learns exactly what was stored
+// differently from what it sent. `Field` names the field as SENT (`summary.next_steps[3]` is the
+// fourth item in the payload, whatever was dropped before it); a whole-summary drop is `summary`.
+type Adjustment struct {
+	Action string // AdjustClipped, AdjustRedacted, AdjustSanitized or AdjustDropped
+	Field  string
+	Detail string // `bytes=<sent> max=<cap>`, `rule=<rule>`, `replaced=<n>` or `reason=<reason>`
+}
+
+// The four adjustment actions.
+const (
+	AdjustClipped   = "clipped"
+	AdjustRedacted  = "redacted"
+	AdjustSanitized = "sanitized"
+	AdjustDropped   = "dropped"
+)
+
+// AdjustmentLinePrefix opens every adjustment line of a `PUT arc/…` response.
+const AdjustmentLinePrefix = "summary-adjusted: "
+
+// Line is the adjustment as the response prints it: `summary-adjusted: <action> <field> <detail>`.
+func (a Adjustment) Line() string {
+	return AdjustmentLinePrefix + a.Action + " " + a.Field + " " + a.Detail
+}
+
+// RedactedText is what a secret-shaped item is stored as: the rule, never the value.
+func RedactedText(rule string) string { return "[redacted: " + rule + "]" }
+
+// clipEllipsis ends every clipped item, inside its cap.
+const clipEllipsis = "…"
+
+// clip shortens `s` to at most `max` bytes at a rune boundary, ending in `…` (whose 3 bytes count
+// within `max`). Already within it, `s` is returned unchanged.
+func clip(s string, max int) string {
+	if len(s) <= max {
+		return s
 	}
+	cut := max - len(clipEllipsis)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + clipEllipsis
+}
+
+// sanitize makes `s` one line of valid UTF-8: an invalid byte sequence becomes U+FFFD, and every
+// control character, U+2028 and U+2029 becomes a space — because the rendered answer is LINES, and a
+// newline inside an item would let a registration print a line that reads as the pod's own. It
+// returns how many characters it replaced.
+func sanitize(s string) (string, int) {
+	n := 0
 	if !utf8.ValidString(s) {
-		return payloadErr("%s must be valid UTF-8", field)
+		fixed := strings.ToValidUTF8(s, "�")
+		n += strings.Count(fixed, "�") - strings.Count(s, "�")
+		s = fixed
 	}
-	if len(s) > max {
-		return payloadErr("%s is %d bytes, at most %d (refused, not truncated)", field, len(s), max)
-	}
-	for _, r := range s {
-		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
-			return payloadErr("%s must be one line with no control characters", field)
+	out := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == ' ' || r == ' ' {
+			n++
+			return ' '
 		}
+		return r
+	}, s)
+	return out, n
+}
+
+// keepText is the rule every summary string meets, as ADJUSTMENTS rather than refusals: sanitized to
+// one clean line, dropped when nothing but whitespace is left, stored as `[redacted: <rule>]` on a
+// confident secret (scanned in full, before any clipping, so a cut cannot hide one), and clipped to
+// `max` bytes. ok is false when the item is dropped.
+func keepText(field, s string, max int, adj *[]Adjustment) (string, bool, error) {
+	s, replaced := sanitize(s)
+	if replaced > 0 {
+		*adj = append(*adj, Adjustment{AdjustSanitized, field, "replaced=" + strconv.Itoa(replaced)})
+	}
+	if strings.TrimSpace(s) == "" {
+		*adj = append(*adj, Adjustment{AdjustDropped, field, "reason=blank"})
+		return "", false, nil
 	}
 	rule, err := secretRule(s)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 	if rule != "" {
-		return payloadErr("%s looks like it carries a credential (rule %s); nothing was registered — remove it at the source", field, rule)
+		*adj = append(*adj, Adjustment{AdjustRedacted, field, "rule=" + rule})
+		return RedactedText(rule), true, nil
 	}
-	return nil
+	if len(s) > max {
+		*adj = append(*adj, Adjustment{AdjustClipped, field, "bytes=" + strconv.Itoa(len(s)) + " max=" + strconv.Itoa(max)})
+		s = clip(s, max)
+	}
+	return s, true, nil
 }
 
-func checkList(field string, items []string, maxItems, maxBytes int) error {
-	if len(items) > maxItems {
-		return payloadErr("at most %d %s, got %d (refused, not truncated)", maxItems, field, len(items))
+// item is one kept list item and the index it was SENT at, so every later drop names the field the
+// tool sent rather than a position the pod's own edits moved.
+type item struct {
+	sent int
+	text string
+}
+
+func texts(items []item) []string {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.text)
 	}
+	return out
+}
+
+func itemField(field string, sent int) string { return field + "[" + strconv.Itoa(sent) + "]" }
+
+// keepList applies keepText to each item and drops every item past `maxItems` (the LAST ones), in
+// order, naming each.
+func keepList(field string, items []string, maxItems, maxBytes int, adj *[]Adjustment) ([]item, error) {
+	out := []item{}
 	for i, s := range items {
-		if err := checkText(field+"["+strconv.Itoa(i)+"]", s, maxBytes); err != nil {
-			return err
+		if i >= maxItems {
+			*adj = append(*adj, Adjustment{AdjustDropped, itemField(field, i), "reason=over-count max=" + strconv.Itoa(maxItems)})
+			continue
+		}
+		kept, ok, err := keepText(itemField(field, i), s, maxBytes, adj)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, item{i, kept})
 		}
 	}
-	return nil
+	return out, nil
 }
 
-// decodeSummary validates one payload summary into the record's. nil in, nil out: a summary is
-// optional.
-func decodeSummary(raw *Summary) (*Summary, error) {
+// decodeSummary turns one payload summary into the record's, and returns every adjustment it made.
+// nil in, nil out: a summary is optional.
+//
+// 🔴 NOTHING IN A SUMMARY REFUSES THE REGISTRATION. The arc's schema-1 data (status, members,
+// declared scopes, the opt-in) always lands; a problem in the summary is clipped, sanitized, redacted
+// or dropped, and named. What still refuses is a payload that is not the schema — an unknown key or
+// a wrong JSON type, at any depth — which the strict decoder rejects before this runs. The three
+// whole-summary drops: a `source` that cannot be cited (required: a summary nobody can date is the
+// stale-claim shape it exists to replace), one still over MaxSummaryBytes once every list is empty,
+// and a secret scanner that could not be built. A summary whose every item was dropped is KEPT, with
+// its source, empty — the drops are named.
+func decodeSummary(raw *Summary) (*Summary, []Adjustment) {
 	if raw == nil {
 		return nil, nil
 	}
-	s := *raw
-	if s.ClosingCondition != "" {
-		if err := checkText("summary.closing_condition", s.ClosingCondition, MaxClosingConditionBytes); err != nil {
-			return nil, err
+	var adj []Adjustment
+	drop := func(reason string) (*Summary, []Adjustment) {
+		return nil, append(adj, Adjustment{AdjustDropped, "summary", "reason=" + reason})
+	}
+	switch {
+	case !repoPath.MatchString(raw.Source.RepoPath) || len(raw.Source.RepoPath) > MaxRepoPathBytes ||
+		slices.Contains(strings.Split(raw.Source.RepoPath, "/"), "..") || slices.Contains(strings.Split(raw.Source.RepoPath, "/"), "."):
+		return drop("source.repo_path")
+	case !commitHex.MatchString(raw.Source.Commit):
+		return drop("source.commit")
+	case !validTime(raw.Source.CommittedAt):
+		return drop("source.committed_at")
+	}
+	s := Summary{Source: raw.Source}
+	if raw.ClosingCondition != "" {
+		kept, ok, err := keepText("summary.closing_condition", raw.ClosingCondition, MaxClosingConditionBytes, &adj)
+		if err != nil {
+			return drop("secret-scan-unavailable")
+		}
+		if ok {
+			s.ClosingCondition = kept
 		}
 	}
-	if err := checkList("summary.state_now", s.StateNow, MaxSummaryItems, MaxSummaryItemBytes); err != nil {
-		return nil, err
+	state, err := keepList("summary.state_now", raw.StateNow, MaxSummaryItems, MaxSummaryItemBytes, &adj)
+	if err != nil {
+		return drop("secret-scan-unavailable")
 	}
-	if err := checkList("summary.next_steps", s.NextSteps, MaxSummaryItems, MaxSummaryItemBytes); err != nil {
-		return nil, err
+	next, err := keepList("summary.next_steps", raw.NextSteps, MaxSummaryItems, MaxSummaryItemBytes, &adj)
+	if err != nil {
+		return drop("secret-scan-unavailable")
 	}
-	if err := checkList("summary.task_refs", s.TaskRefs, MaxTaskRefs, MaxTaskRefBytes); err != nil {
-		return nil, err
+	sentRefs, err := keepList("summary.task_refs", raw.TaskRefs, MaxTaskRefs, MaxTaskRefBytes, &adj)
+	if err != nil {
+		return drop("secret-scan-unavailable")
 	}
-	for i, ref := range s.TaskRefs {
-		if strings.ContainsFunc(ref, unicode.IsSpace) {
-			return nil, payloadErr("summary.task_refs[%d] must contain no whitespace", i)
+	refs := []item{}
+	for _, ref := range sentRefs {
+		if strings.ContainsFunc(ref.text, unicode.IsSpace) {
+			adj = append(adj, Adjustment{AdjustDropped, itemField("summary.task_refs", ref.sent), "reason=whitespace"})
+			continue
 		}
+		refs = append(refs, ref)
 	}
-	if err := checkList("summary.aliases", s.Aliases, MaxAliases, MaxAliasBytes); err != nil {
-		return nil, err
+	sentAliases, err := keepList("summary.aliases", raw.Aliases, MaxAliases, MaxAliasBytes, &adj)
+	if err != nil {
+		return drop("secret-scan-unavailable")
 	}
-	aliases := []string{}
-	for i, a := range s.Aliases {
-		folded := store.NormalizeRef(a)
+	aliases := []item{}
+	for _, a := range sentAliases {
+		folded := store.NormalizeRef(a.text)
 		if folded == "" {
-			return nil, payloadErr("summary.aliases[%d] normalizes to nothing", i)
+			adj = append(adj, Adjustment{AdjustDropped, itemField("summary.aliases", a.sent), "reason=normalizes-to-nothing"})
+			continue
 		}
-		if !slices.Contains(aliases, folded) {
-			aliases = append(aliases, folded)
+		if !slices.ContainsFunc(aliases, func(x item) bool { return x.text == folded }) {
+			aliases = append(aliases, item{a.sent, folded})
 		}
 	}
-	slices.Sort(aliases)
-	s.Aliases = aliases
-	// The provenance is REQUIRED: a summary nobody can date or cite is the stale-claim shape the
-	// summary exists to replace.
-	if !repoPath.MatchString(s.Source.RepoPath) || len(s.Source.RepoPath) > MaxRepoPathBytes ||
-		slices.Contains(strings.Split(s.Source.RepoPath, "/"), "..") || slices.Contains(strings.Split(s.Source.RepoPath, "/"), ".") {
-		return nil, payloadErr("summary.source.repo_path must be a repository-relative path of at most %d bytes (no leading /, no . or .. segment)", MaxRepoPathBytes)
+	slices.SortFunc(aliases, func(x, y item) int { return strings.Compare(x.text, y.text) })
+	build := func() Summary {
+		s.StateNow, s.NextSteps, s.TaskRefs, s.Aliases = texts(state), texts(next), texts(refs), texts(aliases)
+		return s
 	}
-	if !commitHex.MatchString(s.Source.Commit) {
-		return nil, payloadErr("summary.source.commit must be a full lower-case commit id (40 or 64 hex)")
+	// 🔴 OVER THE TOTAL: DROP FROM THE ENDS OF THE LISTS, LOWEST RANK FIRST. The last item of the
+	// longer of `next_steps`/`state_now` (`state_now` on a tie) goes first — a ranked list's tail is
+	// its least important end — then `task_refs`, then `aliases`. Each drop names the index it was
+	// SENT at. `aliases` is sorted, so its "end" is the alphabetically last.
+	type list struct {
+		field string
+		items *[]item
 	}
-	if !validTime(s.Source.CommittedAt) {
-		return nil, payloadErr("summary.source.committed_at must be RFC 3339")
+	for summaryBytes(build()) > MaxSummaryBytes {
+		var l list
+		switch {
+		case len(state) > 0 && len(state) >= len(next):
+			l = list{"summary.state_now", &state}
+		case len(next) > 0:
+			l = list{"summary.next_steps", &next}
+		case len(refs) > 0:
+			l = list{"summary.task_refs", &refs}
+		case len(aliases) > 0:
+			l = list{"summary.aliases", &aliases}
+		default:
+			return drop("over-total max=" + strconv.Itoa(MaxSummaryBytes))
+		}
+		last := len(*l.items) - 1
+		adj = append(adj, Adjustment{AdjustDropped, itemField(l.field, (*l.items)[last].sent),
+			"reason=over-total max=" + strconv.Itoa(MaxSummaryBytes)})
+		*l.items = (*l.items)[:last]
 	}
-	if s.StateNow == nil {
-		s.StateNow = []string{}
-	}
-	if s.NextSteps == nil {
-		s.NextSteps = []string{}
-	}
-	if s.TaskRefs == nil {
-		s.TaskRefs = []string{}
-	}
-	if n := summaryBytes(s); n > MaxSummaryBytes {
-		return nil, payloadErr("summary is %d bytes as stored, at most %d (refused, not truncated)", n, MaxSummaryBytes)
-	}
-	return &s, nil
+	out := build()
+	return &out, adj
 }
 
 func summaryBytes(s Summary) int {
