@@ -116,13 +116,6 @@ type Registration struct {
 	// ([Registration.VisibleTo]). Summary is the tool's bounded account of where the arc stands.
 	VisibleToDeclared bool     `json:"visible_to_declared,omitempty"`
 	Summary           *Summary `json:"summary,omitempty"`
-	// SummaryCarried is set by the POD, never the payload: the summary and the opt-in were kept
-	// from an earlier registration because the push that replaced it was SCHEMA 1, which cannot
-	// carry either — merge rule 7's "an unmeasured leg never erases a measured one", one level up.
-	SummaryCarried bool `json:"summary_carried,omitempty"`
-	// payloadSchema is the schema the PAYLOAD named (never stored): [Merge] carries the summary
-	// only across a schema-1 push.
-	payloadSchema int
 }
 
 // Key is the arc's identity: `(home scope, slug)`, both normalized.
@@ -213,7 +206,7 @@ func DecodePayload(body []byte, home, slug string) (reg Registration, unjoinable
 		return Registration{}, 0, payloadErr("summary and visible_to_declared need schema %d", SchemaSummary)
 	}
 	reg = Registration{Schema: Schema, Home: key.Home, Slug: key.Slug,
-		Status: StatusUnknown, ClosingKind: ClosingNone, payloadSchema: *p.Schema}
+		Status: StatusUnknown, ClosingKind: ClosingNone}
 	if p.VisibleToDeclared != nil {
 		reg.VisibleToDeclared = *p.VisibleToDeclared
 	}
@@ -339,18 +332,14 @@ func validTime(s string) bool {
 //
 // `prev` is nil for a first registration, which carries nothing.
 //
-// 🔴 AND A SCHEMA-1 PUSH NEVER ERASES A SUMMARY OR THE OPT-IN. A host still running schema-1
-// tooling cannot SAY either, so its push is no evidence they changed: both are carried from `prev`
-// and the record says so (`SummaryCarried`). A schema-2 push that omits them DID speak, and clears
-// them — that is "replaces".
+// 🔴 THE SUMMARY AND THE OPT-IN ARE NOT A LEG: EVERY PUSH REPLACES THEM, A SCHEMA-1 PUSH INCLUDED.
+// A push that does not carry them — schema 1, or schema 2 without them — CLEARS them, so an
+// opted-in arc is made home-only again by pushing without the opt-in. Carrying them across a
+// schema-1 push was the other reading, and it made the opt-in impossible to withdraw from a host
+// whose tooling cannot send schema 2: widening visibility must be reversible by the next push.
 func Merge(prev *Registration, next Registration) Registration {
 	if prev == nil {
 		return next
-	}
-	if next.payloadSchema == Schema && prev.usesSchemaTwo() {
-		next.Summary, next.VisibleToDeclared = prev.Summary, prev.VisibleToDeclared
-		next.SummaryCarried = true
-		next.Schema = SchemaSummary
 	}
 	named := map[string]bool{}
 	for _, m := range next.Members {
@@ -389,7 +378,7 @@ func validRecord(r Registration) bool {
 	// Schema 1 is exactly "uses nothing schema 2 added"; schema 2 must use something, so ONE
 	// arc state has ONE spelling in the file.
 	switch {
-	case r.Schema == Schema && (r.usesSchemaTwo() || r.SummaryCarried):
+	case r.Schema == Schema && r.usesSchemaTwo():
 		return false
 	case r.Schema == SchemaSummary && !r.usesSchemaTwo():
 		return false

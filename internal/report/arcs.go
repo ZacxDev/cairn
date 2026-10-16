@@ -66,8 +66,6 @@ const (
 	// an answer that contradicts the line above it says so in the same body.
 	ArcsOptInLine = "visibility exception: an arc marked `declared-visible` OPTED IN and is listed to readers of ANY scope it declares, whether or not they can read its home"
 	ArcOptInLine  = "visibility exception (visible_to_declared: true): this arc OPTED IN — it is ALSO shown to readers of any scope it declares, whether or not they can read its home"
-	// ArcSummaryCarriedLine follows a summary kept across a schema-1 push (`arcs.Merge`).
-	ArcSummaryCarriedLine = "⚠ summary carried from an earlier registration: the latest push used schema 1, which cannot carry a summary or the opt-in, so both were kept rather than erased"
 )
 
 // RegistrationsUnconfiguredBody is shared by both answers — and by the browser surface, which
@@ -114,7 +112,8 @@ type ArcLine struct {
 //
 // 🔴 `visible` IS PASSED, NEVER RE-DERIVED — `Sessions`' rule. The scope's existence is the index's
 // answer (refused == absent), the inference reads only the files that index names
-// (`touch.Writes`), and an arc is a candidate only if `visible.Allows(home)`.
+// (`touch.Writes`), and an arc is a candidate only if `reg.VisibleTo(visible)` — its home is
+// readable, or it opted in and one of its declared scopes is.
 func Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) (ArcsReport, error) {
 	if snap == nil {
 		return ArcsReport{Status: StatusRegistrationsUnconfigured, Scope: store.NormalizeRef(scope)}, nil
@@ -522,9 +521,6 @@ func (r ArcReport) SummaryLines() []string {
 	}
 	lines := []string{fmt.Sprintf("summary: the registering tool's own word, read from %s at commit %s (committed %s)",
 		s.Source.RepoPath, s.Source.Commit, s.Source.CommittedAt)}
-	if r.Reg.SummaryCarried {
-		lines = append(lines, "  "+ArcSummaryCarriedLine)
-	}
 	if s.ClosingCondition != "" {
 		lines = append(lines, "closing condition (stated): "+s.ClosingCondition)
 	}

@@ -165,10 +165,10 @@ func TestTheArcVerbsTakeTheirFlagsAndNothingElse(t *testing.T) {
 	}
 }
 
-// prePodOf answers a schema-2 payload EXACTLY as a pod built before schema 2 does — the strict
-// decoder's 400 naming the first unknown key, measured against such a build (see
-// `preSchemaTwoRefusals`) — and hands every other request to `next`, the real pod. It is the old pod
-// for the one request shape the two builds disagree on.
+// prePodOf answers a schema-2 payload EXACTLY as a pod built before schema 2 does — its strict
+// decoder's 400 naming the first unknown key, the line measured against such a build — and hands
+// every other request to `next`, the real pod. It is the old pod for the one request shape the two
+// builds disagree on.
 func prePodOf(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
@@ -177,7 +177,7 @@ func prePodOf(next http.Handler) http.Handler {
 			if strings.Contains(string(body), `"summary"`) {
 				w.Header().Set("X-Store-Status", "bad-request")
 				w.WriteHeader(400)
-				io.WriteString(w, "bad request: body must be one JSON object of the registration schema (json: unknown field \"summary\")\n")
+				io.WriteString(w, oldPodRefusal+"\n")
 				return
 			}
 		}
@@ -185,15 +185,19 @@ func prePodOf(next http.Handler) http.Handler {
 	})
 }
 
-const schemaTwoPayload = `{"schema":2,"status":"open","members":[{"session":"s-0007","role":"originated"}],` +
-	`"visible_to_declared":true,"summary":{"state_now":["moved"],"next_steps":[],"task_refs":[],"aliases":[],` +
-	`"source":{"repo_path":"docs/h.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}}}`
+const oldPodRefusal = `bad request: body must be one JSON object of the registration schema (json: unknown field "summary")`
 
-// TestANewClientFallsBackToSchemaOneAgainstAnOldPodAndSaysWhatWasLost: a host whose tooling sends a
-// summary, talking to a pod built before schema 2, still REGISTERS the arc (status and members), and
-// stderr says the summary and the opt-in were not stored. The POSITIVE CONTROL is the same payload to
-// the new pod: no fallback line, and the summary is served.
-func TestANewClientFallsBackToSchemaOneAgainstAnOldPodAndSaysWhatWasLost(t *testing.T) {
+const schemaTwoPayload = `{"schema":2,"status":"open","members":[{"session":"s-0007","role":"originated"}],` +
+	`"summary":{"state_now":["moved"],"next_steps":[],"task_refs":[],"aliases":[],` +
+	`"source":{"repo_path":"docs/h.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}},` +
+	`"visible_to_declared":true}`
+
+// TestAnOldPodsRefusalOfSchemaTwoIsReportedAsARefusal: a pod built before schema 2 refuses the
+// payload, and the client SAYS so — the pod's own line on stderr, the write-refused exit (6), no
+// "registered" line, and nothing stored. It does not downgrade and re-send: that printed success
+// while the summary the caller sent was dropped. The POSITIVE CONTROL is the same payload to a pod
+// that knows schema 2, which registers it and serves the summary.
+func TestAnOldPodsRefusalOfSchemaTwoIsReportedAsARefusal(t *testing.T) {
 	for _, old := range []bool{true, false} {
 		journal := filepath.Join(t.TempDir(), "journal.jsonl")
 		tsrv := arcPod(t, journal)
@@ -209,39 +213,17 @@ func TestANewClientFallsBackToSchemaOneAgainstAnOldPodAndSaysWhatWasLost(t *test
 			t.Fatal(err)
 		}
 		code, out, errOut := runCLI(t, "arc-register", "--scope", "alpha-notes", "--slug", "gadget-rollout", "--from", payload)
-		if code != ExitOK || !strings.Contains(out, "arc-registered: alpha-notes/gadget-rollout · members=1") {
-			t.Fatalf("old=%v: the registration must land: %d\n%s\n%s", old, code, out, errOut)
-		}
-		fellBack := strings.Contains(errOut, "predates arc schema 2") &&
-			strings.Contains(errOut, "the summary and the declared-scope visibility opt-in are NOT stored")
 		shown, _ := podBody(t, tsrv.URL, "/api/v1/arc/alpha-notes/gadget-rollout")
-		hasSummary := strings.Contains(shown, "\nstate now: 1\n- moved\n")
-		if fellBack != old || hasSummary == old {
-			t.Fatalf("old=%v: fell back %v, summary stored %v\nstderr:\n%s\nshown:\n%s", old, fellBack, hasSummary, errOut, shown)
+		if old {
+			if code != ExitWriteRefused || !strings.Contains(errOut, oldPodRefusal) || strings.Contains(out, "arc-registered") ||
+				!strings.Contains(shown, "status=arc-unregistered") {
+				t.Fatalf("an old pod's refusal must be reported, exit 6, nothing stored: %d\nstdout:\n%s\nstderr:\n%s\nshown:\n%s", code, out, errOut, shown)
+			}
+			continue
 		}
-	}
-}
-
-// TestTheFallbackFiresOnlyOnAnOldPodsOwnRefusal: every other refusal is reported as itself and
-// nothing is re-sent — a malformed summary on a NEW pod, and a schema-1 payload an old pod refuses.
-func TestTheFallbackFiresOnlyOnAnOldPodsOwnRefusal(t *testing.T) {
-	for name, tc := range map[string]struct {
-		detail, payload string
-		want            bool
-	}{
-		"old pod, schema 2":      {preSchemaTwoRefusals[1], `{"schema":2,"summary":{}}`, true},
-		"old pod, opt-in only":   {preSchemaTwoRefusals[2], `{"schema":2,"visible_to_declared":true}`, true},
-		"old pod, nothing new":   {preSchemaTwoRefusals[0], `{"schema":2}`, true},
-		"new pod's own refusal":  {"bad request: summary.state_now[0] must not be blank", `{"schema":2,"summary":{}}`, false},
-		"old pod, schema 1 body": {preSchemaTwoRefusals[0], `{"schema":1}`, false},
-		"not JSON":               {preSchemaTwoRefusals[1], `{"schema":2,`, false},
-	} {
-		out, ok := schemaOneFallback([]byte(tc.payload), &WriteRefused{ExitCode: ExitWriteRefused, Status: "bad-request", Detail: tc.detail})
-		if ok != tc.want {
-			t.Fatalf("%s: fallback=%v, want %v", name, ok, tc.want)
-		}
-		if ok && (strings.Contains(string(out), "summary") || strings.Contains(string(out), "visible_to") || !strings.Contains(string(out), `"schema":1`)) {
-			t.Fatalf("%s: the downgraded payload still carries schema 2: %s", name, out)
+		if code != ExitOK || !strings.Contains(out, "arc-registered: alpha-notes/gadget-rollout · members=1") ||
+			!strings.Contains(shown, "\nstate now: 1\n- moved\n") {
+			t.Fatalf("POSITIVE CONTROL: a schema-2 pod registers the payload: %d\n%s\n%s\nshown:\n%s", code, out, errOut, shown)
 		}
 	}
 }

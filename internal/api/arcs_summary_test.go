@@ -160,7 +160,7 @@ func TestAnOptInCannotReachAScopeTheRegistrantCannotWrite(t *testing.T) {
 
 // TestTheSummaryIsServedAsTheToolsDatedWord pins the rendered summary block as WHOLE lines, after
 // the member list: provenance first, then the claims, the ranked steps numbered in the order sent,
-// aliases folded/deduplicated/sorted. A schema-1 re-push then CARRIES it and says so.
+// aliases folded/deduplicated/sorted.
 func TestTheSummaryIsServedAsTheToolsDatedWord(t *testing.T) {
 	h := newHarness(t)
 	withJournal(t, h)
@@ -178,14 +178,37 @@ func TestTheSummaryIsServedAsTheToolsDatedWord(t *testing.T) {
 	if !strings.HasSuffix(got, want+"\n") {
 		t.Fatalf("summary block:\n%s", got)
 	}
+}
+
+// TestAPushWithoutTheOptInMakesTheArcHomeOnlyAgain: the opt-in is CLEARABLE. An opted-in arc is
+// shown to the beta-only reader; one schema-1 re-push (a host whose tooling cannot send schema 2)
+// clears the opt-in and the summary, and that reader then gets the arc-unregistered answer, byte
+// for byte what a never-registered arc answers, and no listing row. The home reader still sees the
+// arc, with its new status and no summary.
+func TestAPushWithoutTheOptInMakesTheArcHomeOnlyAgain(t *testing.T) {
+	h := newHarness(t)
+	withJournal(t, h)
+	if put := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, arcV2(true)); put.status != 200 {
+		t.Fatalf("register: %d %q", put.status, put.body)
+	}
+	if got := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", narrowToken, nil, ""); got.headers.Get("X-Store-Status") != report.StatusArcFound {
+		t.Fatalf("POSITIVE CONTROL: the opted-in arc is shown to the declared-scope reader:\n%s", got.body)
+	}
 	if put := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil,
 		`{"schema":1,"status":"closed","declared_scopes":["beta-notes"]}`); put.status != 200 {
 		t.Fatalf("schema-1 re-push: %d %q", put.status, put.body)
 	}
-	again := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, "").body
-	if !strings.Contains(again, "\nstatus: closed\n") || !strings.Contains(again, "\n  "+report.ArcSummaryCarriedLine+"\n") ||
-		!strings.Contains(again, "\nnext steps (ranked): 2\n") {
-		t.Fatalf("a schema-1 push must update the status and CARRY the summary, saying so:\n%s", again)
+	shown := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", narrowToken, nil, "")
+	absent := h.do(t, "GET", "/api/v1/arc/ghost-void/gadget-move", narrowToken, nil, "")
+	if shown.headers.Get("X-Store-Status") != report.StatusArcUnregistered || shown.body != absent.body {
+		t.Fatalf("after a push without the opt-in the declared-scope reader must get the absent answer:\n%s", shown.body)
+	}
+	if listed := h.do(t, "GET", "/api/v1/arcs/beta-notes", narrowToken, nil, ""); strings.Contains(listed.body, "gadget-move") {
+		t.Fatalf("the arc is still listed to the declared-scope reader:\n%s", listed.body)
+	}
+	home := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, "").body
+	if !strings.Contains(home, "\nstatus: closed\n") || strings.Contains(home, "\nsummary:") || strings.Contains(home, "OPTED IN") {
+		t.Fatalf("the home reader sees the new state with no summary and no opt-in:\n%s", home)
 	}
 }
 

@@ -1,6 +1,7 @@
 package report
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -99,6 +100,34 @@ func TestEveryArcReaderHonoursTheOptInAndOnlyTheOptIn(t *testing.T) {
 	for _, reader := range []string{"Arcs", "Arc", "ArcsAcross", "ArcsCheck", "SessionsAcross"} {
 		if got := seen[reader]; len(got) != 1 || !got["opted-arc"] {
 			t.Errorf("%s saw %v — want exactly the opted-in arc", reader, got)
+		}
+	}
+}
+
+// TestTheAliasesSegmentIsAlwaysTheRowsLastSegment: a listing row is ` · `-separated and, when an
+// arc has aliases, the LAST segment is `aliases <a>, <b>` — with and without ` · declared-visible`
+// before it. A consumer splits on the last ` · ` to read them, which is only sound because aliases
+// are stored in the slug charset (`internal/arcs`' hostile-alias test) and nothing renders after them.
+func TestTheAliasesSegmentIsAlwaysTheRowsLastSegment(t *testing.T) {
+	for _, optIn := range []bool{false, true} {
+		rep := ArcsReport{Status: StatusArcsListed, Scope: "south-notes", Arcs: []ArcLine{{
+			Home: "east-notes", Slug: "kettle-arc", Status: arcs.StatusOpen, ClosingKind: arcs.ClosingCheck,
+			Members: 2, Declared: true, OptIn: optIn, Aliases: []string{"boil-move", "http-3"}}}}
+		var row string
+		for _, line := range strings.Split(rep.RenderText(), "\n") {
+			if strings.HasPrefix(line, "- east-notes/kettle-arc ") {
+				row = line
+			}
+		}
+		segments := strings.Split(row, " · ")
+		if got := segments[len(segments)-1]; got != "aliases boil-move, http-3" {
+			t.Fatalf("optIn=%v: the last segment is %q, want the aliases segment\n%s", optIn, got, row)
+		}
+		if hasOptIn := slices.Contains(segments, "declared-visible"); hasOptIn != optIn {
+			t.Fatalf("optIn=%v: declared-visible present=%v\n%s", optIn, hasOptIn, row)
+		}
+		if optIn && segments[len(segments)-2] != "declared-visible" {
+			t.Fatalf("declared-visible must sit immediately before the aliases segment:\n%s", row)
 		}
 	}
 }

@@ -1,13 +1,11 @@
 package client
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"slices"
 	"strconv"
 
 	"github.com/ZacxDev/cairn/internal/doctor"
@@ -243,60 +241,15 @@ func ArcRegister(env Env, opts Options) (int, error) {
 	path := "/api/v1/arc/" + quoteAll(home) + "/" + quoteAll(opts.Slug)
 	headers, body, err := SendWrite(cfg, "PUT", path, payload, opts.Timeout, nil)
 	if err != nil {
-		downgraded, ok := schemaOneFallback(payload, err)
-		if !ok {
-			return 0, err
-		}
-		fmt.Fprintf(env.Stderr, "cairn: %s predates arc schema 2 and refused the schema-2 payload — re-sending as schema 1: "+
-			"the status, members and declared scopes are registered; the summary and the declared-scope visibility opt-in are NOT stored\n",
-			cfg.URL)
-		if headers, body, err = SendWrite(cfg, "PUT", path, downgraded, opts.Timeout, nil); err != nil {
-			return 0, err
-		}
+		// 🔴 A REFUSAL IS REPORTED AS ITSELF, INCLUDING A PRE-SCHEMA-2 POD'S. This client does not
+		// downgrade a payload and retry: a quiet re-send printed success while the part the caller
+		// sent it for was not stored. Falling back to schema 1 is the registering TOOL's decision,
+		// made with the refusal in hand.
+		return 0, err
 	}
 	env.recordRead(alias, home)
 	fmt.Fprintf(env.Stdout, "cairn: %s instance=%s home=%s slug=%s\n",
 		headerOr(headers, "X-Store-Status", "unknown"), alias, home, opts.Slug)
 	fmt.Fprint(env.Stdout, store.DecodeReplace(body))
 	return ExitOK, nil
-}
-
-// preSchemaTwoRefusals are the EXACT 400 lines a pod built before schema 2 answers a schema-2
-// payload with, measured against such a build: its strict decoder names the first unknown key, and
-// a payload using neither new key reaches its schema check. A pod that knows schema 2 never says any
-// of them about a schema-2 payload, so a match is positive evidence of an OLD pod — never a guess
-// from "some 400".
-var preSchemaTwoRefusals = []string{
-	"bad request: schema must be 1",
-	`bad request: body must be one JSON object of the registration schema (json: unknown field "summary")`,
-	`bad request: body must be one JSON object of the registration schema (json: unknown field "visible_to_declared")`,
-}
-
-// schemaOneFallback is "this refusal came from a pre-schema-2 pod, and here is the same
-// registration as schema 1": the payload with `summary` and `visible_to_declared` removed and
-// `schema` set to 1. ok is false for every other refusal, and for a payload that is not a schema-2
-// JSON object — the client still does not VALIDATE the payload (the pod's `arcs.DecodePayload` is
-// the one validator); it removes two keys an old pod cannot read, and the pod judges the rest.
-//
-// 🔴 WHY A CLIENT FALLBACK AND NOT A REFUSAL: a host upgraded before its pod would otherwise stop
-// registering arcs at all — status and members included — the moment its tooling starts sending a
-// summary. The stderr line says what was NOT stored, and the exit stays the registration's own.
-func schemaOneFallback(payload []byte, err error) ([]byte, bool) {
-	var refused *WriteRefused
-	if !errors.As(err, &refused) || refused.Status != "bad-request" ||
-		!slices.Contains(preSchemaTwoRefusals, refused.Detail) {
-		return nil, false
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(payload, &fields) != nil || string(fields["schema"]) != "2" {
-		return nil, false
-	}
-	delete(fields, "summary")
-	delete(fields, "visible_to_declared")
-	fields["schema"] = json.RawMessage("1")
-	out, mErr := json.Marshal(fields)
-	if mErr != nil {
-		return nil, false
-	}
-	return out, true
 }

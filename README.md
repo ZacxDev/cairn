@@ -437,9 +437,27 @@ A `schema: 2` payload may add two OPTIONAL fields; everything else is as above.
   <committed_at>)`); a listing row gains ` · aliases a, b`.
 - **`visible_to_declared: true`** — the arc's **opt-in**: it is also shown, on `arc-show`,
   `arcs`, `arcs --check` and the browser's arcs and session pages, to readers of **any declared
-  scope**, whether or not they can read its home. Its body then carries `visibility exception: …`
-  and its listing row ` · declared-visible`, so the answer says why it is there. Unset or `false`
-  is exactly the home-only rule.
+  scope**, whether or not they can read its home. Its body then carries `visibility exception
+  (visible_to_declared: true): …` and its listing row ` · declared-visible`, so the answer says why
+  it is there. Unset or `false` is exactly the home-only rule.
+
+**What a consumer may rely on in a listing row** (pinned by tests):
+
+- the row is ` · `-separated, and schema 2 adds at most two segments at its END, in this order:
+  ` · declared-visible` (only for an opted-in arc), then ` · aliases a, b` (only when it has
+  aliases). **When present, the aliases segment is always the LAST segment**, so it can be read
+  by splitting on the last ` · `;
+- **an alias is stored in the slug charset** (`[a-z0-9.-]`), folded exactly as a slug is: lower
+  case, and every other character — `/`, a space, ` · `, any non-ASCII letter — becomes `-`, runs
+  collapse, ends are trimmed. So `HTTP/3` is stored as `http-3`, an alias can never contain the
+  ` · ` separator, and one that folds to nothing is refused. Match aliases by folding the query
+  the same way.
+
+**The opt-in is withdrawn by the next push without it.** Every registration REPLACES the summary
+and the opt-in — nothing carries them forward. A schema-2 push without `visible_to_declared` (or
+with it `false`) makes an opted-in arc home-only again, and a **schema-1 push clears both** and is
+stored as schema 1. ⚠ So a host whose tooling still sends schema 1 drops an arc's summary and
+opt-in on its next push; upgrade every host that registers the same arc together.
 
 **Who may opt in:** whoever may register the arc at all — the **write** verb on the home and on
 every declared scope, unchanged. That is what makes the opt-in safe to honour: an arc is put in front
@@ -447,8 +465,19 @@ of a scope's readers only by somebody who may write that scope. ⚠ The check ru
 registrant whose write is revoked later leaves the arc visible there until the next push.
 
 **Bounds — refused, never truncated** (a cut "next step" is a different instruction):
-`closing_condition` ≤ 1000 bytes; `state_now`/`next_steps` ≤ 20 items of ≤ 500 bytes; `task_refs` ≤
-32 of ≤ 200; `aliases` ≤ 16 of ≤ 64; `repo_path` ≤ 256; the stored summary ≤ 16 KiB in all. Every
+
+| field | at most |
+|---|---|
+| `closing_condition` | 1000 bytes |
+| `state_now` | 20 items, each ≤ 500 bytes |
+| `next_steps` | 20 items, each ≤ 500 bytes |
+| `task_refs` | 32 items, each ≤ 200 bytes, no whitespace |
+| `aliases` | 16 items, each ≤ 64 bytes as sent |
+| `source.repo_path` | 256 bytes, repository-relative, no `.` or `..` segment |
+| `source.commit` | a full lower-case commit id, 40 or 64 hex |
+| the whole stored summary | 16 KiB (binds on its own: 20 + 20 items at the item cap exceed it) |
+
+Every
 string must be one non-blank line of valid UTF-8 with no control character or Unicode line
 separator (the answer is lines, and an embedded newline could print a line that reads as the pod's
 own), and is refused on a **confident secret** — the same rule subset memos refuse on. A refusal
@@ -459,14 +488,11 @@ names the field, never the value. Unknown fields are still refused, at every dep
 | direction | what happens |
 |---|---|
 | an old client → a new pod | unchanged. Schema-1 registrations are accepted, and both read verbs print the pod's body verbatim, so an old client shows a summary and the opt-in lines as a new one does. Every arc answer about schema-1 arcs is **byte-identical** to the old pod's, headers included |
-| a new client → an old pod | the old pod refuses any schema-2 payload with a 400. `arc-register` recognises that pod's own refusal (exact lines, measured), re-sends the same registration as **schema 1** without `summary` and `visible_to_declared`, and says so on stderr: `… predates arc schema 2 and refused the schema-2 payload — re-sending as schema 1: … the summary and the declared-scope visibility opt-in are NOT stored`. The exit is the registration's own. Any other refusal is reported as itself |
+| a new client → an old pod | the old pod refuses any schema-2 payload with a 400 (`bad request: body must be one JSON object of the registration schema (json: unknown field "…")`, or `bad request: schema must be 1` for a schema-2 payload using neither field). `arc-register` **reports that refusal as a refusal**: the pod's line on stderr, exit **6**, nothing registered. It does not downgrade and re-send — falling back to schema 1 is the registering tool's decision, made with the refusal in hand |
 | a journal written by a new pod, read by an old one | a record that uses neither new field is written as **schema 1**, byte for byte, so it still reads. A record that uses one is **skipped** by the old pod and counted as damage (`⚠ the registration journal holds record(s) that could not be read`, and an operator-log line); the arc shows its last schema-1 state, or is not shown at all if it never had one. Nothing is deleted: rolling forward again shows it |
 
 ⚠ **So roll every binary that reads the arc journal before any tooling sends schema 2** —
-`cairn-server` and `cairn-ui` both do. A **schema-1 push never erases** a summary or the opt-in a
-schema-2 push recorded: a host still running older tooling cannot say either, so both are kept and
-the answer says `⚠ summary carried from an earlier registration …`. A schema-2 push that omits them
-clears them.
+`cairn-server` and `cairn-ui` both do.
 
 ⚠ **Not on the browser's arc page yet.** The arc page prints no summary, and it addresses an arc by
 its home scope's id among the scopes you can read, so an opted-in arc whose home you cannot read is

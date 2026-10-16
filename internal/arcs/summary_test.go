@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -165,10 +167,11 @@ func TestNextStepsKeepTheirRankAndAliasesFold(t *testing.T) {
 	}
 }
 
-// TestASchemaOnePushCarriesTheSummaryAndASchemaTwoPushReplacesIt: merge rule 7, one level up. A
-// host still on schema-1 tooling re-registers (new status): the summary and opt-in survive, marked
-// carried. A schema-2 push that omits them clears them — it could have said them and did not.
-func TestASchemaOnePushCarriesTheSummaryAndASchemaTwoPushReplacesIt(t *testing.T) {
+// TestEveryPushReplacesTheSummaryAndTheOptIn: neither is carried across a push. A schema-1 push
+// (a host whose tooling cannot send schema 2) CLEARS both and is stored as schema 1, and a schema-2
+// push without the opt-in makes an opted-in arc home-only again — so widening an arc's visibility
+// is always reversible by the next push.
+func TestEveryPushReplacesTheSummaryAndTheOptIn(t *testing.T) {
 	j := Journal{Path: filepath.Join(t.TempDir(), "journal.jsonl")}
 	push := func(body string) Registration {
 		t.Helper()
@@ -179,24 +182,25 @@ func TestASchemaOnePushCarriesTheSummaryAndASchemaTwoPushReplacesIt(t *testing.T
 		}
 		return out.Record
 	}
-	first := push(strings.Replace(summaryJSON(nil), `{"schema":2,`, `{"schema":2,"visible_to_declared":true,`, 1))
-	if first.Summary == nil || !first.VisibleToDeclared || first.SummaryCarried {
-		t.Fatalf("first push: %+v", first)
+	optedIn := strings.Replace(summaryJSON(nil), `{"schema":2,`, `{"schema":2,"visible_to_declared":true,`, 1)
+	first := push(optedIn)
+	if first.Summary == nil || !first.VisibleToDeclared || first.Schema != SchemaSummary {
+		t.Fatalf("POSITIVE CONTROL: the first push opts in with a summary: %+v", first)
 	}
-	carried := push(`{"schema":1,"status":"closed"}`)
-	if carried.Status != StatusClosed || carried.Summary == nil || !carried.VisibleToDeclared ||
-		!carried.SummaryCarried || carried.Schema != SchemaSummary {
-		t.Fatalf("a schema-1 push must update the status and CARRY the summary: %+v", carried)
+	cleared := push(`{"schema":1,"status":"closed"}`)
+	if cleared.Status != StatusClosed || cleared.Summary != nil || cleared.VisibleToDeclared || cleared.Schema != Schema {
+		t.Fatalf("a schema-1 push must CLEAR the summary and the opt-in: %+v", cleared)
 	}
-	cleared := push(`{"schema":2,"status":"closed"}`)
-	if cleared.Summary != nil || cleared.VisibleToDeclared || cleared.SummaryCarried || cleared.Schema != Schema {
-		t.Fatalf("a schema-2 push that omits both clears them: %+v", cleared)
+	push(optedIn)
+	homeOnly := push(summaryJSON(nil))
+	if homeOnly.VisibleToDeclared || homeOnly.Summary == nil {
+		t.Fatalf("a schema-2 push without the opt-in makes the arc home-only and keeps its own summary: %+v", homeOnly)
 	}
 	snap, err := j.Read()
-	if err != nil || snap.Skipped != 0 || snap.Records != 3 {
+	if err != nil || snap.Skipped != 0 || snap.Records != 4 {
 		t.Fatalf("every record must fold back (records %d, skipped %d, %v)", snap.Records, snap.Skipped, err)
 	}
-	if got := snap.Latest[Key{"alpha-notes", "gadget-rollout"}]; got.Summary != nil {
+	if got := snap.Latest[Key{"alpha-notes", "gadget-rollout"}]; got.VisibleToDeclared {
 		t.Fatalf("the folded state must be the last push: %+v", got)
 	}
 }
@@ -210,7 +214,6 @@ func TestOneArcStateHasOneSpellingInTheJournal(t *testing.T) {
 		"schema 1 with the opt-in": strings.Replace(good, `"schema":2`, `"schema":1`, 1),
 		"schema 2 using nothing":   strings.Replace(good, `,"visible_to_declared":true`, "", 1),
 		"schema 3":                 strings.Replace(good, `"schema":2`, `"schema":3`, 1),
-		"schema 1 marked carried":  strings.Replace(strings.Replace(good, `,"visible_to_declared":true`, `,"summary_carried":true`, 1), `"schema":2`, `"schema":1`, 1),
 	} {
 		if snap := fold([]byte(line + "\n")); snap.Skipped != 1 || snap.Records != 0 {
 			t.Fatalf("%s must be skipped: %+v\n%s", name, snap, line)
@@ -248,4 +251,30 @@ func TestVisibleToIsTheHomeOrAnOptedInDeclaredScope(t *testing.T) {
 			t.Fatalf("%s: VisibleTo = %v, want %v", tc.name, got, tc.want)
 		}
 	}
+}
+
+// TestAHostileAliasIsStoredInTheSlugCharsetOrRefused: an alias is folded to the slug charset
+// (`[a-z0-9.-]`), so a stored alias can never carry the listing row's ` · ` separator, a `/`, a
+// space or a non-ASCII character — which is what lets a consumer read the aliases segment as the
+// row's LAST ` · ` segment. One that folds to nothing is refused rather than stored empty.
+func TestAHostileAliasIsStoredInTheSlugCharsetOrRefused(t *testing.T) {
+	slug := regexp.MustCompile(`^[a-z0-9.-]+$`)
+	hostile := []string{"one · two", "HTTP/3", "with  spaces", "naïve café", "x · declared-visible", "a,b"}
+	raw := make([]string, len(hostile))
+	for i, h := range hostile {
+		raw[i] = fmt.Sprintf("%q", h)
+	}
+	reg, _ := decode(t, summaryJSON(map[string]string{"aliases": "[" + strings.Join(raw, ",") + "]"}))
+	if len(reg.Summary.Aliases) == 0 {
+		t.Fatal("POSITIVE CONTROL: hostile aliases that fold to something are stored")
+	}
+	for _, a := range reg.Summary.Aliases {
+		if !slug.MatchString(a) || strings.Contains(a, "·") {
+			t.Fatalf("stored alias %q is outside the slug charset (all: %q)", a, reg.Summary.Aliases)
+		}
+	}
+	if !slices.Contains(reg.Summary.Aliases, "http-3") || !slices.Contains(reg.Summary.Aliases, "one-two") {
+		t.Fatalf("`/` and ` · ` fold to `-`: %q", reg.Summary.Aliases)
+	}
+	refused(t, summaryJSON(map[string]string{"aliases": `[" · "]`}), "summary.aliases[0] normalizes to nothing")
 }
