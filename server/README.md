@@ -1483,9 +1483,9 @@ by a pod with `$CAIRN_OIDC_GROUPS_CLAIM` set ([`internal/identity/README.md`](..
 cairn-server -map-group \
   -group readers -group-provider <the pod's $CAIRN_OIDC_PROVIDER> \
   -group-object scp_… -group-verbs read
-# stdout, exit 0:  cairn-control: group-mapped provider=… group=readers object=scope:scp_… verbs=read epoch=<n>
+# stdout, exit 0:  cairn-control: group-mapped provider=… group=readers object=scope:scp_… verbs=read effective=read epoch=<n>
 cairn-server -unmap-group -group readers -group-provider … -group-object scp_…
-# stdout, exit 0:  cairn-control: group-unmapped provider=… group=readers object=scope:scp_… verbs=read epoch=<n>
+# stdout, exit 0:  cairn-control: group-unmapped provider=… group=readers object=scope:scp_… verbs=read effective=read epoch=<n>
 ```
 
 - `-group-object` takes a scope id (`scp_…`) or a project id (`prj_…`); the kind is read from the
@@ -1493,9 +1493,12 @@ cairn-server -unmap-group -group readers -group-provider … -group-object scp_�
   reserved admin group is made to reach everything without editing the map, and it is the thing to
   check before mapping one.
 - 🔴 **Verbs above `read` are RECORDED but CAPPED.** `-group-verbs read,write` writes both into
-  the journal, and a federated principal resolves to `read` only (`control.FederatedVerbCeiling`):
+  the journal, and a federated principal resolves to `read` only (`control.FederatedVerbCeiling()`):
   a federated write is answered `403 legacy-cannot-write` and writes nothing. The record is kept
-  so a later build that can attribute a federated write needs no map rewrite.
+  so a later build that can attribute a federated write needs no map rewrite. The success line
+  prints both — `verbs=read,write effective=read` — and stderr names the verbs that have no
+  effect. A set WITHOUT `read` (`-group-verbs write`) reaches nothing and is refused (78),
+  nothing written.
 - A federated request's audit line carries ` sub=… jti=… groups=…` after `status=` (the
   normalised claimed groups, `-` when none); no other line changes. A caller whose groups reach
   nothing is answered `scope-absent`, never 401.

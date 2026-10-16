@@ -1237,7 +1237,7 @@ federation*; what binds an edit HERE:
   journal can name one and the map stays its ONLY source of authority. `Kind.IsPrincipal` is the
   separate question `identity.Identity.Valid` asks.
 - **The read ceiling is in `ResolveFederated` and nowhere else.** Every mapping is intersected
-  with `FederatedVerbCeiling` (read) as it is folded in; the journal keeps the verbs the operator
+  with `FederatedVerbCeiling()` (read) as it is folded in; the journal keeps the verbs the operator
   wrote. Not in `addObject`, which every grant also passes through, and not in `Narrow`, which
   every credential does — the `federation-ceiling-applies-to-every-principal` row is that
   mistake.

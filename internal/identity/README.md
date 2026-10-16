@@ -495,7 +495,7 @@ every token this verifier accepts is resolved by `control.ResolveFederated`:
 - **who** — a *federated principal*, kind `federated`, id derived from `(provider, sub)` (stable
   across requests, naming no journal row), displayed `<provider>:<sub>` in the audit line;
 - **what** — the union, over the token's claimed groups, of each live mapping's object at its
-  verbs **capped at `read`** (`control.FederatedVerbCeiling`; see the read ceiling below). The map is the control journal's `group-mapped` / `group-unmapped` records, written by
+  verbs **capped at `read`** (`control.FederatedVerbCeiling()`; see the read ceiling below). The map is the control journal's `group-mapped` / `group-unmapped` records, written by
   `cairn-server -map-group` / `-unmap-group` and by nothing else. A mapping names a scope, or a
   **project** — which covers every scope the project gains later, so a reserved admin group mapped
   to a project reaches everything present and future without the map being edited;
@@ -526,7 +526,7 @@ What bounds it, each structural rather than documented:
 
 🔴 **THE READ CEILING: A FEDERATED PRINCIPAL READS, AND NEVER WRITES.** `-map-group` records
 whatever verbs the operator writes — `write` and `admin` included — and `ResolveFederated`
-caps every mapping at `read` as it folds it in (`control.FederatedVerbCeiling`). The cap lives
+caps every mapping at `read` as it folds it in (`control.FederatedVerbCeiling()`). The cap lives
 there, not in `Narrow`, because `Narrow` is a credential's narrowing and every principal passes
 through it. A federated `POST`/`PUT` is therefore answered exactly as any principal holding the
 write verb nowhere is — `403` with `X-Store-Status: legacy-cannot-write`, nothing written — and
