@@ -124,7 +124,7 @@ func TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing(t *testing
 	if strings.Join(who.Groups, ",") != "ghost,notes-readers" {
 		t.Fatalf("Identity.Groups = %v, want the normalised [ghost notes-readers]", who.Groups)
 	}
-		report, ok := who.Auth.Federation()
+	report, ok := who.Auth.Federation()
 	if !ok || report.Status != control.FederationMapped ||
 		strings.Join(report.Mapped, ",") != "notes-readers" || strings.Join(report.Unmapped, ",") != "ghost" {
 		t.Fatalf("federation report = %+v (%v)", report, ok)

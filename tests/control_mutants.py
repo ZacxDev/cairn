@@ -7331,8 +7331,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="federation-counts-only-the-first-mapped-group",
         path="internal/control/group_map.go",
-        old="\t\t\tmapped = true\n\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs)\n",
-        new="\t\t\tmapped = true\n\t\t\tif len(report.Mapped) == 0 {\n\t\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs)\n\t\t\t}\n",
+        old="\t\t\tmapped = true\n\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling))\n",
+        new="\t\t\tmapped = true\n\t\t\tif len(report.Mapped) == 0 {\n\t\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling))\n\t\t\t}\n",
         killer="TestTheAuthorizationMatrixIsExactlyThis",
         why="'first matching group wins' is how a role lookup is often written; it makes a caller in "
         "two groups reach only one of them (F2's write, F3's beacon-secrets write).",
@@ -7393,6 +7393,26 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestWithTheModeOffAGroupsClaimIsIgnored",
         why="the compatibility claim: a deployment that never set the variable must resolve journal "
         "users exactly as before, whatever claims its issuer happens to emit.",
+    ),
+    Mutant(
+        name="federation-read-ceiling-removed",
+        path="internal/control/group_map.go",
+        old="gm.Verbs.Intersect(FederatedVerbCeiling))\n",
+        new="gm.Verbs)\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        extra_killers=("TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite",),
+        why="'the mapping says write, so give write' reads as honouring the operator — and every "
+        "federated write then lands with an attribution trailer the grammar cannot parse.",
+    ),
+    Mutant(
+        name="federation-ceiling-applies-to-every-principal",
+        path="internal/control/resolve.go",
+        old="func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {\n",
+        new="func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {\n"
+        "\tverbs = verbs.Intersect(FederatedVerbCeiling)\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="the shared expansion is the tempting single place for the cap; there it also strips "
+        "write from every user reached through a grant (carol, alice, bob's beacon-secrets cells).",
     ),
     Mutant(
         name="federation-audit-drops-the-groups-field",

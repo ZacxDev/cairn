@@ -30,8 +30,9 @@ func TestAProjectMappingCoversAScopeCreatedAfterIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if got := verbsOrEmpty(a.VerbsOn(later)); got != "read,write,admin" {
-		t.Fatalf("a scope created AFTER the project mapping reads %q, want read,write,admin — a mapping expanded at write time freezes the project's scope set", got)
+	// The mapping RECORDS every verb; the read ceiling caps it, so "reached" is `read`.
+	if got := verbsOrEmpty(a.VerbsOn(later)); got != "read" {
+		t.Fatalf("a scope created AFTER the project mapping reads %q, want read — a mapping expanded at write time freezes the project's scope set", got)
 	}
 	if got := len(a.ScopeIDs(VerbRead)); got != 3 {
 		t.Fatalf("the admins group reaches %d scopes, want beacon's 3", got)

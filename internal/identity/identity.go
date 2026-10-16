@@ -121,7 +121,8 @@ type Identity struct {
 	Fingerprint string
 	// Token is the verified bearer token's own `sub` and `jti`, for the audit line's
 	// `sub=`/`jti=` fields, and it is nil for every backend that did not verify a signed
-	// token (a machine token, a cookie session, a proxy assertion).
+	// token (a machine token, a cookie session, a proxy assertion) — and, on this tree, for
+	// a verified token outside group federation too: only the federated return sets it.
 	//
 	// 🔴 AUDIT-ONLY. It is what joins one request's record to the issuer's record of
 	// minting that token; it is NOT a second identity and NO ROUTE MAY BRANCH ON IT — the

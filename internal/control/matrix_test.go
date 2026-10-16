@@ -73,19 +73,21 @@ var expectedMatrix = map[ID]map[ID]string{
 // two clients failing identically compare equal. A resolver that returned the empty
 // authority for everybody would satisfy any test that only checks refusals.
 //
-// So the count is pinned from BOTH sides. 39 of 144 cells allow: not 0, which would
+// So the count is pinned from BOTH sides. 38 of 144 cells allow: not 0, which would
 // mean the resolver grants nothing, and not 144, which would mean it grants
 // everything. Any change to the fixture moves this number and forces whoever made it
 // to say what they expected.
 //
 // ⚠ THE DELTA FROM 32/60, STATED SO IT IS AN EXPECTATION RATHER THAN A RE-PIN: group
 // federation added SEVEN federated rows (`expectedFederatedMatrix`) over the same four
-// scopes — 84 cells — and exactly 7 of them allow: F1 1, F2 2, F3 3, F7 1, and F4/F5/F6
-// none. The five user rows are unchanged at 32 of 60, and they are walked on the model
+// scopes — 84 cells — and exactly 6 of them allow: F1 1, F2 2, F3 2, F7 1, and F4/F5/F6
+// none. (It was 7 before the read ceiling: F3's beacon-secrets read `read,write` through
+// `ops`, whose mapping still RECORDS read+write and now resolves to read. That cell is the
+// ceiling's witness; `writers` is mapped read+write too and reaches atlas-runbook at read.) The five user rows are unchanged at 32 of 60, and they are walked on the model
 // that ALSO holds the group map, so a group mapping that leaked into `Resolve` would move
 // a user cell rather than hide in a separate test.
 const (
-	expectedAllowCells = 32 + 7
+	expectedAllowCells = 32 + 6
 	expectedTotalCells = 5*4*3 + 7*4*3
 )
 
@@ -101,23 +103,23 @@ const (
 // mechanism is separately observable:
 //
 //	readers    → atlas-notes read        a single mapping
-//	writers    → atlas-notes write       a UNION across two claimed groups (F2)
+//	writers    → atlas-runbook rw        a UNION across two claimed groups (F2), capped to read
 //	beacon-all → PROJECT beacon read     a project object, expanded at resolve time (F3)
-//	ops        → beacon-secrets rw       a union of a scope and a project mapping (F3)
-//	retired    → atlas-runbook admin     mapped, then UNMAPPED — the tombstone's witness (F5)
+//	ops        → beacon-secrets rw       the READ CEILING's witness: recorded rw, resolves read (F3)
+//	retired    → atlas-runbook read      mapped, then UNMAPPED — the tombstone's witness (F5)
 //	readers@elsewhere → atlas-runbook    another issuer's mapping of the same group name
 func federatedWorldEvents() []Event {
 	return append(worldEvents(),
 		Event{Kind: EventGroupMapped, At: at(40), Provider: fedProvider, Group: "readers",
 			ObjectKind: ObjectScope, ObjectID: sAtlasNotes, Verbs: NewVerbSet(VerbRead)},
 		Event{Kind: EventGroupMapped, At: at(41), Provider: fedProvider, Group: "writers",
-			ObjectKind: ObjectScope, ObjectID: sAtlasNotes, Verbs: NewVerbSet(VerbWrite)},
+			ObjectKind: ObjectScope, ObjectID: sAtlasRunbook, Verbs: NewVerbSet(VerbRead, VerbWrite)},
 		Event{Kind: EventGroupMapped, At: at(42), Provider: fedProvider, Group: "beacon-all",
 			ObjectKind: ObjectProject, ObjectID: pBeacon, Verbs: NewVerbSet(VerbRead)},
 		Event{Kind: EventGroupMapped, At: at(43), Provider: fedProvider, Group: "ops",
 			ObjectKind: ObjectScope, ObjectID: sBeaconSecrets, Verbs: NewVerbSet(VerbRead, VerbWrite)},
 		Event{Kind: EventGroupMapped, At: at(44), Provider: fedProvider, Group: "retired",
-			ObjectKind: ObjectScope, ObjectID: sAtlasRunbook, Verbs: NewVerbSet(VerbAdmin)},
+			ObjectKind: ObjectScope, ObjectID: sAtlasRunbook, Verbs: NewVerbSet(VerbRead)},
 		Event{Kind: EventGroupUnmapped, At: at(45), Provider: fedProvider, Group: "retired",
 			ObjectKind: ObjectScope, ObjectID: sAtlasRunbook},
 		Event{Kind: EventGroupMapped, At: at(46), Provider: fedOther, Group: "readers",
@@ -141,19 +143,19 @@ var expectedFederatedMatrix = []federatedCase{
 	// the same group name at `elsewhere` reaches atlas-runbook and must not reach here.
 	{"F1-one-mapped-group", []string{"readers"}, FederationMapped, "readers", "",
 		map[ID]string{sAtlasNotes: "read", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
-	// F2 — the UNION across two claimed groups onto one scope; the first group alone is "read".
+	// F2 — the UNION across two claimed groups; the first group in sorted order (`readers`)
+	// alone leaves atlas-runbook empty. `writers` is mapped read+write and reads "read".
 	{"F2-union-across-groups", []string{"writers", "readers"}, FederationMapped, "readers,writers", "",
-		map[ID]string{sAtlasNotes: "read,write", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
-	// F3 — a project object (beacon-all) unioned with a scope mapping (ops). The first group
-	// in sorted order is `beacon-all`, so a resolver that stopped there reads beacon-secrets
-	// as "read".
-	{"F3-project-object-and-scope-union", []string{"ops", "beacon-all"}, FederationMapped, "beacon-all,ops", "",
-		map[ID]string{sAtlasNotes: "", sAtlasRunbook: "", sBeaconNotes: "read", sBeaconSecrets: "read,write"}},
+		map[ID]string{sAtlasNotes: "read", sAtlasRunbook: "read", sBeaconNotes: "", sBeaconSecrets: ""}},
+	// F3 — a project object (beacon-all) and a scope mapping (ops) recorded read+write. The
+	// READ CEILING's witness: without it beacon-secrets reads "read,write".
+	{"F3-project-object-and-capped-scope", []string{"ops", "beacon-all"}, FederationMapped, "beacon-all,ops", "",
+		map[ID]string{sAtlasNotes: "", sAtlasRunbook: "", sBeaconNotes: "read", sBeaconSecrets: "read"}},
 	// F4 — claimed+UNMAPPED: authenticates, reaches nothing, and says why.
 	{"F4-only-unmapped-groups", []string{"ghost"}, FederationGroupsUnmapped, "", "ghost",
 		map[ID]string{sAtlasNotes: "", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
 	// F5 — a group whose mapping was UNMAPPED. Its row is the tombstone's only witness:
-	// without `group-unmapped` applying, atlas-runbook reads "admin".
+	// without `group-unmapped` applying, atlas-runbook reads "read".
 	{"F5-unmapped-after-mapping", []string{"retired"}, FederationGroupsUnmapped, "", "retired",
 		map[ID]string{sAtlasNotes: "", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
 	// F6 — a token that claims NO group.

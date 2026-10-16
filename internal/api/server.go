@@ -484,8 +484,8 @@ type request struct {
 	auth      control.Authorization
 
 	// token is the audit line's `sub=`/`jti=` source. It is non-nil only when a signed
-	// token's SIGNATURE VERIFIED — on a request that then authenticated, or on one refused
-	// `claims-refused` — and those fields are written only then. Audit-only: nothing on the
+	// token's SIGNATURE VERIFIED — on a request that then authenticated through group
+	// federation — and those fields are written only then. Audit-only: nothing on the
 	// serving path branches on it.
 	token *identity.TokenFacts
 }

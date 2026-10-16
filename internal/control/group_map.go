@@ -18,8 +18,11 @@ import (
 //
 //  1. THE CLAIM ONLY SELECTS. A claimed group with no live mapping contributes nothing; a
 //     token cannot name a scope, a project or a verb — only a group, which reaches exactly
-//     what the operator mapped it to. So the worst an issuer that lies can do is claim a
-//     group the caller is not in, which reaches that group's mapped objects and no others.
+//     what the operator mapped it to. An issuer that lies can claim a group the caller is
+//     not in, which reaches that group's mapped objects and no others — and, because `sub`
+//     is the issuer's text too and names the principal in every audit line, it can put any
+//     subject's name on those reads. Both stay inside the READ ceiling
+//     (`FederatedVerbCeiling`): nothing is ever written under a federated name.
 //  2. NOTHING IS WRITTEN ON A READ. A federated principal is computed per request from the
 //     claim and the map, so there is no account to provision, no row to clean up and no
 //     read route that becomes a user-creation endpoint (the hazard
@@ -147,6 +150,25 @@ func (a Authorization) Federation() (Federation, bool) {
 	return f, true
 }
 
+// FederatedVerbCeiling is the most a federated principal may do to any scope: READ.
+//
+// 🔴 A CEILING AT RESOLVE TIME, NOT A REFUSAL AT MAP TIME, AND IT LIVES HERE AND NOWHERE
+// ELSE. `-map-group` still records whatever verbs the operator wrote — the journal is the
+// operator's statement of intent, and a later build that can attribute a federated write
+// should not need the map rewritten — and `ResolveFederated` intersects every mapping with
+// this set as it folds it in. Here rather than in `Narrow` because `Narrow` is a
+// CREDENTIAL's narrowing and is applied to every principal; a federated-only rule placed
+// there would need a kind branch inside the one function every other principal also passes
+// through, which is the shape `tests/control_mutants.py`'s
+// `federation-ceiling-applies-to-every-principal` row exists to catch.
+//
+// WHY READ ONLY: every written bullet records its actor in an attribution trailer whose
+// actor class (`internal/write`'s `attributionActorClass`) cannot spell a federated
+// principal's `<provider>:<subject>` display, so a federated write would land with a
+// trailer the grammar reports as malformed — unattributable, and not idempotent on a
+// re-post. Writes wait for an actor spelling that can express a federated principal.
+var FederatedVerbCeiling = NewVerbSet(VerbRead)
+
 // PrefixFederated is the id prefix of a federated principal.
 const PrefixFederated = "fed"
 
@@ -157,8 +179,8 @@ var ErrFederatedSubject = errors.New("control: a federated principal needs a pro
 // token's (provider, subject) and its claimed groups.
 //
 // 🔴 THE AUTHORITY IS ∪ OVER THE CLAIMED GROUPS OF EACH LIVE MAPPING'S OBJECT, AT THE
-// MAPPING'S VERBS, AND NOTHING ELSE. No membership, no grant, no credential narrowing: a
-// federated principal is not a subject of any of those (see `KindFederated`), so the only
+// MAPPING'S VERBS CAPPED BY `FederatedVerbCeiling` (read), AND NOTHING ELSE. No membership,
+// no grant, no credential narrowing: a federated principal is not a subject of any of those (see `KindFederated`), so the only
 // source is the map. Every group is consulted — a mutant that stops at the first mapped
 // group, or that counts an unmapped one, is a row in `tests/control_mutants.py`.
 //
@@ -186,7 +208,7 @@ func ResolveFederated(m Model, provider, subject string, claimed []string) (Prin
 				continue
 			}
 			mapped = true
-			a.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs)
+			a.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling))
 		}
 		if mapped {
 			report.Mapped = append(report.Mapped, g)

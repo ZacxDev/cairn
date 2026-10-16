@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
+	"github.com/ZacxDev/cairn/internal/netid"
 )
 
 // GROUP FEDERATION AT THE SERVER SEAM, AUDIT HALF: a real server, a real
@@ -127,6 +129,14 @@ func newFedAuditHarness(t *testing.T) *fedAuditHarness {
 	if _, err := control.MapGroup(context.Background(), journal, control.GroupMapRequest{
 		Provider: fedAuditProvider, Group: "alpha-readers", ObjectKind: control.ObjectScope, ObjectID: alpha,
 		Verbs: control.NewVerbSet(control.VerbRead), At: fedAuditClock,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A mapping that RECORDS write. The read ceiling caps it; see
+	// `TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite`.
+	if _, err := control.MapGroup(context.Background(), journal, control.GroupMapRequest{
+		Provider: fedAuditProvider, Group: "alpha-writers", ObjectKind: control.ObjectScope, ObjectID: alpha,
+		Verbs: control.NewVerbSet(control.VerbRead, control.VerbWrite), At: fedAuditClock,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -243,5 +253,65 @@ func TestAMachineTokenLineCarriesNoTokenOrGroupFields(t *testing.T) {
 	line := lines[len(lines)-1]
 	if !strings.HasSuffix(line, " auth=ok result=200 status=recalled") {
 		t.Fatalf("a machine-token line gained a field:\n  %s", line)
+	}
+}
+
+// TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite pins the READ CEILING at the
+// server: a group mapped read+write still gets the no-write-anywhere answer, nothing lands,
+// and the refusal is not a 401 and is not counted toward the lockout.
+//
+// 🔴 RED AT e1b1356: there the write landed (200) with an attribution trailer whose actor is
+// the federated display `test-idp:member-0011` — outside the trailer grammar's actor class,
+// so the bullet's attribution is MALFORMED and a re-post from another session appends a
+// duplicate rather than being idempotent.
+func TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite(t *testing.T) {
+	h := newFedAuditHarness(t)
+	// A REAL five-failure limiter, so "not counted" is measurable rather than vacuous.
+	h.srv.Limiter = netid.NewRateLimiter(netid.DefaultMaxFailures, netid.DefaultFailureWindow, netid.DefaultLockout)
+	token := h.signer.sign(t, fedAuditClaims("member-0011", "jti-w", []string{"alpha-writers"}))
+	entry := filepath.Join(h.srv.StoreRoot, "alpha-notes", "gadget-one.md")
+	before, err := os.ReadFile(entry)
+	if err != nil {
+		t.Fatalf("precondition: the fixture entry: %v", err)
+	}
+	// Positive control: the same token READS the scope, so the refusal below is about
+	// writing, not about reaching.
+	if got := h.do(t, "GET", "/api/v1/recall/alpha-notes", token, nil, ""); got.status != 200 {
+		t.Fatalf("precondition: the federated token cannot read alpha-notes: %d", got.status)
+	}
+
+	for i := 0; i < 7; i++ { // more than DefaultMaxFailures, so a counted refusal would lock out
+		got := h.do(t, "POST", "/api/v1/entry/alpha-notes/gadget-one/bullets", token, nil,
+			`{"text":"a federated note","session":"s-one"}`)
+		if got.status != 403 || got.headers.Get("X-Store-Status") != "legacy-cannot-write" {
+			t.Fatalf("post %d: a federated write answered %d %q (status %q), want the no-write-anywhere 403",
+				i, got.status, got.body, got.headers.Get("X-Store-Status"))
+		}
+	}
+	put := h.do(t, "PUT", "/api/v1/entry/alpha-notes/newcomer-one", token,
+		map[string]string{"If-None-Match": "*"},
+		"---\nservice: newcomer-one\nscope: alpha-notes\n---\n\n## What it is\nsynthetic.\n")
+	if put.status != 403 {
+		t.Fatalf("a federated create answered %d %q, want 403", put.status, put.body)
+	}
+	after, _ := os.ReadFile(entry)
+	if string(before) != string(after) {
+		t.Fatalf("a refused federated write changed the entry:\n%s", after)
+	}
+	if _, err := os.Stat(filepath.Join(h.srv.StoreRoot, "alpha-notes", "newcomer-one.md")); err == nil {
+		t.Fatal("a refused federated create wrote a file")
+	}
+	// Not counted: after eight refusals from one address the same token still reads.
+	if got := h.do(t, "GET", "/api/v1/recall/alpha-notes", token, nil, ""); got.status != 200 {
+		t.Fatalf("after the refused writes the token reads %d — a refusal was counted toward the lockout", got.status)
+	}
+	// POSITIVE CONTROL on the limiter: five bad credentials from the same address DO lock
+	// it out, so the green above is about the write refusal and not about a limiter that
+	// counts nothing.
+	for i := 0; i < netid.DefaultMaxFailures; i++ {
+		h.do(t, "GET", "/api/v1/recall/alpha-notes", "not-a-token", nil, "")
+	}
+	if got := h.do(t, "GET", "/api/v1/recall/alpha-notes", token, nil, ""); got.status != 401 {
+		t.Fatalf("five bad credentials did not lock the address out (%d) — the limiter is not counting", got.status)
 	}
 }
