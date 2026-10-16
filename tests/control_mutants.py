@@ -368,8 +368,9 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="project-as-object-dropped",
         path="internal/control/resolve.go",
-        old="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs)\n\t\t\t}",
-        new="\t\tcase ObjectProject:\n\t\t\tcontinue",
+        # Re-derived when the expansion moved into `addObject` (group federation shares it).
+        old="\tcase ObjectProject:\n\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs)\n\t\t}",
+        new="\tcase ObjectProject:\n\t\treturn",
         killer="TestTheAuthorizationMatrixIsExactlyThis",
         why="granting a whole project and having it confer nothing — the mirror of the "
         "row above, and reached by a completely different principal.",
@@ -6992,10 +6993,16 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-new-scope-does-not-reach-a-PROJECT-grantee",
         path="internal/control/resolve.go",
-        old="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {",
-        new="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n"
+        # Re-derived when the expansion moved into `addObject`: the grant's time is known only at
+        # the GRANT call site, so the freeze is spelled there — a project grant expanded by hand
+        # over the scopes that existed when it was granted, every other object as before.
+        old="\t\ta.addObject(m, g.ObjectKind, g.ObjectID, g.Verbs)\n",
+        new="\t\tif g.ObjectKind == ObjectProject {\n"
+        "\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n"
         "\t\t\t\tif m.Scopes[scopeID].CreatedAt.After(g.GrantedAt) {\n"
-        "\t\t\t\t\tcontinue\n\t\t\t\t}",
+        "\t\t\t\t\tcontinue\n\t\t\t\t}\n"
+        "\t\t\t\ta.add(scopeID, g.Verbs)\n\t\t\t}\n\t\t\tcontinue\n\t\t}\n"
+        "\t\ta.addObject(m, g.ObjectKind, g.ObjectID, g.Verbs)\n",
         killer="TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential",
         why="the audience `-create-scope` names. Freezing a project grant to the scopes that "
         "existed when it was granted is a plausible policy, and it would make this command's "
@@ -7005,8 +7012,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-project-grantee-reaches-a-new-scope-with-more-than-its-verbs",
         path="internal/control/resolve.go",
-        old="\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs)",
-        new="\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs.Union(NewVerbSet(VerbWrite)))",
+        old="\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs)",
+        new="\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs.Union(NewVerbSet(VerbWrite)))",
         killer="TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential",
         why="the grantee arm's SECOND half: a read grant must stay read on the new scope. An "
         "arm asserting only `read=true` passes a resolver that hands every project grantee write.",
