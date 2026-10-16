@@ -368,8 +368,9 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="project-as-object-dropped",
         path="internal/control/resolve.go",
-        old="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs)\n\t\t\t}",
-        new="\t\tcase ObjectProject:\n\t\t\tcontinue",
+        # Re-derived when the expansion moved into `addObject` (group federation shares it).
+        old="\tcase ObjectProject:\n\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs)\n\t\t}",
+        new="\tcase ObjectProject:\n\t\treturn",
         killer="TestTheAuthorizationMatrixIsExactlyThis",
         why="granting a whole project and having it confer nothing — the mirror of the "
         "row above, and reached by a completely different principal.",
@@ -7099,10 +7100,16 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-new-scope-does-not-reach-a-PROJECT-grantee",
         path="internal/control/resolve.go",
-        old="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {",
-        new="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n"
+        # Re-derived when the expansion moved into `addObject`: the grant's time is known only at
+        # the GRANT call site, so the freeze is spelled there — a project grant expanded by hand
+        # over the scopes that existed when it was granted, every other object as before.
+        old="\t\ta.addObject(m, g.ObjectKind, g.ObjectID, g.Verbs)\n",
+        new="\t\tif g.ObjectKind == ObjectProject {\n"
+        "\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n"
         "\t\t\t\tif m.Scopes[scopeID].CreatedAt.After(g.GrantedAt) {\n"
-        "\t\t\t\t\tcontinue\n\t\t\t\t}",
+        "\t\t\t\t\tcontinue\n\t\t\t\t}\n"
+        "\t\t\t\ta.add(scopeID, g.Verbs)\n\t\t\t}\n\t\t\tcontinue\n\t\t}\n"
+        "\t\ta.addObject(m, g.ObjectKind, g.ObjectID, g.Verbs)\n",
         killer="TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential",
         why="the audience `-create-scope` names. Freezing a project grant to the scopes that "
         "existed when it was granted is a plausible policy, and it would make this command's "
@@ -7112,8 +7119,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-project-grantee-reaches-a-new-scope-with-more-than-its-verbs",
         path="internal/control/resolve.go",
-        old="\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs)",
-        new="\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs.Union(NewVerbSet(VerbWrite)))",
+        old="\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs)",
+        new="\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs.Union(NewVerbSet(VerbWrite)))",
         killer="TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential",
         why="the grantee arm's SECOND half: a read grant must stay read on the new scope. An "
         "arm asserting only `read=true` passes a resolver that hands every project grantee write.",
@@ -7426,6 +7433,182 @@ MUTANTS: tuple[Mutant, ...] = (
         new="`-remove-member`'s two",
         killer="TestTheRegisteredFlagCountInProseMatchesTheCode",
         why="proves the new mode is IN the flag-count gate.",
+    ),
+    # --- group federation (`control.ResolveFederated`, `CAIRN_OIDC_GROUPS_CLAIM`) ---
+    Mutant(
+        name="federation-counts-only-the-first-mapped-group",
+        path="internal/control/group_map.go",
+        old="\t\t\tmapped = true\n\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling()))\n",
+        new="\t\t\tmapped = true\n\t\t\tif len(report.Mapped) == 0 {\n\t\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling()))\n\t\t\t}\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="'first matching group wins' is how a role lookup is often written; it makes a caller in "
+        "two groups reach only one of them — F2's second group's scope (atlas-runbook, read under "
+        "the ceiling) goes unread.",
+    ),
+    Mutant(
+        name="federation-reports-an-unmapped-group-as-mapped",
+        path="internal/control/group_map.go",
+        old="\t\tmapped := false\n",
+        new="\t\tmapped := true\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="an unmapped group then counts toward `mapped`, so a caller whose groups are all unmapped "
+        "is told `mapped` and the projects-unmapped answer a self-view serves becomes unreachable.",
+    ),
+    Mutant(
+        name="federation-claim-names-are-not-validated",
+        path="internal/control/group_map.go",
+        old="\t\tif err := ValidGroupName(g); err != nil {\n\t\t\treturn nil, fmt.Errorf(\"%w: %v\", ErrGroupsClaim, err)",
+        new="\t\tif err := ValidGroupName(g); false && err != nil {\n\t\t\treturn nil, fmt.Errorf(\"%w: %v\", ErrGroupsClaim, err)",
+        killer="TestAMalformedClaimIsRefusedWhole",
+        extra_killers=("TestAMalformedGroupsClaimRefusesTheWholeToken",),
+        why="'an unmapped name matches nothing anyway' reads as a reason to skip the check — and a "
+        "claim the issuer got wrong is then read partially instead of refused.",
+    ),
+    Mutant(
+        name="federation-ignores-the-provider-namespace",
+        path="internal/control/group_map.go",
+        old="\t\t\tif gm.Provider != provider || gm.Group != g {\n",
+        new="\t\t\tif gm.Group != g {\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="a group name looks global; it is the issuer's vocabulary, and another issuer's `readers` "
+        "would reach this issuer's callers (F1's atlas-runbook).",
+    ),
+    Mutant(
+        name="group-unmapped-is-not-applied",
+        path="internal/control/journal.go",
+        old="\t\tdelete(m.GroupMaps, key)\n",
+        new="\t\t_ = key\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        extra_killers=("TestMapGroupAndUnmapGroupRefuseBeforeWritingAnything",),
+        why="an unmap that replays clean and removes nothing — the group keeps reaching the object "
+        "(F5's atlas-runbook admin).",
+    ),
+    Mutant(
+        name="identity-valid-refuses-a-federated-principal",
+        path="internal/identity/identity.go",
+        old="\treturn i.Principal.Kind.IsPrincipal() && i.Principal.ID",
+        new="\treturn i.Principal.Kind.Valid() && i.Principal.ID",
+        killer="TestTheServerServesAFederatedPrincipalExactlyItsMappedScope",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="`Kind.Valid` reads as 'a real kind', and is the journal's SUBJECT check; using it here "
+        "makes every federated token a uniform 401 — the seam neither half sees alone.",
+    ),
+    Mutant(
+        name="federation-reads-the-claim-with-the-mode-off",
+        path="internal/identity/supabase.go",
+        old="\tif s.groupsClaim != \"\" {\n\t\tgroups, err := claimedGroups(",
+        new="\tif true {\n\t\tgroups, err := claimedGroups(",
+        killer="TestWithTheModeOffAGroupsClaimIsIgnored",
+        why="the compatibility claim: a deployment that never set the variable must resolve journal "
+        "users exactly as before, whatever claims its issuer happens to emit.",
+    ),
+    Mutant(
+        name="federation-read-ceiling-removed",
+        path="internal/control/group_map.go",
+        old="gm.Verbs.Intersect(FederatedVerbCeiling()))\n",
+        new="gm.Verbs)\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        extra_killers=("TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite",),
+        why="'the mapping says write, so give write' reads as honouring the operator — and every "
+        "federated write then lands with an attribution trailer the grammar cannot parse.",
+    ),
+    Mutant(
+        name="federation-ceiling-applies-to-every-principal",
+        path="internal/control/resolve.go",
+        old="func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {\n",
+        new="func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {\n"
+        "\tverbs = verbs.Intersect(FederatedVerbCeiling())\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="the shared expansion is the tempting single place for the cap; there it also strips "
+        "write from every user reached through a grant (carol, alice, bob's beacon-secrets cells).",
+    ),
+    Mutant(
+        name="map-group-no-read-refusal-removed",
+        path="internal/control/group_map.go",
+        old="\tif kind == EventGroupMapped && req.Verbs.Intersect(FederatedVerbCeiling()).Empty() {\n",
+        new="\tif false && kind == EventGroupMapped && req.Verbs.Intersect(FederatedVerbCeiling()).Empty() {\n",
+        killer="TestAGroupMappingWithoutReadIsRefusedAndWritesNothing",
+        extra_killers=("TestMapGroupRefusesASetTheCeilingCapsToNothing",),
+        why="`-group-verbs write` then exits 0 and records a mapping that confers nothing on any "
+        "request while reading like access in the journal.",
+    ),
+    Mutant(
+        name="map-group-inert-verb-warning-removed",
+        path="cmd/cairn-server/mapgroup.go",
+        old="\tif inert := written.Verbs.Minus(written.Effective); !inert.Empty() {\n",
+        new="\tif inert := written.Verbs.Minus(written.Effective); false && !inert.Empty() {\n",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        why="the operator who typed write is told nothing about it having no effect.",
+    ),
+    Mutant(
+        name="map-group-inert-verbs-computed-against-the-wrong-set",
+        path="cmd/cairn-server/mapgroup.go",
+        old="\tif inert := written.Verbs.Minus(written.Effective); !inert.Empty() {\n",
+        new="\tif inert := written.Verbs.Minus(written.Verbs); !inert.Empty() {\n",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        why="a warning whose set is always empty is present in the source and never fires — the "
+        "SPELLED-guard shape.",
+    ),
+    Mutant(
+        name="map-group-effective-set-is-the-recorded-set",
+        path="internal/control/group_map.go",
+        old="Effective: verbs.Intersect(FederatedVerbCeiling()),",
+        new="Effective: verbs,",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        extra_killers=("TestMapGroupRefusesASetTheCeilingCapsToNothing",),
+        why="the success line then prints `effective=read,write`, the untruth the field exists to end.",
+    ),
+    Mutant(
+        name="federated-ceiling-widened",
+        path="internal/control/group_map.go",
+        old="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead) }",
+        new="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead, VerbWrite) }",
+        killer="TestTheFederatedCeilingIsReadAndCannotBeRebound",
+        extra_killers=("TestTheAuthorizationMatrixIsExactlyThis",
+                       "TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite"),
+        why="one verb added to the literal and federated writes land with unparseable trailers again.",
+    ),
+    Mutant(
+        name="federated-ceiling-is-a-shared-package-value",
+        path="internal/control/group_map.go",
+        old="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead) }",
+        new="var federatedCeiling = NewVerbSet(VerbRead)\n\nfunc FederatedVerbCeiling() VerbSet { return federatedCeiling }",
+        killer="TestTheFederatedCeilingIsReadAndCannotBeRebound",
+        equivalent=True,
+        equivalent_reason="`VerbSet` is a uint8 value: the function returns a copy, so no caller "
+        "can mutate the shared value through what it receives, and the var is unexported so no other "
+        "package can rebind it. No behavioural test can tell the two apart; the property that "
+        "mattered — no EXPORTED, assignable ceiling — is what the function shape removes.",
+        why="listed so a reader finding it SURVIVED reads it as a value-type fact, not a gap.",
+    ),
+    Mutant(
+        name="federation-audit-drops-the-groups-field",
+        path="internal/api/server.go",
+        old="\tif _, federated := rq.auth.Federation(); federated {\n",
+        new="\tif _, federated := rq.auth.Federation(); false && federated {\n",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        why="the field is the only record of WHICH groups granted a federated read; a line without it "
+        "names the caller and not the authority they used.",
+    ),
+    Mutant(
+        name="federation-audit-renders-the-unnormalised-claim",
+        path="internal/identity/groups.go",
+        old="\treturn normalized, nil\n",
+        new="\t_ = normalized\n\treturn groups, nil\n",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="returning what the issuer sent reads as faithful; it records an order and duplicates "
+        "authority was never computed from, so two identical authorities audit differently.",
+    ),
+    Mutant(
+        name="federation-does-not-set-the-token-facts",
+        path="internal/identity/supabase.go",
+        old="\t\t\tToken:  &TokenFacts{Subject: claims.Subject, ID: string(claims.ID)},\n",
+        new="",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="the user path sets them; a second return that forgets to leaves federated requests — the "
+        "ones an issuing service most needs to join on `jti` — with no `sub=`/`jti=`.",
     ),
 )
 

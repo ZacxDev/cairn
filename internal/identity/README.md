@@ -79,6 +79,14 @@ quotas, rate limits, abuse handling and deletion/export with it.
 `TestAVerifiedTokenForAnUnknownUserIsRefusedRatherThanProvisioned` counts the users before
 and after.
 
+⚠ **ONE OPT-IN EXCEPTION, AND IT PROVISIONS NOTHING EITHER: group federation.** With
+`CAIRN_OIDC_GROUPS_CLAIM` set, a verified token is never looked up as a user at all — it resolves
+to a *federated principal* computed per request from its groups claim and the operator's group
+map, and **nothing is written**. So the rule above still holds in the sense that matters (no read
+route creates an account); what changes is that "unknown subject" stops being the question.
+§ *Group federation* below; `TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing`
+counts the journal's bytes and epoch across a battery of authentications.
+
 ## 🔴 The trusted-header backend is a foot-gun built to refuse to fire
 
 State the failure plainly, because everything else is shaped by it: **if the pod is
@@ -299,6 +307,7 @@ deprecated spelling — see `written`'s comment, and `oidcrename_test.go`.
 | `CAIRN_OIDC_REQUIRE_ROLE` | no | refuses a token whose top-level `role` claim is not this string. Unset means **no role is required** |
 | `CAIRN_OIDC_LEEWAY` | no | a Go duration, clock-skew allowance, in `[0, 2m]`. Unset is **zero** |
 | `CAIRN_OIDC_MAX_AGE` | no | a Go duration; additionally refuses a token whose `iat` is older than it, regardless of `exp`. Unset or `0` means `exp` alone bounds the session |
+| `CAIRN_OIDC_GROUPS_CLAIM` | no | the name of ONE top-level claim holding the caller's groups; turns **group federation** on (§ *Group federation*). Unset is off — today's behaviour. A blank value is refused; a nested path (`a.b`) is refused. A NEW name, with no `CAIRN_SUPABASE_*` spelling. 🔴 **`cmd/cairn-ui` refuses to start with it set** (`ErrGroupFederationOnBrowserSurface`): a federated principal is no journal user, and every browser flow is keyed on one |
 
 🔴 **EVERY ONE OF THOSE IS PART OF A LEDGER, AND TOUCHING ANY ONE OF THEM ARMS THE BACKEND.**
 A half-configured verifier does not come up quietly — it is `os.Exit(78)` in a crash loop
@@ -439,7 +448,8 @@ them is special here, which is the point of the rename.
 anything.** Wiring your IdP does not make cairn multi-tenant-by-SSO. Specifically:
 
 - **a verified token for a subject this control plane holds no user for is REFUSED, never
-  provisioned.** Your IdP vouches for who somebody is; it says nothing about whether this
+  provisioned** (with group federation off — with it on, no user is looked up and nothing is
+  provisioned either; § *Group federation*). Your IdP vouches for who somebody is; it says nothing about whether this
   cairn instance has an account for them. Just-in-time provisioning would make every read
   route a user-creation endpoint for anybody with an account at your IdP.
 - **a federated user with no grants is authenticated and sees nothing.** The token verifies,
@@ -450,11 +460,15 @@ anything.** Wiring your IdP does not make cairn multi-tenant-by-SSO. Specificall
   answers the not-found body, and on the browse surface it renders as **`No scope is visible
   to this credential`** (`internal/ui`'s wording, pinned by its own tests). That is not a
   misconfiguration; it is the default state of a newly provisioned user.
-- **SSO group or role membership is NOT a scope grant.** Nothing in this repository reads a
-  `groups` claim, maps a role onto a project, or derives membership from a token. Project
-  membership and scope shares live in the control journal and are written by
-  `cairn-server`'s operator modes (the top-level `README.md` § *Operator modes* lists them), or
-  through `cairn-ui`'s share flow and team links.
+- **SSO group or role membership is NOT a scope grant — unless the operator opts in, and even
+  then the claim only SELECTS.** By default nothing reads a `groups` claim, maps a role onto a
+  project, or derives membership from a token. Project membership and scope shares live in the
+  control journal and are written by `cairn-server`'s operator modes (the top-level `README.md`
+  § *Operator modes* lists them), or through `cairn-ui`'s share flow and team links. The one
+  exception is **group federation** (`CAIRN_OIDC_GROUPS_CLAIM`, § *Group federation*), a
+  deliberate, opt-in reversal of this bullet whose trust statement is: **the issuer is trusted to
+  assert group membership; the claim only selects among groups the operator mapped.** A token
+  still cannot name a scope, a project or a verb, and a group nobody mapped reaches nothing.
 - **so you still manage grants**, per user, after they exist. The IdP decides who may ask;
   cairn decides what the answer is.
 - **and a configured journal is not optional once a verifier is armed.** An armed verifier
@@ -471,6 +485,127 @@ older than the bound regardless of `exp` — and the authority side (what the pr
 do) is bounded instead by `control.Cache`'s refresh. Narrowing the token side properly is
 P5/P6's, with a session store.
 
+## Group federation — an opt-in mode in which the issuer asserts groups
+
+🔴 **IT IS AN EXPLICIT REVERSAL OF "NOTHING READS A GROUPS CLAIM", OFF UNLESS CONFIGURED, AND ITS
+TRUST STATEMENT IS ONE SENTENCE: the issuer is trusted to assert group membership; the claim only
+selects among groups the operator mapped.** Set `CAIRN_OIDC_GROUPS_CLAIM` to the claim's name and
+every token this verifier accepts is resolved by `control.ResolveFederated`:
+
+- **who** — a *federated principal*, kind `federated`, id derived from `(provider, sub)` (stable
+  across requests, naming no journal row), displayed `<provider>:<sub>` in the audit line;
+- **what** — the union, over the token's claimed groups, of each live mapping's object at its
+  verbs **capped at `read`** (`control.FederatedVerbCeiling()`; see the read ceiling below). The map is the control journal's `group-mapped` / `group-unmapped` records, written by
+  `cairn-server -map-group` / `-unmap-group` and by nothing else. A mapping names a scope, or a
+  **project** — which covers every scope the project gains later, so a reserved admin group mapped
+  to a project reaches everything present and future without the map being edited;
+- **how it went** — a `control.Federation` report on the authority (`Authorization.Federation()`):
+  status `no-groups` (an empty claim), `groups-unmapped` (groups claimed, none mapped) or
+  `mapped`, plus the claimed groups split into mapped and unmapped. It is data about the caller's
+  OWN claim, so serving it to them is a self-view, not an enumeration of the map.
+
+What bounds it, each structural rather than documented:
+
+1. **The claim selects; it never names a scope, project or verb.** A token can claim a group,
+   and an unmapped group contributes nothing. ⚠ **But two things in a token are the issuer's
+   text, not one: the groups AND `sub`.** In this mode `sub` names the principal — it is the
+   `identity=<provider>:<sub>` of every audit line — and nothing in this control plane vouches
+   for it. So an issuer that lies can claim a group the caller is not in (reaching that group's
+   mapped objects and no others) AND can put any subject's name on those reads in the audit
+   trail. Both are bounded by the read ceiling: it reaches only what its claimed groups map to,
+   and can write nothing under anybody's name.
+2. **Nothing is written on a read.** No user, no membership, no grant: the principal exists for
+   one request. That is why this is not the self-serve signup § *A verified token for an unknown
+   user is a refusal* forbids.
+3. **A malformed claim refuses the token WHOLE, never partially.** Absent, `null`, not an array, a
+   non-string member, a name outside `[a-z0-9-]{1,40}`, or more than 64 distinct names: each is a
+   refusal (the uniform 401 on the wire). An empty array is how an issuer says "no groups"; it
+   authenticates and reaches nothing. Duplicates are folded, not refused.
+4. **One function decides.** `ResolveFederated` expands objects with the same `addObject` `Resolve`
+   uses for a grant, and the matrix test pins federated rows beside the user rows over one model.
+
+🔴 **THE READ CEILING: A FEDERATED PRINCIPAL READS, AND NEVER WRITES.** `-map-group` records
+whatever verbs the operator writes — `write` and `admin` included — and `ResolveFederated`
+caps every mapping at `read` as it folds it in (`control.FederatedVerbCeiling()`). The cap lives
+there, not in `Narrow`, because `Narrow` is a credential's narrowing and every principal passes
+through it. A federated `POST`/`PUT` is therefore answered exactly as any principal holding the
+write verb nowhere is — `403` with `X-Store-Status: legacy-cannot-write`, nothing written — and
+that is an authorization answer after a successful authentication: never a 401, never counted
+toward the lockout. **Why:** every written bullet carries an attribution trailer whose actor
+class (`internal/write`'s `attributionActorClass`, `[a-z0-9][a-z0-9-]{0,31}`) cannot spell a
+federated display `<provider>:<sub>`; measured without the cap, a federated write landed with a
+trailer the grammar reports as malformed, and a re-post of the same text from a second session
+appended a duplicate instead of answering `duplicate`. **CLOSING CONDITION for federated
+writes:** an actor class (and the matching strip, pinned against the oracle) that can express a
+federated principal, plus a write test showing a federated bullet with a PARSEABLE trailer and
+an idempotent re-post — then, and only then, the ceiling may be raised.
+
+🔴 **THE ISSUER MUST EMIT GROUP NAMES IN `[a-z0-9-]{1,40}`, AT MOST 64 OF THEM.** An
+off-the-shelf groups claim — mixed case (`Engineering`), a path (`/team/x`), an email address
+— is not in that alphabet, and one such name refuses the WHOLE token, which is a 401 COUNTED
+toward the client lockout: every caller behind the issuer's egress address shares that bucket.
+Configure a mapper or transform at the issuer so the claim carries names in the alphabet.
+
+🔴 **THE ISSUER MUST ALWAYS SEND THE CLAIM.** A missing groups claim refuses the token; an
+empty array is the only way to say "this caller has no groups". The two are kept apart on
+purpose: a misnamed `CAIRN_OIDC_GROUPS_CLAIM`, or an issuer that stopped emitting it, would
+otherwise authenticate every caller and show them nothing — a pod that looks healthy and
+answers nothing — where a refusal is loud.
+
+### What a 401 means in federation mode, and what the lockout counts
+
+**Every verified token resolves to a principal**, so no 401 is an authorization answer. The
+only 401s left are:
+
+- a token-verification failure — signature, key, algorithm, a malformed token, or a
+  claim-time check (`exp`, `nbf`, `iat`/max age, `iss`, `aud`, an empty `sub`);
+- a `role` mismatch, where `CAIRN_OIDC_REQUIRE_ROLE` is set;
+- a **malformed or missing groups claim** — **counted** toward the client lockout: an issuer
+  that signs for self-registered users hands out genuine tokens with any claim shape for
+  free, so it is guessing surface the limiter exists for;
+- the client lockout itself;
+- the transport refusals that come before authentication (no client address from a trusted
+  peer, a path outside `/api/v1/`, an unhandled method, an unparseable request).
+
+🔴 **AN EMPTY AUTHORITY IS NEVER A 401.** A `no-groups` or `groups-unmapped` caller
+authenticates and gets the visibility answers — `X-Store-Status: scope-absent` on a read,
+the not-found body on a write — exactly as a scope that does not exist.
+
+**The lockout an issuing service must stay under** is `internal/netid`'s, keyed on the client
+IP after trusted-proxy resolution, so every caller behind one egress address shares it:
+`netid.DefaultMaxFailures` (5) failures inside `netid.DefaultFailureWindow` (60 s) lock the
+address out for `netid.DefaultLockout` (900 s); each is overridable (`CAIRN_MAX_FAILURES`,
+`CAIRN_FAILURE_WINDOW_S`, `CAIRN_LOCKOUT_S`). A service minting tokens for many members from
+one address should stop after fewer consecutive 401s than `DefaultMaxFailures` and back off
+for at least the window, so a fault on its side cannot lock everyone behind it out.
+
+### The audit line of a federated request
+
+A federated request's line carries, appended after `status=` and in this order, ` sub=`
+and ` jti=` (the verified token's own, `-` when absent) and ` groups=` — the NORMALISED
+claimed groups (validated, deduplicated, sorted) comma-joined, `-` when the caller claimed
+none. `groups=` is written only when the authority came from `ResolveFederated`, so every
+non-federated line — machine token, unauthenticated, a refused token — keeps its shape. The
+values pass through `auditField`, and a group name cannot carry a space, a comma or a newline
+in the first place, so it cannot forge a field or a line
+(`TestAGroupNameCannotForgeAnAuditField`).
+
+🔴 **THE MODE IS ONE PATH FOR EVERY TOKEN FROM THE VERIFIER, NOT A FALLBACK.** With it on, a token
+whose `(provider, sub)` matches a journal user still resolves FEDERATED — the user's memberships
+and grants are not consulted through this verifier. "A known user first, else federate" was
+rejected: one subject would have two authorities that switch the day an operator runs
+`-create-user`, with nothing on the wire saying which answered. `cmd/cairn-server` announces the
+mode at startup and WARNS with the count of journal users under the same provider namespace
+(a warning, not a refusal: a refusal would make the pod's availability depend on a journal row,
+and could only ever be a claim about the journal at startup). Pinned by
+`TestFederatedModeIsOnePathAndDoesNotConsultAJournalUser`, whose mode-off arm is the positive
+control.
+
+⚠ **WHAT IT DOES NOT DO, YET.** No federated writes (the read ceiling above, with its closing
+condition). No self-view route: the `Federation` report is carried on the authority and
+read by nothing on the wire — there is no `whoami` route today. Each of those is a separate
+change. And `-group-provider` must equal `CAIRN_OIDC_PROVIDER`, which nothing can check —
+the same two-halves-of-one-key caveat as `-create-user -provider`.
 ## 🔴 What a 401 means, and what the client lockout counts
 
 **A 401 from the API pod means only that the request did not authenticate, or that the

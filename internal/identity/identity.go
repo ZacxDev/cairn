@@ -99,6 +99,13 @@ type Identity struct {
 	// would trade a real refusal for a cosmetic one. The name it lands on is the one
 	// the server already uses for this value.
 	Auth control.Authorization
+	// Groups is a FEDERATED token's claimed groups as `control.NormalizeClaimedGroups`
+	// returned them — validated, deduplicated, sorted — for the audit line's `groups=`
+	// field. nil for every identity that group federation did not produce.
+	//
+	// 🔴 AUDIT-ONLY, `Token`'s rule: no route may branch on it. What the groups REACH is
+	// `Auth`, computed from the same normalised list by `control.ResolveFederated`.
+	Groups []string
 	// Fingerprint is the audit line's `token=` field: the 12-hex `authz.TokenID` of
 	// the presented bearer token.
 	//
@@ -142,7 +149,7 @@ type TokenFacts struct {
 // the chain refuses to PROPAGATE such a value, and the server refuses to SERVE one, and
 // a chain of length one bypasses the first.
 func (i Identity) Valid() bool {
-	return i.Principal.Kind.Valid() && i.Principal.ID != "" && i.Principal.Display != ""
+	return i.Principal.Kind.IsPrincipal() && i.Principal.ID != "" && i.Principal.Display != ""
 }
 
 // Authenticator resolves a request to exactly one Identity.

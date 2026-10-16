@@ -468,6 +468,10 @@ type request struct {
 	// field, rather than a second spelling of it that is right for one backend.
 	authenticated bool
 
+	// groups is a FEDERATED request's normalised claimed groups, for the audit line's
+	// `groups=` field (`identity.Identity.Groups`). Audit-only, like `token`.
+	groups []string
+
 	// principal and auth are who this request is and what it may do.
 	//
 	// 🔴 ONE MATCH, THREE FACTS. The fingerprint, the identity and BOTH scope sets
@@ -822,6 +826,7 @@ func (rq *request) authenticate() bool {
 	rq.identity = who.Principal.Display
 	rq.visible = who.Auth.VisibleScopes(control.VerbRead)
 	rq.writable = who.Auth.VisibleScopes(control.VerbWrite)
+	rq.groups = who.Groups
 	return true
 }
 
@@ -1225,12 +1230,25 @@ func (rq *request) audit(result int, status string) {
 		line += " sub=" + auditField(orDash(rq.token.Subject), 256)
 		line += " jti=" + auditField(orDash(rq.token.ID), 128)
 	}
+	// `groups=` is appended for a FEDERATED request only — decided by the authority's own
+	// federation report, never by whether the list is empty — so a federated caller that
+	// claimed no group reads `groups=-` and every non-federated line, a verified user-mode
+	// token's included, is unchanged. The value is the NORMALISED list (`control`'s alphabet,
+	// so it cannot carry a space or a comma of its own) and still goes through `auditField`.
+	if _, federated := rq.auth.Federation(); federated {
+		line += " groups=" + auditField(orDash(strings.Join(rq.groups, ",")), auditGroupsLimit)
+	}
 	if rq.srv.Audit != nil {
 		rq.srv.Audit(line)
 		return
 	}
 	fmt.Fprintln(os.Stdout, line)
 }
+
+// auditGroupsLimit is the longest `groups=` value a valid claim can produce: the most
+// names a claim may carry, each at the longest a name may be, comma-joined. A value is
+// never truncated by it unless `control`'s bounds move without this constant.
+const auditGroupsLimit = control.MaxClaimedGroups*(control.MaxGroupNameLen+1) - 1
 
 // --- handlers ---------------------------------------------------------------------
 

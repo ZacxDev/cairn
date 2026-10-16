@@ -76,6 +76,11 @@ const (
 	// one variable is cheaper than deleting a working bound, and `EnvSupabaseLeeway` is
 	// the sibling it now reads exactly like.
 	EnvSupabaseMaxAge = "CAIRN_OIDC_MAX_AGE"
+	// EnvSupabaseGroupsClaim names the verified token's GROUPS CLAIM and turns on group
+	// federation (`control.ResolveFederated`). Unset is OFF — today's behaviour, byte for
+	// byte. 🔴 It is a NEW name with no deprecated `CAIRN_SUPABASE_*` spelling: nothing
+	// before it read a groups claim, so there is no manifest to keep working.
+	EnvSupabaseGroupsClaim = "CAIRN_OIDC_GROUPS_CLAIM"
 
 	// EnvProxyFronted is the explicit declaration. See `TrustedHeaderConfig.ProxyFronted`.
 	EnvProxyFronted = "CAIRN_TRUSTED_HEADER_PROXY_FRONTED"
@@ -399,6 +404,14 @@ var supabaseEnv = ledger{
 			name:   EnvSupabaseMaxAge,
 			policy: refuseBlank,
 			unset:  "`iat` is unbounded — a session minted hours ago still authenticates",
+		},
+		{
+			// 🔴 `refuseBlank`, BECAUSE A BLANK HERE IS AN OPERATOR WHO MEANT TO TURN A MODE ON.
+			// Read as unset, the pod would come up resolving every token against journal users
+			// instead — a different authority from the one the operator configured, silently.
+			name:   EnvSupabaseGroupsClaim,
+			policy: refuseBlank,
+			unset:  "no groups claim is read — a verified token reaches only a user this control plane holds",
 		},
 	},
 }
@@ -980,12 +993,27 @@ func SupabaseBackendFromEnvironment(env map[string]string, authority ModelSource
 	if !armed {
 		return nil, false, nil
 	}
+	// 🔴 GROUP FEDERATION IS AN API-POD MODE AND THE BROWSER SURFACE REFUSES IT. A federated
+	// principal is no journal user, and every browser flow — a session, the share flow, team
+	// links — is keyed on one (`control.KindUser`). Building the backend here would sign a
+	// browser in as a principal none of those flows can serve, so the setting is a startup
+	// refusal on this path rather than a mode that half-works.
+	if values[EnvSupabaseGroupsClaim] != "" {
+		return nil, false, ErrGroupFederationOnBrowserSurface
+	}
 	backend, err := supabaseFromEnv(values, authority)
 	if err != nil {
 		return nil, false, err
 	}
 	return backend, true, nil
 }
+
+// ErrGroupFederationOnBrowserSurface refuses `CAIRN_OIDC_GROUPS_CLAIM` where a browser signs
+// in. See `SupabaseBackendFromEnvironment`.
+var ErrGroupFederationOnBrowserSurface = errors.New(
+	"identity: " + EnvSupabaseGroupsClaim + " is set, and group federation is a mode of the API pod only — " +
+		"a federated principal is not a journal user, so no browser session, share or team link could serve it. " +
+		"Unset it for this program")
 
 // Issuer is the `iss` this backend requires.
 //
@@ -1221,6 +1249,7 @@ func supabaseFromEnv(values map[string]string, authority ModelSource) (*Supabase
 		RequireRole: r.get(EnvSupabaseRequireRole),
 		Leeway:      r.duration(EnvSupabaseLeeway),
 		MaxAge:      r.duration(EnvSupabaseMaxAge),
+		GroupsClaim: r.get(EnvSupabaseGroupsClaim),
 	}
 	if r.err != nil {
 		return nil, r.err
