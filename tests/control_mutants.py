@@ -2050,6 +2050,35 @@ MUTANTS: tuple[Mutant, ...] = (
         "handler is invisible to every other test.",
     ),
     Mutant(
+        name="an-older-jwks-refresh-overwrites-a-newer-one",
+        path="internal/identity/jwks.go",
+        old="\tif attempt < k.recorded {",
+        new="\tif false && attempt < k.recorded {",
+        killer="TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne",
+        why="committing in FINISH order looks harmless because each read is valid on its own; "
+        "with a timer and a SIGHUP in flight, the read that started before a `kid` was removed "
+        "can finish after the one that saw the removal and put the revoked key back.",
+    ),
+    Mutant(
+        name="sighup-re-reads-a-url-sourced-key-set",
+        path="cmd/cairn-server/main.go",
+        old="\t\tif supabase.KeysFromFile() {\n\t\t\tinstallKeyReload(supabase)",
+        new="\t\tif true {\n\t\t\tinstallKeyReload(supabase)",
+        killer="TestSIGHUPFetchesNothingForAURLSourcedKeySet",
+        why="\"re-read the keys on every reload\" reads as a harmless generalisation and puts a "
+        "request to the issuer on every token-file reload, so a reload during an issuer outage "
+        "prints a key-set refusal an operator reads as being about their tokens.",
+    ),
+    Mutant(
+        name="the-jwks-sighup-verdict-hardcodes-the-previous-count",
+        path="cmd/cairn-server/main.go",
+        old="\t\t\t\tbackend.KeyStatus().Keys, before.Keys)))",
+        new="\t\t\t\tbackend.KeyStatus().Keys, 1)))",
+        killer="TestSIGHUPReReadsAJWKSFileAndARefusalKeepsTheLastGoodSet",
+        why="a verdict whose `(was N)` does not track the set is a rotation an operator cannot "
+        "check from the line; a one-key fixture let exactly this survive.",
+    ),
+    Mutant(
         name="the-environment-reader-drops-the-jwks-file",
         path="internal/identity/config.go",
         old="url, file := r.get(EnvSupabaseJWKSURL), r.get(EnvSupabaseJWKSFile)",

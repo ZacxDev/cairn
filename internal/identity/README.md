@@ -548,6 +548,11 @@ What is new:
   still serving the last-known-good N key(s)`). Only for a file source: a URL is the issuer's, and a
   signal would only add a network call to every token reload. The refresh timer re-reads the file
   too, so a signal applies an edit NOW and is never the only way it is applied.
+- **refreshes commit in START order, not finish order.** The timer and a SIGHUP can overlap, and
+  the read that began first can finish last; `Refresh` numbers each attempt and discards a result
+  older than the newest one committed, so a read taken before a `kid` was removed cannot put it
+  back (`TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne`). The guard is in the shared
+  `Refresh`, so it holds for a URL source too.
 - **one source, not two.** A URL and a file together is `ErrJWKSTwoSources`, the ruling
   `secretFrom` makes for the proxy secret: a precedence rule makes a rotation of the losing source
   look applied.

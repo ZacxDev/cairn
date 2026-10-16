@@ -80,6 +80,10 @@ type KeySet struct {
 	lastErr   error
 	fetches   uint64
 	failures  uint64
+	// started numbers every `Refresh` as it BEGINS; recorded is the number of the newest
+	// attempt whose outcome has been committed. See `Refresh`'s ordering guard.
+	started  uint64
+	recorded uint64
 }
 
 // jwkKey is one parsed key, with the algorithm it may be used for.
@@ -300,13 +304,34 @@ func isLoopbackHost(host string) bool {
 // committed, timestamped and then served through a root that was readable again. An
 // empty key set committed here would refuse every session until the next successful
 // fetch, and would report itself `fresh` while doing it.
+//
+// 🔴 AN OLDER READ NEVER OVERWRITES A NEWER ONE'S OUTCOME. Two refreshes can be in flight at
+// once — the `Run` timer and a caller's (the pod's SIGHUP re-read of a file source) — and
+// because the read happens outside the lock, the one that STARTED first can FINISH last.
+// Committing in finish order would let a read taken before an operator removed a `kid`
+// re-install that key after the read that saw the removal, and the revoked key would verify
+// again until the next refresh. So each attempt is numbered when it begins, and a result
+// whose number is below the newest one already committed is DISCARDED: it changes no key,
+// no timestamp and no counter, and `Refresh` returns nil because the set it would have
+// replaced is newer than anything it read. Pinned by
+// `TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne`, which blocks the first read
+// on purpose.
 func (k *KeySet) Refresh(ctx context.Context) error {
+	k.mu.Lock()
+	k.started++
+	attempt := k.started
+	k.mu.Unlock()
+
 	// Outside the lock. See `mu`.
 	keys, err := k.fetch(ctx)
 	now := k.clock()
 
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if attempt < k.recorded {
+		return nil
+	}
+	k.recorded = attempt
 	k.attempted = now
 	if err != nil {
 		k.failures++

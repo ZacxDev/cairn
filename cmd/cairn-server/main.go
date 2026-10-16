@@ -582,7 +582,9 @@ func main() {
 	// re-materializes as part of publishing the new table, and a second registration
 	// would refresh twice for one signal — `control.RefreshTriggers` documents that two
 	// `signal.Notify` channels BOTH receive it, so this would be an extra refresh, not
-	// a missed one. One trigger, one place.
+	// a missed one. The rule is ONE SIGHUP CONSUMER PER SUBSYSTEM, not one per program:
+	// the token table's is `installReload`, and a file-sourced JWKS key set's is
+	// `installKeyReload` — see `installReload`'s comment for how the two coexist.
 	//
 	// 🔴 AND IT IS GATED FROM OUTSIDE THIS PROCESS, BECAUSE NOTHING INSIDE IT CAN BE.
 	// `TestTheBinarysOwnTimerIsWhatClosesTheDivergence` runs this binary, creates a
@@ -648,11 +650,21 @@ func main() {
 // reload path with its own parser is the shape where the migration guards silently stop
 // applying to the only file anybody edits after day one.
 //
-// ⚠ IT IS THE ONLY SIGHUP CONSUMER IN THIS PROGRAM, AND THAT IS A RULE RATHER THAN A
-// COINCIDENCE — see the authority timer above, which states it. A second
-// `signal.Notify` channel was added here for the control-journal cache and then removed:
-// it bought at most one refresh interval on a command a human runs by hand, and it put a
-// second answer beside the one the timer already gives.
+// ⚠ IT IS THE TOKEN TABLE'S ONLY SIGHUP CONSUMER, AND THE RULE IS ONE CONSUMER PER
+// SUBSYSTEM — see the authority timer above, which states it. A second `signal.Notify`
+// channel was added here for the control-journal cache and then removed: that cache is
+// re-materialized by this reload already, so the channel bought at most one refresh
+// interval on a command a human runs by hand, and put a second answer beside the one the
+// timer already gives.
+//
+// ⚠ THE PROGRAM HAS ONE OTHER SIGHUP CONSUMER, FOR A DIFFERENT SUBSYSTEM: `installKeyReload`,
+// installed only when the OIDC key set is read from a FILE. `signal.Notify` FANS OUT — every
+// registered channel receives each signal — so one `kill -HUP` drives both, each on its own
+// goroutine. Their ORDER IS NOT DEFINED and does not need to be: neither reads the other's
+// state (the token table and the key set share nothing), each prints its own verdict line,
+// and neither verdict is about the other. A URL-sourced key set installs no consumer, so for
+// it SIGHUP remains a token reload and nothing else
+// (`TestSIGHUPFetchesNothingForAURLSourcedKeySet`).
 func installReload(srv *api.Server, tokenFile string, env map[string]string) {
 	// BUFFERED, BECAUSE `signal.Notify` DROPS ON A FULL CHANNEL rather than blocking the
 	// signal delivery. One slot is the right size for a reload: a second HUP arriving

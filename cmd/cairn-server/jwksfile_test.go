@@ -20,11 +20,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -198,8 +201,11 @@ func TestTheBinaryREFUSESABadJWKSFileAtStartup(t *testing.T) {
 // TestSIGHUPReReadsAJWKSFileAndARefusalKeepsTheLastGoodSet — both verdicts of the re-read,
 // observed on the program's own output after a real signal.
 func TestSIGHUPReReadsAJWKSFileAndARefusalKeepsTheLastGoodSet(t *testing.T) {
+	// TWO keys at start and THREE after the rotation, so every count in both verdict lines
+	// is a value no hardcoded `1` can produce — the first version started at one key, and a
+	// mutant printing a literal 1 for "still serving" or for "(was …)" survived it.
 	path := filepath.Join(t.TempDir(), "jwks.json")
-	if err := os.WriteFile(path, jwksDoc(t, ecJWK(t, "ec-1")), 0o600); err != nil {
+	if err := os.WriteFile(path, jwksDoc(t, ecJWK(t, "ec-1"), ecJWK(t, "ec-2")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	child, log := startToListening(t, jwksFileEnv+"="+path)
@@ -234,16 +240,16 @@ func TestSIGHUPReReadsAJWKSFileAndARefusalKeepsTheLastGoodSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	line := waitFor("JWKS file re-read on SIGHUP refused")
-	if !strings.Contains(line, "last-known-good 1 key(s)") {
+	if !strings.Contains(line, "last-known-good 2 key(s)") {
 		t.Fatalf("a refused re-read must say what is still serving, got %q", line)
 	}
 
-	// A rotated file with two keys: the re-read lands and says so, with the count that MOVED.
-	replace(jwksDoc(t, ecJWK(t, "ec-2"), ecJWK(t, "ec-3")))
+	// A rotated file with three keys: the re-read lands and says so, with the count that MOVED.
+	replace(jwksDoc(t, ecJWK(t, "ec-3"), ecJWK(t, "ec-4"), ecJWK(t, "ec-5")))
 	if err := child.Process.Signal(syscall.SIGHUP); err != nil {
 		t.Fatal(err)
 	}
-	if line := waitFor("JWKS file re-read on SIGHUP: serving"); !strings.Contains(line, "serving 2 key(s) (was 1)") {
+	if line := waitFor("JWKS file re-read on SIGHUP: serving"); !strings.Contains(line, "serving 3 key(s) (was 2)") {
 		t.Fatalf("the accepted re-read must report the new count against the old, got %q", line)
 	}
 
@@ -251,5 +257,49 @@ func TestSIGHUPReReadsAJWKSFileAndARefusalKeepsTheLastGoodSet(t *testing.T) {
 	// instead of it.
 	if !strings.Contains(log.String(), reloadLoaded) {
 		t.Fatalf("the token-file reload must still answer SIGHUP:\n%s", log.String())
+	}
+}
+
+// TestSIGHUPFetchesNothingForAURLSourcedKeySet pins the other half of the SIGHUP contract: a
+// URL-sourced key set installs no SIGHUP consumer, so a signal is a token reload and nothing
+// else — no request to the issuer, and no key-set verdict line.
+//
+// 🔴 REPORTED AS THE PAIR. The counter MOVES at startup (the fatal first fetch), so it is
+// wired to the endpoint the child really uses; and the token reload's own LOADED line is
+// waited for before reading the counter, so "unchanged" is measured after the signal was
+// handled rather than before it arrived.
+func TestSIGHUPFetchesNothingForAURLSourcedKeySet(t *testing.T) {
+	doc := jwksDoc(t, ecJWK(t, "ec-1"), ecJWK(t, "ec-2"))
+	var requests atomic.Int64
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(doc)
+	}))
+	t.Cleanup(idp.Close)
+
+	child, log := startToListening(t, jwksURLEnv+"="+idp.URL+"/jwks")
+	atStart := requests.Load()
+	if atStart < 1 {
+		t.Fatalf("positive control: the startup fetch must reach the endpoint, counted %d", atStart)
+	}
+
+	if err := child.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for !strings.Contains(log.String(), reloadLoaded) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the token reload never answered SIGHUP, so nothing below is measured after the signal:\n%s", log.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if got := requests.Load(); got != atStart {
+		t.Fatalf("SIGHUP made %d request(s) to a URL-sourced issuer; it must make none (%d at startup, %d after)",
+			got-atStart, atStart, got)
+	}
+	if strings.Contains(log.String(), "JWKS file re-read") {
+		t.Fatalf("a URL-sourced key set printed a key-set SIGHUP verdict:\n%s", log.String())
 	}
 }
