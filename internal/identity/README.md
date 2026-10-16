@@ -519,6 +519,50 @@ What bounds it, each structural rather than documented:
 4. **One function decides.** `ResolveFederated` expands objects with the same `addObject` `Resolve`
    uses for a grant, and the matrix test pins federated rows beside the user rows over one model.
 
+🔴 **THE ISSUER MUST ALWAYS SEND THE CLAIM.** A missing groups claim refuses the token; an
+empty array is the only way to say "this caller has no groups". The two are kept apart on
+purpose: a misnamed `CAIRN_OIDC_GROUPS_CLAIM`, or an issuer that stopped emitting it, would
+otherwise authenticate every caller and show them nothing — a pod that looks healthy and
+answers nothing — where a refusal is loud.
+
+### What a 401 means in federation mode, and what the lockout counts
+
+**Every verified token resolves to a principal**, so no 401 is an authorization answer. The
+only 401s left are:
+
+- a token-verification failure — signature, key, algorithm, a malformed token, or a
+  claim-time check (`exp`, `nbf`, `iat`/max age, `iss`, `aud`, an empty `sub`);
+- a `role` mismatch, where `CAIRN_OIDC_REQUIRE_ROLE` is set;
+- a **malformed or missing groups claim** — **counted** toward the client lockout: an issuer
+  that signs for self-registered users hands out genuine tokens with any claim shape for
+  free, so it is guessing surface the limiter exists for;
+- the client lockout itself;
+- the transport refusals that come before authentication (no client address from a trusted
+  peer, a path outside `/api/v1/`, an unhandled method, an unparseable request).
+
+🔴 **AN EMPTY AUTHORITY IS NEVER A 401.** A `no-groups` or `groups-unmapped` caller
+authenticates and gets the visibility answers — `X-Store-Status: scope-absent` on a read,
+the not-found body on a write — exactly as a scope that does not exist.
+
+**The lockout an issuing service must stay under** is `internal/netid`'s, keyed on the client
+IP after trusted-proxy resolution, so every caller behind one egress address shares it:
+`netid.DefaultMaxFailures` (5) failures inside `netid.DefaultFailureWindow` (60 s) lock the
+address out for `netid.DefaultLockout` (900 s); each is overridable (`CAIRN_MAX_FAILURES`,
+`CAIRN_FAILURE_WINDOW_S`, `CAIRN_LOCKOUT_S`). A service minting tokens for many members from
+one address should stop after fewer consecutive 401s than `DefaultMaxFailures` and back off
+for at least the window, so a fault on its side cannot lock everyone behind it out.
+
+### The audit line of a federated request
+
+A federated request's line carries, appended after `status=` and in this order, ` sub=`
+and ` jti=` (the verified token's own, `-` when absent) and ` groups=` — the NORMALISED
+claimed groups (validated, deduplicated, sorted) comma-joined, `-` when the caller claimed
+none. `groups=` is written only when the authority came from `ResolveFederated`, so every
+non-federated line — machine token, unauthenticated, a refused token — keeps its shape. The
+values pass through `auditField`, and a group name cannot carry a space, a comma or a newline
+in the first place, so it cannot forge a field or a line
+(`TestAGroupNameCannotForgeAnAuditField`).
+
 🔴 **THE MODE IS ONE PATH FOR EVERY TOKEN FROM THE VERIFIER, NOT A FALLBACK.** With it on, a token
 whose `(provider, sub)` matches a journal user still resolves FEDERATED — the user's memberships
 and grants are not consulted through this verifier. "A known user first, else federate" was
@@ -532,8 +576,8 @@ control.
 
 ⚠ **WHAT IT DOES NOT DO, YET.** No verb ceiling: a mapping's verbs are what the group gets, write
 and admin included. No self-view route: the `Federation` report is carried on the authority and
-read by nothing on the wire. No audit field beyond `identity=<provider>:<sub>`. Each of those is a
-separate change. And `-group-provider` must equal `CAIRN_OIDC_PROVIDER`, which nothing can check —
+read by nothing on the wire — there is no `whoami` route today. Each of those is a separate
+change. And `-group-provider` must equal `CAIRN_OIDC_PROVIDER`, which nothing can check —
 the same two-halves-of-one-key caveat as `-create-user -provider`.
 
 ## The IdP outage, measured by killing the dependency
