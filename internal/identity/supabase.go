@@ -232,15 +232,28 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 	if presented == "" {
 		return Identity{}, refuse(SupabaseBackend, "no bearer token")
 	}
-	claims, err := Verify(presented, s.verify)
+	claims, verified, err := verifyToken(presented, s.verify)
 	if err != nil {
 		// 🔴 THE VERIFIER'S REASON IS KEPT HERE AND GOES NOWHERE NEAR THE WIRE. It is
 		// what makes "expired" distinguishable from "signed by a key we do not hold"
-		// in a test and, one day, on an operator stream; `internal/api` answers the
+		// in a test and on the operator's audit stream; `internal/api` answers the
 		// same uniform 401 either way, because a refusal that discriminates tells an
 		// attacker which half of their forgery was right.
+		//
+		// 🔴 `verified` — and nothing else — decides whether this refusal is a GUESS
+		// (counted toward the client lockout) or a token the issuer signed (not
+		// counted). See `VerifiedClaimsRefusal`.
+		if verified {
+			return Identity{}, newVerifiedClaimsRefusal(refuse(SupabaseBackend, err.Error()), claims)
+		}
 		return Identity{}, refuse(SupabaseBackend, err.Error())
 	}
+	// ⚠ A ROLE MISMATCH AND AN UNKNOWN SUBJECT (below) ARE COUNTED, deliberately, even though
+	// the signature verified. "Producing one needs the signing key" fails for an issuer that
+	// signs for SELF-REGISTERED users: anybody can obtain a genuine token naming a subject or
+	// role this control plane does not accept, so these two are not proof of anything the
+	// caller could not get for free. Only the claim-TIME checks inside `verifyToken` are
+	// uncounted. See `VerifiedClaimsRefusal`.
 	if s.requireRole != "" && claims.Role != s.requireRole {
 		return Identity{}, refuse(SupabaseBackend, "role claim is not "+s.requireRole)
 	}
@@ -307,6 +320,9 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 		// No fingerprint: this session is not a credential this pod minted, so there is
 		// no row in the startup line's table for an operator to correlate it with. See
 		// `Identity.Fingerprint`.
+		//
+		// The token's own `sub`/`jti` go to the audit line instead — see `Identity.Token`.
+		Token: &TokenFacts{Subject: claims.Subject, ID: string(claims.ID)},
 	}, nil
 }
 

@@ -606,6 +606,121 @@ condition). No self-view route: the `Federation` report is carried on the author
 read by nothing on the wire — there is no `whoami` route today. Each of those is a separate
 change. And `-group-provider` must equal `CAIRN_OIDC_PROVIDER`, which nothing can check —
 the same two-halves-of-one-key caveat as `-create-user -provider`.
+## 🔴 What a 401 means, and what the client lockout counts
+
+**A 401 from the API pod means only that the request did not authenticate, or that the
+client is locked out.** It is never an authorization answer: once a principal has
+authenticated, an empty or narrow authority is answered with the visibility answers —
+`X-Store-Status: scope-absent` on a read, the not-found body on a write, refused equals
+absent — and never with a 401. (The one non-404 authorization answer is the `403
+legacy-cannot-write` a bare legacy token gets on a write route.) Every 401 is the same
+code, body and header set; which reason it was is in the audit line's `status=` only
+(`server/README.md` lists the vocabulary). Besides a refused credential and the lockout,
+the 401 set also covers transport refusals that come before authentication: no client
+address from a trusted peer (`no-client-ip`), a path outside `/api/v1/`, an unhandled
+method, and an unparseable request.
+
+**In user mode** (no group federation armed), a verified token for a subject this control
+plane holds no user for, and one whose `role` is not `CAIRN_OIDC_REQUIRE_ROLE`, are **401
+and COUNTED**. They are authentication refusals — no principal exists for them — not
+policy. **In group-federation mode** (a separate, opt-in change), every verified token
+resolves to a principal, so the only 401s left are token-verification failures (including
+the claim-time checks below), a `role` mismatch where `CAIRN_OIDC_REQUIRE_ROLE` is set, a
+malformed groups claim (**counted**), the lockout, and the transport refusals above.
+
+### The lockout, read from `internal/netid/limiter.go`
+
+| parameter | value | constant / setting |
+|---|---|---|
+| failures that start a lockout | **5** | `netid.DefaultMaxFailures`, overridden by `CAIRN_MAX_FAILURES` (`netid.EnvMaxFailures`) |
+| window they must fall in (sliding) | **60 s** | `netid.DefaultFailureWindow`, `CAIRN_FAILURE_WINDOW_S` (`netid.EnvFailureWindow`) |
+| lockout duration | **900 s** (15 min) | `netid.DefaultLockout`, `CAIRN_LOCKOUT_S` (`netid.EnvLockout`) |
+| the key | the **client IP** after trusted-proxy resolution (`netid.ResolveClient`): the client-IP header from an allowlisted peer, else the TCP peer | — |
+
+- The failure that reaches the count is itself answered `lockout-triggered`; every request
+  from that key during the lockout is answered `locked-out` **before its credential is
+  read**, so even a valid credential is refused. Both are the same indistinguishable 401.
+- **A success does not forgive a streak** (`RateLimiter.RecordSuccess` is a no-op): only
+  the window ageing a failure out reduces the count. A `locked-out` answer is not itself
+  counted, and the count starts empty when a lockout ends.
+- **For a service calling on many users' behalf from one address:** every caller behind
+  that address shares the bucket. Stop calling after a small number of consecutive 401s —
+  fewer than `DefaultMaxFailures`, e.g. two — and back off for at least the window, so that
+  a fault on your side (a bad signing key, a wrong `aud`) cannot spend the bucket and lock
+  everybody behind the address out for `DefaultLockout`.
+
+### The one refusal that is NOT counted: a claim-time check on a verified token
+
+A signed token whose **signature verified** under a key in the configured set, and which a
+**claim-time** check inside `verifyToken` then refused, is **not counted**. It is answered
+with the same uniform 401 and audited `status=claims-refused`.
+
+| refusal | counted toward the lockout |
+|---|---|
+| signature verified, then `exp` (past or absent), `nbf`, `iat` (future, or older than `CAIRN_OIDC_MAX_AGE`), `iss`, `aud`, an empty `sub`, or a payload that is not a JSON claim set | **no** — `claims-refused` |
+| signature verified, `role` is not `CAIRN_OIDC_REQUIRE_ROLE` | **yes** |
+| signature verified, subject unknown to this control plane | **yes** |
+| signature verified, malformed groups claim (group federation, a separate change) | **yes** |
+| a signature that does not verify (including a rotated key under a reused `kid`) | yes |
+| a `kid` the verifier holds no key for | yes |
+| a refused algorithm (`none`, any `HS*`, anything not RS256/ES256) | yes |
+| a malformed token, a `crit` header, a non-JWT `typ` | yes |
+| a wrong machine token, an unknown credential of any other kind | yes |
+| a claim-time refusal sent **beside** a proxy identity or secret header | yes — see below |
+
+**What this covers, and what it does not.** It covers faults that make every genuine token
+fail at once: a **clock skew** between this pod and the issuer, and an **issuer or audience
+misconfiguration** (an `iss` or `aud` mismatch). Counting those locked every caller behind
+one egress address out for `DefaultLockout`, stretching the fault past its fix. ⚠ **It does
+NOT cover a key rotation**: a token signed by a key the verifier does not hold fails the
+signature, never reaches the claim checks, and is counted. ⚠ **It deliberately does NOT
+cover a role mismatch, an unknown subject or a malformed groups claim**: those are decided
+after `verifyToken`, and against an issuer that signs for self-registered users anybody can
+obtain a genuine token naming a subject, role or group set this pod does not accept — so
+those refusals are the guessing surface the limiter exists for.
+
+**Why the uncounted arm searches for nothing.** Reaching it requires a genuine token over a
+trusted key; what it varies is time or the issuer's own `iss`/`aud`, which are not secrets.
+
+🔴 **THE DECISION IS MADE FROM A FLAG, NEVER FROM AN ERROR'S TEXT.** `verifyToken` sets
+`verified` in exactly one place — beside `verifySignature`'s success — and
+`VerifiedClaimsRefusal` has one constructor, called only from
+`SupabaseJWT.AuthenticateToken` when `verifyToken` returned verified AND an error.
+`internal/api` asks `errors.As` for that type. Its `Error()` is the wrapped refusal's
+sentence unchanged, and `Unwrap` keeps `errors.Is(err, control.ErrNoCredential{})` true.
+
+🔴 **AND THE CHAIN LETS IT STAND ONLY WHEN NOTHING ELSE WAS PRESENTED.** Without that, one
+genuine expired token sent as the bearer would carry an uncounted stream of guesses at a
+proxy secret or identity header on the same request. So `Chain` returns a
+`VerifiedClaimsRefusal` only when every other backend either reads the same bearer
+(`MachineToken`, `SupabaseJWT`) or marked its refusal **absent**. Only the trusted-header
+backend marks itself absent (neither its identity header nor its secret header was sent),
+and that mark is the load-bearing half: without it a pod with a proxy backend armed would
+count every claim-time refusal. Its rung order and sentences are untouched. The cookie
+backend does **not** mark itself — no chain whose refusal `internal/api` reads carries one
+— so a chain with a cookie backend never lets the verified refusal stand (fail-closed,
+pinned by a test).
+
+**Mixed streams:** a `claims-refused` request records no failure, so four bad signatures, any
+number of claim-time refusals, then one bad signature is a lockout on that fifth bad
+signature. Tests: `internal/api/lockout_claims_test.go` (the seam, with bad signatures,
+role mismatches and unknown subjects as counted arms in the same harness) and
+`internal/identity/verifiedrefusal_test.go` (which refusals carry the mark, and the chain).
+
+⚠ **`cmd/cairn-ui` is not changed and does not need to be.** Its browser surface counts
+failures only on the credential sign-in form (a machine token, never a JWT) and its OAuth
+callback deliberately does not count; its listeners (`internal/clientapi`,
+`internal/worker`, `internal/presence`) accept machine tokens only.
+
+### The audit line's `sub=` and `jti=`
+
+A request whose bearer token's signature verified — authenticated, or `claims-refused` —
+gets two fields **appended after `status=`**: `sub=` and `jti=` from the signed token (`-`
+when absent; a non-string `jti` reads as absent rather than refusing the token, since it was
+ignored before). Every other line is byte-identical to before, which is what keeps
+`tests/dualrun/`'s line-for-line comparison with the oracle unmoved. Values pass through
+`auditField` (a space becomes `_`, a control character `?`), so a value cannot forge a field
+or a line.
 
 ## The IdP outage, measured by killing the dependency
 

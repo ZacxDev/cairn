@@ -484,11 +484,17 @@ type request struct {
 	auth      control.Authorization
 
 	// token is the audit line's `sub=`/`jti=` source. It is non-nil only when a signed
-	// token's SIGNATURE VERIFIED — on a request that then authenticated through group
-	// federation — and those fields are written only then. Audit-only: nothing on the
+	// token's SIGNATURE VERIFIED — on a request that then authenticated, or on one refused
+	// `claims-refused` — and those fields are written only then. Audit-only: nothing on the
 	// serving path branches on it.
 	token *identity.TokenFacts
 }
+
+// StatusClaimsRefused is the audit `status=` of a signed token whose signature verified
+// and which a CLAIM-TIME check then refused (exp, nbf, iat, max age, iss, aud, empty sub,
+// a payload that is not a claim set). It is answered with the uniform 401 and is
+// NOT counted toward the client lockout. See `identity.VerifiedClaimsRefusal`.
+const StatusClaimsRefused = "claims-refused"
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rq := &request{srv: s, w: w, r: r, peerState: "-"}
@@ -769,6 +775,23 @@ func (rq *request) authenticate() bool {
 	}
 	who, err := (*held).Authenticate(rq.r)
 	if err != nil {
+		// 🔴 THE ONE REFUSAL THAT IS NOT COUNTED, AND IT IS DECIDED BY TYPE. A token whose
+		// signature verified under the configured issuer's key and which a CLAIM-TIME check
+		// then refused (expired, not yet valid, wrong issuer or audience) is what a clock
+		// skew or an iss/aud misconfiguration does to EVERY genuine token at once; counting
+		// it locked every caller behind one egress address out for the whole lockout
+		// window. It is audited as its own status, answered with the SAME uniform 401, and
+		// moves the limiter neither up nor down: no failure recorded, no streak forgiven.
+		// Everything else counts — a bad signature, an unknown key (so NOT a key rotation),
+		// a malformed token, a wrong machine token, AND a role mismatch or an unknown
+		// subject, which a self-registering issuer hands out for free.
+		// `identity.VerifiedClaimsRefusal` is the reasoning and the one constructor.
+		var verified *identity.VerifiedClaimsRefusal
+		if errors.As(err, &verified) {
+			rq.token = &identity.TokenFacts{Subject: verified.Subject, ID: verified.TokenID}
+			rq.refuse(StatusClaimsRefused)
+			return false
+		}
 		rq.refuse(rq.countFailure())
 		return false
 	}

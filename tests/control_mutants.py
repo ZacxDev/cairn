@@ -1971,6 +1971,113 @@ MUTANTS: tuple[Mutant, ...] = (
         "does not implement. Ignoring the field accepts a token whose issuer believes an "
         "extension was enforced.",
     ),
+    # ---- the lockout narrowing: which refusals are a GUESS -----------------------
+    Mutant(
+        name="a-verified-claims-refusal-is-counted-toward-the-lockout",
+        path="internal/api/server.go",
+        old="if errors.As(err, &verified) {",
+        new="if false && errors.As(err, &verified) {",
+        killer="TestASignedTokenFailingAClaimCheckDoesNotLockTheClientOut",
+        extra_killers=("TestClaimsRefusalsNeitherAddToNorForgiveTheFailureCount",),
+        why="the defect this narrowing exists for, restored: a clock skew between the pod "
+        "and the issuer, or an `iss`/`aud` misconfiguration, makes every genuine token fail "
+        "a claim-time check at once, and five of those from one egress address lock every "
+        "caller behind it out for the whole lockout window. (A key rotation is NOT this "
+        "case: an unknown kid fails the signature and is counted.)",
+    ),
+    Mutant(
+        name="every-authentication-refusal-is-exempt-from-the-lockout",
+        path="internal/api/server.go",
+        old="\t\trq.refuse(rq.countFailure())\n\t\treturn false\n\t}\n\tif !who.Valid() {",
+        new="\t\trq.refuse(\"unauthorized\")\n\t\treturn false\n\t}\n\tif !who.Valid() {",
+        killer="TestBadCredentialsStillLockTheClientOut",
+        why="the over-wide fix: stop counting at the authenticate call site altogether. "
+        "Every test of the claims arm stays green, and a credential-stuffing run is "
+        "unlimited.",
+    ),
+    Mutant(
+        name="an-unknown-kid-reads-as-a-verified-signature",
+        path="internal/identity/jws.go",
+        old="\tverifyKey, err := opts.Keys.key(header.Kid, alg)\n\tif err != nil {\n\t\treturn Claims{}, false, err",
+        new="\tverifyKey, err := opts.Keys.key(header.Kid, alg)\n\tif err != nil {\n\t\treturn Claims{}, true, err",
+        killer="TestBadCredentialsStillLockTheClientOut",
+        extra_killers=("TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified",),
+        why="the plausible wrong line: `ErrNoKey` reads as a CONFIGURATION fact rather than "
+        "a guess, so marking it verified looks harmless — and lets anybody mint tokens "
+        "naming a kid the verifier lacks, uncounted, forever.",
+    ),
+    Mutant(
+        name="a-bad-signature-reads-as-verified",
+        path="internal/identity/jws.go",
+        old="\tif err := verifySignature(alg, verifyKey, signingInput, signature); err != nil {\n\t\treturn Claims{}, false, err",
+        new="\tif err := verifySignature(alg, verifyKey, signingInput, signature); err != nil {\n\t\treturn Claims{}, true, err",
+        killer="TestBadCredentialsStillLockTheClientOut",
+        extra_killers=("TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified",),
+        why="the flag set one step too early. A forged signature is the guess the "
+        "limiter exists for.",
+    ),
+    Mutant(
+        name="the-chain-ignores-a-second-presented-credential",
+        path="internal/identity/identity.go",
+        old="if verified != nil && !otherPresented {",
+        new="if verified != nil && (!otherPresented || true) {",
+        killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
+        why="one genuine expired token sent as the bearer would then carry an uncounted "
+        "stream of guesses at a proxy identity or secret header on the same request.",
+    ),
+    Mutant(
+        name="the-audit-line-drops-jti",
+        path="internal/api/server.go",
+        old='\t\tline += " jti=" + auditField(orDash(rq.token.ID), 128)\n',
+        new="",
+        killer="TestASignedTokenIsAuditedWithItsSubAndJti",
+        why="`jti` is what joins a request's audit line to the issuer's record of minting "
+        "the token; without it a claims-refused stream cannot be attributed to a mint.",
+    ),
+    Mutant(
+        name="a-role-mismatch-escapes-the-lockout",
+        path="internal/identity/supabase.go",
+        old='\t\treturn Identity{}, refuse(SupabaseBackend, "role claim is not "+s.requireRole)',
+        new='\t\treturn Identity{}, newVerifiedClaimsRefusal(refuse(SupabaseBackend, "role claim is not "+s.requireRole), claims)',
+        killer="TestARoleMismatchOrUnknownSubjectStillLocksTheClientOut",
+        extra_killers=("TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified",),
+        why="the tempting widening — the signature verified, so the role refusal 'is not a "
+        "guess' too. Against an issuer that signs for self-registered users anybody can "
+        "hold a genuine token with the wrong role, so this is the guessing surface.",
+    ),
+    Mutant(
+        name="an-unknown-subject-escapes-the-lockout",
+        path="internal/identity/supabase.go",
+        old="\t\treturn Identity{}, refuseUnprovisioned(SupabaseBackend,\n"
+        "\t\t\t\"the token verifies and names a subject this control plane holds no user for\",\n"
+        "\t\t\ts.provider, claims.Subject)\n",
+        new="\t\treturn Identity{}, newVerifiedClaimsRefusal(refuseUnprovisioned(SupabaseBackend,\n"
+        "\t\t\t\"the token verifies and names a subject this control plane holds no user for\",\n"
+        "\t\t\ts.provider, claims.Subject), claims)\n",
+        killer="TestARoleMismatchOrUnknownSubjectStillLocksTheClientOut",
+        why="the same widening on the subject arm: a self-registering issuer mints a genuine "
+        "token for a subject this control plane has never heard of, for anybody.",
+    ),
+    Mutant(
+        name="a-cookie-backend-chain-lets-the-verified-refusal-stand",
+        path="internal/identity/cookiesession.go",
+        old='refuse(CookieSessionBackend, "no session cookie")',
+        new='refuseAbsent(CookieSessionBackend, "no session cookie")',
+        killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
+        why="the absent mark re-added to the cookie backend. No chain whose refusal the API "
+        "pod reads carries one today, so the test pins the fail-closed direction for the day "
+        "one does.",
+    ),
+    Mutant(
+        name="the-trusted-header-never-marks-itself-absent",
+        path="internal/identity/trustedheader.go",
+        old="return Identity{}, refuseAbsent(rf.Backend, rf.Reason)",
+        new="return Identity{}, refuse(rf.Backend, rf.Reason)",
+        killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
+        why="the load-bearing half of the absent mark: the API pod's chain can carry a "
+        "trusted-header backend, and without the mark its refusal reads as a presented "
+        "credential on every request, so every claim-time refusal is counted again.",
+    ),
     # ---- the cached key set: the outage promise and its honesty -------------------
     Mutant(
         name="an-empty-jwks-document-is-adopted",
