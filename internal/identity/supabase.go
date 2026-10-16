@@ -52,6 +52,10 @@ type SupabaseJWT struct {
 	// requireRole, when non-empty, additionally refuses a token whose `role` claim is
 	// not it. Supabase issues `anon` to a session that has not signed in.
 	requireRole string
+	// groupsClaim, when non-empty, turns on GROUP FEDERATION: every verified token is
+	// resolved by `control.ResolveFederated` from this claim and the journal's group map,
+	// and never by a user lookup. See `AuthenticateToken`.
+	groupsClaim string
 }
 
 var _ Authenticator = (*SupabaseJWT)(nil)
@@ -84,6 +88,10 @@ type SupabaseConfig struct {
 	MaxAge time.Duration
 	// Now is the clock. nil means `time.Now().UTC()`.
 	Now func() time.Time
+	// GroupsClaim names the token claim holding the caller's groups, and turns group
+	// federation ON. Empty is off. See `AuthenticateToken` and `internal/identity/README.md`
+	// § *Group federation*.
+	GroupsClaim string
 }
 
 // The construction refusals. Each is its own sentinel so a test can watch THAT ONE
@@ -146,6 +154,9 @@ func NewSupabaseJWT(cfg SupabaseConfig) (*SupabaseJWT, error) {
 	if cfg.Leeway < 0 || cfg.Leeway > MaxLeeway {
 		return nil, fmt.Errorf("%w: %s is outside [0, %s]", ErrSupabaseLeeway, cfg.Leeway, MaxLeeway)
 	}
+	if cfg.GroupsClaim != "" && !claimName.MatchString(cfg.GroupsClaim) {
+		return nil, fmt.Errorf("%w: %q", ErrGroupsClaimName, cfg.GroupsClaim)
+	}
 	if cfg.MaxAge < 0 {
 		return nil, fmt.Errorf("%w: %s. Zero means the check is off; a negative value would be read as zero and silently disable a bound you configured", ErrSupabaseMaxAge, cfg.MaxAge)
 	}
@@ -182,6 +193,7 @@ func NewSupabaseJWT(cfg SupabaseConfig) (*SupabaseJWT, error) {
 		keys:        cfg.Keys,
 		provider:    provider,
 		requireRole: cfg.RequireRole,
+		groupsClaim: cfg.GroupsClaim,
 	}, nil
 }
 
@@ -221,15 +233,28 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 	if presented == "" {
 		return Identity{}, refuse(SupabaseBackend, "no bearer token")
 	}
-	claims, err := Verify(presented, s.verify)
+	claims, verified, err := verifyToken(presented, s.verify)
 	if err != nil {
 		// 🔴 THE VERIFIER'S REASON IS KEPT HERE AND GOES NOWHERE NEAR THE WIRE. It is
 		// what makes "expired" distinguishable from "signed by a key we do not hold"
-		// in a test and, one day, on an operator stream; `internal/api` answers the
+		// in a test and on the operator's audit stream; `internal/api` answers the
 		// same uniform 401 either way, because a refusal that discriminates tells an
 		// attacker which half of their forgery was right.
+		//
+		// 🔴 `verified` — and nothing else — decides whether this refusal is a GUESS
+		// (counted toward the client lockout) or a token the issuer signed (not
+		// counted). See `VerifiedClaimsRefusal`.
+		if verified {
+			return Identity{}, newVerifiedClaimsRefusal(refuse(SupabaseBackend, err.Error()), claims)
+		}
 		return Identity{}, refuse(SupabaseBackend, err.Error())
 	}
+	// ⚠ A ROLE MISMATCH AND AN UNKNOWN SUBJECT (below) ARE COUNTED, deliberately, even though
+	// the signature verified. "Producing one needs the signing key" fails for an issuer that
+	// signs for SELF-REGISTERED users: anybody can obtain a genuine token naming a subject or
+	// role this control plane does not accept, so these two are not proof of anything the
+	// caller could not get for free. Only the claim-TIME checks inside `verifyToken` are
+	// uncounted. See `VerifiedClaimsRefusal`.
 	if s.requireRole != "" && claims.Role != s.requireRole {
 		return Identity{}, refuse(SupabaseBackend, "role claim is not "+s.requireRole)
 	}
@@ -238,6 +263,34 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 	// authorization — comes out of this one value, so a refresh landing mid-request
 	// cannot authenticate against one world and authorise against another.
 	model := s.authority.Model()
+
+	// 🔴 GROUP FEDERATION IS ONE PATH FOR EVERY TOKEN FROM THIS VERIFIER, NOT A FALLBACK.
+	// With the mode on, a verified token is resolved from its groups claim and the
+	// operator's group map, and the user lookup below is never consulted — so a journal
+	// user under this provider namespace is NOT reachable through this verifier while the
+	// mode is on (`cmd/cairn-server` says so at startup, with the count). The alternative,
+	// "a known user first, else federate", would give one subject two authorities that
+	// switch the day an operator runs `-create-user`, with nothing on the wire to say which
+	// answered. Nothing is written: a federated principal is computed, never provisioned.
+	if s.groupsClaim != "" {
+		groups, err := claimedGroups(presented, s.groupsClaim)
+		if err != nil {
+			return Identity{}, refuse(SupabaseBackend, err.Error())
+		}
+		principal, auth, err := control.ResolveFederated(model, s.provider, claims.Subject, groups)
+		if err != nil {
+			return Identity{}, refuse(SupabaseBackend, err.Error())
+		}
+		return Identity{
+			Principal: principal,
+			Auth:      auth,
+			// The token's own `sub`/`jti` and the normalised claimed groups go to the audit
+			// line — see `Identity.Token` and `Identity.Groups`.
+			Token:  &TokenFacts{Subject: claims.Subject, ID: string(claims.ID)},
+			Groups: groups,
+		}, nil
+	}
+
 	user, known := model.UserByProviderSubject(s.provider, claims.Subject)
 	if !known {
 		// 🔴 THE ONE ARM THAT CARRIES ITS CLAIMS, AND IT CHANGES NOTHING FOR A CALLER THAT
@@ -268,6 +321,9 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 		// No fingerprint: this session is not a credential this pod minted, so there is
 		// no row in the startup line's table for an operator to correlate it with. See
 		// `Identity.Fingerprint`.
+		//
+		// The token's own `sub`/`jti` go to the audit line instead — see `Identity.Token`.
+		Token: &TokenFacts{Subject: claims.Subject, ID: string(claims.ID)},
 	}, nil
 }
 
@@ -293,6 +349,12 @@ func (s *SupabaseJWT) RunKeyRefresh(ctx context.Context, logf func(string)) erro
 
 // KeysFromFile reports whether the key set is read from a local file. See `KeySet.FromFile`.
 func (s *SupabaseJWT) KeysFromFile() bool { return s.keys.FromFile() }
+
+// GroupsClaim is the groups claim this backend federates on, or "" when the mode is off.
+func (s *SupabaseJWT) GroupsClaim() string { return s.groupsClaim }
+
+// Provider is the provider namespace this backend resolves subjects under.
+func (s *SupabaseJWT) Provider() string { return s.provider }
 
 // KeyStatus reports the cached key set's age.
 func (s *SupabaseJWT) KeyStatus() KeySetStatus { return s.keys.Status() }

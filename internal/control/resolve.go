@@ -58,6 +58,9 @@ type Authorization struct {
 	// narrowed records that a CREDENTIAL'S narrowing was applied to produce this value —
 	// see [Authorization.Narrowed].
 	narrowed bool
+	// federation is non-nil exactly when `ResolveFederated` produced this value — see
+	// [Authorization.Federation].
+	federation *Federation
 }
 
 // Narrowed reports whether this authority came out of a credential carrying a narrowing,
@@ -217,24 +220,41 @@ func Resolve(m Model, p Principal) Authorization {
 		if _, mine := subjects[subjectRef{g.SubjectKind, g.SubjectID}]; !mine {
 			continue
 		}
-		switch g.ObjectKind {
-		case ObjectScope:
-			a.add(g.ObjectID, g.Verbs)
-		case ObjectProject:
-			for _, scopeID := range m.ScopesIn(g.ObjectID) {
-				a.add(scopeID, g.Verbs)
-			}
-		default:
-			// Unreachable: `apply` refuses an unknown object kind. Skipping rather
-			// than panicking keeps the narrowing direction safe if that ever stops
-			// being true — an object kind nobody understands confers nothing.
-			continue
-		}
+		a.addObject(m, g.ObjectKind, g.ObjectID, g.Verbs)
 	}
 
-	// Drop any scope that ended up with an empty verb set, and attach names. A
-	// zero-verb entry and an absent one must be the same observable; keeping both
-	// shapes would give `ScopeIDs` and `Allows` two ways to say no.
+	a.finish(m)
+	return a
+}
+
+// addObject folds one object — a scope, or every scope a project holds AT THIS MOMENT —
+// into the authority at `verbs`.
+//
+// 🔴 ONE EXPANSION FOR EVERY SOURCE OF AUTHORITY THAT NAMES AN OBJECT, AND THAT IS WHY IT
+// IS A FUNCTION. A grant names an object and so does a group mapping (`ResolveFederated`);
+// open-coding the project expansion at both sites would be two answers to "which scopes
+// does a project object cover", and the one that drifts is the one that freezes the set at
+// write time — exactly the defect `Kind`'s comment says a project grant exists to avoid.
+func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {
+	switch kind {
+	case ObjectScope:
+		a.add(id, verbs)
+	case ObjectProject:
+		for _, scopeID := range m.ScopesIn(id) {
+			a.add(scopeID, verbs)
+		}
+	default:
+		// Unreachable: `apply` refuses an unknown object kind. Skipping rather
+		// than panicking keeps the narrowing direction safe if that ever stops
+		// being true — an object kind nobody understands confers nothing.
+	}
+}
+
+// finish drops any scope that ended up with an empty verb set, and attaches names. A
+// zero-verb entry and an absent one must be the same observable; keeping both shapes
+// would give `ScopeIDs` and `Allows` two ways to say no. Shared by `Resolve` and
+// `ResolveFederated` for `addObject`'s reason.
+func (a Authorization) finish(m Model) {
 	for id, vs := range a.byScope {
 		if vs.Empty() {
 			delete(a.byScope, id)
@@ -250,7 +270,6 @@ func Resolve(m Model, p Principal) Authorization {
 			delete(a.byScope, id)
 		}
 	}
-	return a
 }
 
 func (a Authorization) add(scope ID, verbs VerbSet) {
@@ -447,6 +466,10 @@ func Narrow(a Authorization, only []ID, verbs *VerbSet) Authorization {
 		names:    map[ID]string{},
 		Epoch:    a.Epoch,
 		narrowed: true,
+		// The federation report describes WHO and WHICH GROUPS, not what survived the
+		// narrowing, so it travels unchanged: a narrowed federated authority is still the
+		// answer for the same claimed groups.
+		federation: a.federation,
 	}
 	for id, vs := range a.byScope {
 		if keep != nil {

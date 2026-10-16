@@ -468,6 +468,10 @@ type request struct {
 	// field, rather than a second spelling of it that is right for one backend.
 	authenticated bool
 
+	// groups is a FEDERATED request's normalised claimed groups, for the audit line's
+	// `groups=` field (`identity.Identity.Groups`). Audit-only, like `token`.
+	groups []string
+
 	// principal and auth are who this request is and what it may do.
 	//
 	// 🔴 ONE MATCH, THREE FACTS. The fingerprint, the identity and BOTH scope sets
@@ -478,7 +482,19 @@ type request struct {
 	// a second spelling of a question the model already answers.
 	principal control.Principal
 	auth      control.Authorization
+
+	// token is the audit line's `sub=`/`jti=` source. It is non-nil only when a signed
+	// token's SIGNATURE VERIFIED — on a request that then authenticated, or on one refused
+	// `claims-refused` — and those fields are written only then. Audit-only: nothing on the
+	// serving path branches on it.
+	token *identity.TokenFacts
 }
+
+// StatusClaimsRefused is the audit `status=` of a signed token whose signature verified
+// and which a CLAIM-TIME check then refused (exp, nbf, iat, max age, iss, aud, empty sub,
+// a payload that is not a claim set). It is answered with the uniform 401 and is
+// NOT counted toward the client lockout. See `identity.VerifiedClaimsRefusal`.
+const StatusClaimsRefused = "claims-refused"
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rq := &request{srv: s, w: w, r: r, peerState: "-"}
@@ -759,6 +775,23 @@ func (rq *request) authenticate() bool {
 	}
 	who, err := (*held).Authenticate(rq.r)
 	if err != nil {
+		// 🔴 THE ONE REFUSAL THAT IS NOT COUNTED, AND IT IS DECIDED BY TYPE. A token whose
+		// signature verified under the configured issuer's key and which a CLAIM-TIME check
+		// then refused (expired, not yet valid, wrong issuer or audience) is what a clock
+		// skew or an iss/aud misconfiguration does to EVERY genuine token at once; counting
+		// it locked every caller behind one egress address out for the whole lockout
+		// window. It is audited as its own status, answered with the SAME uniform 401, and
+		// moves the limiter neither up nor down: no failure recorded, no streak forgiven.
+		// Everything else counts — a bad signature, an unknown key (so NOT a key rotation),
+		// a malformed token, a wrong machine token, AND a role mismatch or an unknown
+		// subject, which a self-registering issuer hands out for free.
+		// `identity.VerifiedClaimsRefusal` is the reasoning and the one constructor.
+		var verified *identity.VerifiedClaimsRefusal
+		if errors.As(err, &verified) {
+			rq.token = &identity.TokenFacts{Subject: verified.Subject, ID: verified.TokenID}
+			rq.refuse(StatusClaimsRefused)
+			return false
+		}
 		rq.refuse(rq.countFailure())
 		return false
 	}
@@ -789,9 +822,11 @@ func (rq *request) authenticate() bool {
 	// and the audit line renders that as `-`. See `identity.Identity.Fingerprint` for
 	// why synthesizing one would be worse than an honest absence.
 	rq.tokenFP = who.Fingerprint
+	rq.token = who.Token
 	rq.identity = who.Principal.Display
 	rq.visible = who.Auth.VisibleScopes(control.VerbRead)
 	rq.writable = who.Auth.VisibleScopes(control.VerbWrite)
+	rq.groups = who.Groups
 	return true
 }
 
@@ -1126,6 +1161,13 @@ func auditField(value string, limit int) string {
 	return strings.ReplaceAll(auditUnsafe.ReplaceAllString(value, "?"), " ", "_")
 }
 
+func orDash(v string) string {
+	if v == "" {
+		return "-"
+	}
+	return v
+}
+
 // audit writes one line per API request.
 //
 // 🔴 CALL THIS BEFORE RESPONDING, NEVER AFTER — LOG THE DECISION, THEN ACT ON IT.
@@ -1176,12 +1218,37 @@ func (rq *request) audit(result int, status string) {
 		"identity=" + auditField(identity, authz.MaxIdentityChars) + " " +
 		"auth=" + auth + " " +
 		"result=" + strconv.Itoa(result) + " status=" + auditField(status, 32)
+	// 🔴 APPENDED, AND ONLY FOR A VERIFIED SIGNED TOKEN. A line for a machine token, an
+	// unauthenticated request or any refusal that never verified a signature is
+	// BYTE-IDENTICAL to what it was, which is what keeps `tests/dualrun/`'s line-for-line
+	// comparison with the oracle (which verifies no signed token) unmoved. The values are
+	// signed by the issuer, not chosen by an anonymous caller, but they pass through
+	// `auditField` all the same — a `sub` carrying a space or a newline must not become a
+	// second field or a second line. One statement per field, so a later field is an
+	// appended line rather than an edit to these.
+	if rq.token != nil {
+		line += " sub=" + auditField(orDash(rq.token.Subject), 256)
+		line += " jti=" + auditField(orDash(rq.token.ID), 128)
+	}
+	// `groups=` is appended for a FEDERATED request only — decided by the authority's own
+	// federation report, never by whether the list is empty — so a federated caller that
+	// claimed no group reads `groups=-` and every non-federated line, a verified user-mode
+	// token's included, is unchanged. The value is the NORMALISED list (`control`'s alphabet,
+	// so it cannot carry a space or a comma of its own) and still goes through `auditField`.
+	if _, federated := rq.auth.Federation(); federated {
+		line += " groups=" + auditField(orDash(strings.Join(rq.groups, ",")), auditGroupsLimit)
+	}
 	if rq.srv.Audit != nil {
 		rq.srv.Audit(line)
 		return
 	}
 	fmt.Fprintln(os.Stdout, line)
 }
+
+// auditGroupsLimit is the longest `groups=` value a valid claim can produce: the most
+// names a claim may carry, each at the longest a name may be, comma-joined. A value is
+// never truncated by it unless `control`'s bounds move without this constant.
+const auditGroupsLimit = control.MaxClaimedGroups*(control.MaxGroupNameLen+1) - 1
 
 // --- handlers ---------------------------------------------------------------------
 

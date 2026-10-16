@@ -33,6 +33,13 @@ const (
 	// narrowing carried as one would vanish and the credential would regain `admin` — while
 	// an unknown KIND refuses the whole journal (`validate`'s `default:` arm). Fail closed.
 	EventCredentialVerbsNarrowed EventKind = "credential-verbs-narrowed"
+	// EventGroupMapped and EventGroupUnmapped write the OPERATOR'S GROUP MAP: one
+	// (provider, group) pair reaching one object at some verbs, and its removal. They are
+	// the only writers of `Model.GroupMaps` and `ResolveFederated` is the only reader of it
+	// for authority. ⚠ An OLDER build refuses either kind whole (`validate`'s `default:`
+	// arm), so every binary that reads the journal must be rolled before one is written.
+	EventGroupMapped   EventKind = "group-mapped"
+	EventGroupUnmapped EventKind = "group-unmapped"
 )
 
 // AllEventKinds is the closed set, declared once so a ledger test can assert it
@@ -51,6 +58,8 @@ var AllEventKinds = []EventKind{
 	EventCredentialIssued,
 	EventCredentialRevoked,
 	EventCredentialVerbsNarrowed,
+	EventGroupMapped,
+	EventGroupUnmapped,
 }
 
 // Event is one durable record in the journal.
@@ -90,6 +99,10 @@ type Event struct {
 	Role Role   `json:"role,omitempty"`
 
 	DisplayName string `json:"display_name,omitempty"`
+
+	// Group is a group name an issuer may assert in a verified token's groups claim.
+	// Carried by `group-mapped` and `group-unmapped` only; its alphabet is `ValidGroupName`.
+	Group string `json:"group,omitempty"`
 
 	SubjectKind Kind       `json:"subject_kind,omitempty"`
 	SubjectID   ID         `json:"subject_id,omitempty"`
@@ -253,6 +266,31 @@ func (e Event) validate() error {
 		// intersect to nothing in `apply` — that is applied, and fails closed.)
 		if e.Verbs.Empty() {
 			return fmt.Errorf("%s: verbs is empty — a credential that should reach nothing is revoked, not narrowed to nothing", e.Kind)
+		}
+		return nil
+	case EventGroupMapped, EventGroupUnmapped:
+		if err := firstErr(
+			need("provider", e.Provider),
+			need("group", e.Group),
+			need("object_id", string(e.ObjectID))); err != nil {
+			return err
+		}
+		if err := ValidGroupName(e.Group); err != nil {
+			return fmt.Errorf("%s: %w", e.Kind, err)
+		}
+		if !e.ObjectKind.Valid() {
+			return fmt.Errorf("%s: unknown object_kind %q", e.Kind, e.ObjectKind)
+		}
+		// 🔴 A MAPPING CONFERRING NOTHING IS REFUSED, `granted`'s rule: it would read like
+		// access at every surface that lists the map and reach nothing. An UNMAP carries no
+		// verbs — it names the mapping by its key — and any it carries are refused rather
+		// than ignored, because an unmap whose verbs disagree with the mapping it removes is
+		// a line somebody wrote believing it did something narrower than removal.
+		if e.Kind == EventGroupMapped && e.Verbs.Empty() {
+			return fmt.Errorf("%s: verbs is empty — a mapping conferring nothing is indistinguishable from an absent one at every call site", e.Kind)
+		}
+		if e.Kind == EventGroupUnmapped && !e.Verbs.Empty() {
+			return fmt.Errorf("%s: verbs must be absent — an unmap removes the whole mapping it names; narrowing one is a new mapping", e.Kind)
 		}
 		return nil
 	default:
@@ -520,6 +558,32 @@ func (m *Model) apply(e Event) error {
 		}
 		c.NarrowedVerbs = &verbs
 		m.Credentials[e.CredentialID] = c
+
+	case EventGroupMapped:
+		if err := m.checkObject(e.ObjectKind, e.ObjectID); err != nil {
+			return err
+		}
+		key := GroupMapKey{Provider: e.Provider, Group: e.Group, ObjectKind: e.ObjectKind, ObjectID: e.ObjectID}
+		// 🔴 A SECOND LIVE MAPPING OF ONE KEY IS REFUSED, NOT MERGED. Merging would make the
+		// verbs a group reaches depend on how many lines say so; replacing would make a
+		// re-run of `-map-group` with fewer verbs a silent narrowing nobody asked for and
+		// one with more a silent widening. To change a mapping's verbs, unmap it and map it.
+		if prior, live := m.GroupMaps[key]; live {
+			return fmt.Errorf("group %q (provider %q) is already mapped to %s %s at %s — unmap it first to change the verbs",
+				e.Group, e.Provider, e.ObjectKind, e.ObjectID, prior.Verbs)
+		}
+		m.GroupMaps[key] = GroupMap{GroupMapKey: key, Verbs: e.Verbs, MappedBy: e.Actor, MappedAt: e.At}
+
+	case EventGroupUnmapped:
+		key := GroupMapKey{Provider: e.Provider, Group: e.Group, ObjectKind: e.ObjectKind, ObjectID: e.ObjectID}
+		// 🔴 AN UNMAP OF NOTHING IS REFUSED, `credential-verbs-narrowed`'s rule: it is a line
+		// written against the wrong key, and applying it would hide that the mapping the
+		// operator meant is still live.
+		if _, live := m.GroupMaps[key]; !live {
+			return fmt.Errorf("group %q (provider %q) has no live mapping to %s %s",
+				e.Group, e.Provider, e.ObjectKind, e.ObjectID)
+		}
+		delete(m.GroupMaps, key)
 
 	default:
 		// Unreachable: `validate` refuses an unknown kind above. Restated rather

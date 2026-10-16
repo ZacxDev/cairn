@@ -250,6 +250,22 @@ const maxSubjectBytes = 256
 // test can watch a specific rung fire; `internal/api` maps all of them onto the one
 // uniform 401 it gives a wrong token.
 func (t *TrustedHeader) Authenticate(r *http.Request) (Identity, error) {
+	got, err := t.authenticate(r)
+	if err != nil && len(r.Header.Values(t.subjectHeader)) == 0 &&
+		(t.secretHeader == "" || len(r.Header.Values(t.secretHeader)) == 0) {
+		// ⚠ ONLY THE MARK MOVES — the refusal's sentence, and the order the rungs run in
+		// above, are untouched. A request carrying neither the identity header nor the
+		// secret header presented nothing to this backend, and [Chain] may say so. Any
+		// request carrying either one is a request that tried, and stays unmarked.
+		var rf *Refusal
+		if errors.As(err, &rf) {
+			return Identity{}, refuseAbsent(rf.Backend, rf.Reason)
+		}
+	}
+	return got, err
+}
+
+func (t *TrustedHeader) authenticate(r *http.Request) (Identity, error) {
 	if len(t.peers) > 0 {
 		peer, ok := netid.PeerAddress(r.RemoteAddr)
 		if !ok {

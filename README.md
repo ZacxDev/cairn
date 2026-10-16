@@ -683,6 +683,7 @@ This is the ONE list of the modes; `server/README.md` links here rather than kee
 | `-rename-user` | set a user's operator-written display name | [`server/README.md`](server/README.md) § *The control journal*; `internal/control/user_display.go` |
 | `-create-scope` | add ONE scope to an existing project | [`server/README.md`](server/README.md) § *The control journal*; [`internal/control/README.md`](internal/control/README.md) § *Adding a scope to an existing project* |
 | `-remove-member` | take ONE user out of ONE project — revokes nothing, and lists what still reaches | [`server/README.md`](server/README.md) § *The control journal*; [`internal/control/README.md`](internal/control/README.md) § *Taking a user out of a project* |
+| `-map-group` / `-unmap-group` | map ONE group an issuer asserts to ONE scope or project (or remove that mapping) — read only by **group federation**, an opt-in mode of the API pod | [`internal/identity/README.md`](internal/identity/README.md) § *Group federation*; [`server/README.md`](server/README.md) § *The control journal* |
 | `-issue-credential` | mint a bearer token for a principal, optionally narrowed by scope id and verb; emitted once | [`internal/control/README.md`](internal/control/README.md) § *The credential-issuing path* and § *Verb narrowing* |
 | `-revoke-credential` | revoke one issued credential | [`internal/control/README.md`](internal/control/README.md) § *The credential-issuing path* |
 | `-routes` | print the route ledger (writes nothing) | `internal/api` (`DeclaredRoutes`) |
