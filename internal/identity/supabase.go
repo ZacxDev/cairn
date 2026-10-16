@@ -236,8 +236,14 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 		}
 		return Identity{}, refuse(SupabaseBackend, err.Error())
 	}
+	// ⚠ A ROLE MISMATCH AND AN UNKNOWN SUBJECT (below) ARE COUNTED, deliberately, even though
+	// the signature verified. "Producing one needs the signing key" fails for an issuer that
+	// signs for SELF-REGISTERED users: anybody can obtain a genuine token naming a subject or
+	// role this control plane does not accept, so these two are not proof of anything the
+	// caller could not get for free. Only the claim-TIME checks inside `verifyToken` are
+	// uncounted. See `VerifiedClaimsRefusal`.
 	if s.requireRole != "" && claims.Role != s.requireRole {
-		return Identity{}, newVerifiedClaimsRefusal(refuse(SupabaseBackend, "role claim is not "+s.requireRole), claims)
+		return Identity{}, refuse(SupabaseBackend, "role claim is not "+s.requireRole)
 	}
 
 	// The model is read ONCE. Every fact below — the user row, the principal and the
@@ -255,9 +261,9 @@ func (s *SupabaseJWT) AuthenticateToken(presented string) (Identity, error) {
 		// to turn "we have never heard of you" into a provisioning write, and nothing else
 		// in this tree does. See [UnprovisionedSubject] for why that is a second DELIBERATE
 		// act rather than self-serve signup.
-		return Identity{}, newVerifiedClaimsRefusal(refuseUnprovisioned(SupabaseBackend,
+		return Identity{}, refuseUnprovisioned(SupabaseBackend,
 			"the token verifies and names a subject this control plane holds no user for",
-			s.provider, claims.Subject), claims)
+			s.provider, claims.Subject)
 	}
 	principal, held := model.PrincipalFor(control.KindUser, user.ID)
 	if !held {

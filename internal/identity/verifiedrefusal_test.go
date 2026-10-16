@@ -16,10 +16,11 @@ import (
 
 // claimsArm is one way a correctly-signed token can still be refused.
 type claimsArm struct {
-	name string
-	edit func(claimSet)
-	role string // a CAIRN_OIDC_REQUIRE_ROLE for this arm, "" for none
-	sub  string // the `sub` the refusal must carry
+	name   string
+	edit   func(claimSet)
+	role   string        // a CAIRN_OIDC_REQUIRE_ROLE for this arm, "" for none
+	maxAge time.Duration // a CAIRN_OIDC_MAX_AGE for this arm, 0 for none
+	sub    string        // the `sub` the refusal must carry
 }
 
 func verifiedClaimArms() []claimsArm {
@@ -31,21 +32,32 @@ func verifiedClaimArms() []claimsArm {
 		{name: "nbf in the future", edit: func(c claimSet) { c["nbf"] = testClock.Add(time.Hour).Unix() }, sub: testSubject},
 		{name: "iat in the future", edit: func(c claimSet) { c["iat"] = testClock.Add(time.Hour).Unix() }, sub: testSubject},
 		{name: "sub empty", edit: func(c claimSet) { c["sub"] = "" }, sub: ""},
-		{name: "role is not the required one", edit: func(c claimSet) { c["role"] = "anon" }, role: "authenticated", sub: testSubject},
-		{name: "unknown subject", edit: func(c claimSet) { c["sub"] = testStranger }, sub: testStranger},
+		{name: "iat older than the max age", edit: func(c claimSet) { c["iat"] = testClock.Add(-2 * time.Hour).Unix() }, maxAge: time.Hour, sub: testSubject},
+	}
+}
+
+// countedVerifiedArms verify their signature and are refused AFTER `verifyToken`, so they
+// are COUNTED: an issuer that signs for self-registered users hands these out for free.
+func countedVerifiedArms() []claimsArm {
+	return []claimsArm{
+		{name: "role is not the required one", edit: func(c claimSet) { c["role"] = "anon" }, role: "authenticated"},
+		{name: "unknown subject", edit: func(c claimSet) { c["sub"] = testStranger }},
 	}
 }
 
 // TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified pins BOTH sides of the line the
-// lockout exemption is drawn on: every post-signature refusal carries the mark (and the
-// `sub`/`jti` the issuer signed), and every refusal that does not prove possession of the
-// issuer's key carries none.
+// lockout exemption is drawn on: every CLAIM-TIME refusal of a verified token carries the
+// mark (and the `sub`/`jti` the issuer signed), and every other refusal — including a role
+// mismatch and an unknown subject on a verified token — carries none.
 func TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified(t *testing.T) {
 	good := newECSigner(t, "ec-1")
 	keys := keySetOver(t, good)
-	build := func(role string) *SupabaseJWT {
+	build := func(role string, maxAge ...time.Duration) *SupabaseJWT {
 		cfg := goodSupabaseConfig(t, keys)
 		cfg.RequireRole = role
+		if len(maxAge) > 0 {
+			cfg.MaxAge = maxAge[0]
+		}
 		b, err := NewSupabaseJWT(cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -70,7 +82,7 @@ func TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified(t *testing.T) {
 				c := defaultClaims()
 				c["jti"] = "jti-" + arm.name
 				arm.edit(c)
-				_, err := build(arm.role).AuthenticateToken(good.sign(t, c, nil))
+				_, err := build(arm.role, arm.maxAge).AuthenticateToken(good.sign(t, c, nil))
 				var v *VerifiedClaimsRefusal
 				if !errors.As(err, &v) {
 					t.Fatalf("a correctly-signed token refused on %q must be a VerifiedClaimsRefusal, got %T %v", arm.name, err, err)
@@ -85,17 +97,28 @@ func TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified(t *testing.T) {
 		}
 	})
 
-	t.Run("the unprovisioned refusal still answers errors.As through the wrapper", func(t *testing.T) {
+	t.Run("verified, but refused after verifyToken, so NOT marked", func(t *testing.T) {
+		for _, arm := range countedVerifiedArms() {
+			t.Run(arm.name, func(t *testing.T) {
+				c := defaultClaims()
+				arm.edit(c)
+				_, err := build(arm.role).AuthenticateToken(good.sign(t, c, nil))
+				if err == nil {
+					t.Fatal("precondition: the token was accepted")
+				}
+				var v *VerifiedClaimsRefusal
+				if errors.As(err, &v) {
+					t.Fatalf("a %s refusal was marked verified — it would escape the lockout, and a self-registering issuer hands such tokens out for free: %v", arm.name, err)
+				}
+			})
+		}
+		// The invite flow still reads the unknown subject by type.
 		c := defaultClaims()
 		c["sub"] = testStranger
 		_, err := build("").AuthenticateToken(good.sign(t, c, nil))
 		var u *UnprovisionedSubject
 		if !errors.As(err, &u) || u.Subject != testStranger {
-			t.Fatalf("the invite flow reads UnprovisionedSubject through errors.As; the wrapper broke it: %v", err)
-		}
-		var plain *Refusal
-		if !errors.As(err, &plain) {
-			t.Fatalf("errors.As(&*Refusal) must still match: %v", err)
+			t.Fatalf("the invite flow reads UnprovisionedSubject through errors.As: %v", err)
 		}
 	})
 
@@ -153,9 +176,10 @@ func TestANonStringJtiReadsAsAbsentRatherThanRefusingTheToken(t *testing.T) {
 // TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented.
 //
 // 🔴 THE HOLE THIS CLOSES: without it, ONE genuine expired token sent as the bearer beside
-// a guessed proxy secret, identity header or session cookie would make the chain's whole
-// answer a VerifiedClaimsRefusal — and the guess at the second credential would go
-// uncounted, forever.
+// a guessed proxy secret or identity header would make the chain's whole answer a
+// VerifiedClaimsRefusal — and the guess at the second credential would go uncounted,
+// forever. The chain is the API pod's shape: machine token + JWT + trusted header, NO
+// cookie backend. A chain that does carry one is the fail-closed arm at the end.
 func TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented(t *testing.T) {
 	authority := newTestAuthority(t)
 	good := newECSigner(t, "ec-1")
@@ -167,15 +191,11 @@ func TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, err := NewCookieSession(newMemorySessions(), authority)
-	if err != nil {
-		t.Fatal(err)
-	}
 	trusted, err := NewTrustedHeader(goodProxyConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain, err := Backends(machine, supabase, cookie, trusted)
+	chain, err := Backends(machine, supabase, nil, trusted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,9 +219,6 @@ func TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented(t *tes
 		name  string
 		extra func(*http.Request)
 	}{
-		{"a guessed session cookie", func(r *http.Request) {
-			r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "guessed-session-value"})
-		}},
 		{"a proxy identity header", func(r *http.Request) { r.Header.Set(testSubjectHeader, testSubject) }},
 		{"a guessed proxy secret", func(r *http.Request) { r.Header.Set(DefaultProxySecretHeader, "a-guess") }},
 	} {
@@ -217,6 +234,20 @@ func TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented(t *tes
 				t.Fatalf("the uniform question must still answer true: %v", err)
 			}
 		})
+	}
+	// ⚠ FAIL-CLOSED: the cookie backend does not mark its refusal absent, so a chain that
+	// carries one never lets the verified refusal stand — even with no cookie on the
+	// request. No chain whose refusal `internal/api` reads has one; this pins the direction.
+	cookie, err := NewCookieSession(newMemorySessions(), authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCookie, err := Backends(machine, supabase, cookie, trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := withCookie.Authenticate(request(nil)); err == nil || isVerified(err) {
+		t.Fatalf("a chain carrying a cookie backend must not let a verified refusal stand: %v", err)
 	}
 }
 

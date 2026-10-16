@@ -479,16 +479,16 @@ type request struct {
 	principal control.Principal
 	auth      control.Authorization
 
-	// token and groups are the audit line's `sub=`/`jti=`/`groups=` fields. token is
-	// non-nil only when a signed token's SIGNATURE VERIFIED — on a request that then
-	// authenticated, or on one refused `claims-refused` — and the three fields are
-	// written only then. Audit-only: nothing on the serving path branches on either.
-	token  *identity.TokenFacts
-	groups []string
+	// token is the audit line's `sub=`/`jti=` source. It is non-nil only when a signed
+	// token's SIGNATURE VERIFIED — on a request that then authenticated, or on one refused
+	// `claims-refused` — and those fields are written only then. Audit-only: nothing on the
+	// serving path branches on it.
+	token *identity.TokenFacts
 }
 
 // StatusClaimsRefused is the audit `status=` of a signed token whose signature verified
-// and whose claims (or subject) were refused. It is answered with the uniform 401 and is
+// and which a CLAIM-TIME check then refused (exp, nbf, iat, max age, iss, aud, empty sub,
+// a payload that is not a claim set). It is answered with the uniform 401 and is
 // NOT counted toward the client lockout. See `identity.VerifiedClaimsRefusal`.
 const StatusClaimsRefused = "claims-refused"
 
@@ -772,14 +772,15 @@ func (rq *request) authenticate() bool {
 	who, err := (*held).Authenticate(rq.r)
 	if err != nil {
 		// 🔴 THE ONE REFUSAL THAT IS NOT COUNTED, AND IT IS DECIDED BY TYPE. A token whose
-		// signature verified under the configured issuer's key and whose claims were then
-		// refused (expired, wrong audience, unknown subject, …) is not a guess — producing
-		// one needs the issuer's signing key, which mints a PASSING token just as easily.
-		// Counting it is what turned an issuer-side clock skew into a fifteen-minute
-		// lockout of every caller behind one egress address. It is audited as its own
-		// status, answered with the SAME uniform 401, and moves the limiter neither up nor
-		// down: no failure recorded, no streak forgiven. Every other refusal — a bad
-		// signature, an unknown key, a malformed token, a wrong machine token — counts.
+		// signature verified under the configured issuer's key and which a CLAIM-TIME check
+		// then refused (expired, not yet valid, wrong issuer or audience) is what a clock
+		// skew or an iss/aud misconfiguration does to EVERY genuine token at once; counting
+		// it locked every caller behind one egress address out for the whole lockout
+		// window. It is audited as its own status, answered with the SAME uniform 401, and
+		// moves the limiter neither up nor down: no failure recorded, no streak forgiven.
+		// Everything else counts — a bad signature, an unknown key (so NOT a key rotation),
+		// a malformed token, a wrong machine token, AND a role mismatch or an unknown
+		// subject, which a self-registering issuer hands out for free.
 		// `identity.VerifiedClaimsRefusal` is the reasoning and the one constructor.
 		var verified *identity.VerifiedClaimsRefusal
 		if errors.As(err, &verified) {
@@ -818,7 +819,6 @@ func (rq *request) authenticate() bool {
 	// why synthesizing one would be worse than an honest absence.
 	rq.tokenFP = who.Fingerprint
 	rq.token = who.Token
-	rq.groups = who.Groups
 	rq.identity = who.Principal.Display
 	rq.visible = who.Auth.VisibleScopes(control.VerbRead)
 	rq.writable = who.Auth.VisibleScopes(control.VerbWrite)
@@ -1163,19 +1163,6 @@ func orDash(v string) string {
 	return v
 }
 
-// auditGroups renders `groups=`: `-` for none, else the names joined by `,`, each made
-// audit-safe and with any `,` of its own replaced, and the whole list capped.
-func auditGroups(groups []string) string {
-	if len(groups) == 0 {
-		return "-"
-	}
-	parts := make([]string, 0, len(groups))
-	for _, g := range groups {
-		parts = append(parts, strings.ReplaceAll(auditField(g, 64), ",", "?"))
-	}
-	return auditField(strings.Join(parts, ","), 512)
-}
-
 // audit writes one line per API request.
 //
 // 🔴 CALL THIS BEFORE RESPONDING, NEVER AFTER — LOG THE DECISION, THEN ACT ON IT.
@@ -1232,12 +1219,11 @@ func (rq *request) audit(result int, status string) {
 	// comparison with the oracle (which verifies no signed token) unmoved. The values are
 	// signed by the issuer, not chosen by an anonymous caller, but they pass through
 	// `auditField` all the same — a `sub` carrying a space or a newline must not become a
-	// second field or a second line — and each group is additionally stripped of `,` so a
-	// group name cannot forge a second membership inside the list.
+	// second field or a second line. One statement per field, so a later field is an
+	// appended line rather than an edit to these.
 	if rq.token != nil {
-		line += " sub=" + auditField(orDash(rq.token.Subject), 256) +
-			" jti=" + auditField(orDash(rq.token.ID), 128) +
-			" groups=" + auditGroups(rq.groups)
+		line += " sub=" + auditField(orDash(rq.token.Subject), 256)
+		line += " jti=" + auditField(orDash(rq.token.ID), 128)
 	}
 	if rq.srv.Audit != nil {
 		rq.srv.Audit(line)

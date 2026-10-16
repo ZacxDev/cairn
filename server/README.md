@@ -1654,10 +1654,10 @@ what the Loki rules select on:
 | `malformed-target` | a request target `urlsplit` could not parse |
 | `malformed-request` | the request LINE itself was unparseable — no headers exist |
 | `method-not-allowed` | a write verb from an authenticated caller (405, not 401) |
-| `claims-refused` | **Go pod only, with a JWT verifier armed.** A signed token whose signature verified and whose claims or subject were refused. **Not counted** toward the lockout — producing one needs the issuer's key. `internal/identity/README.md` § *The client lockout counts GUESSES* |
+| `claims-refused` | **Go pod only, with a JWT verifier armed.** A signed token whose signature verified and which a claim-time check refused (`exp`, `nbf`, `iat`/max age, `iss`, `aud`, empty `sub`, not a claim set). **Not counted** toward the lockout. A role mismatch or an unknown subject is `unauthorized` and counted. `internal/identity/README.md` § *What a 401 means, and what the client lockout counts* |
 
-On the Go pod, a line whose bearer token's signature verified also carries ` sub=… jti=…
-groups=…` **after** `status=`; every other line is unchanged.
+On the Go pod, a line whose bearer token's signature verified also carries ` sub=… jti=…`
+**after** `status=`; every other line is unchanged.
 
 An error that discriminates is an enumeration API; a log that does not is a
 post-mortem with no evidence.

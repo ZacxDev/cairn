@@ -120,15 +120,6 @@ type Identity struct {
 	// minting that token; it is NOT a second identity and NO ROUTE MAY BRANCH ON IT — the
 	// package doc's no-discriminator rule. Who the request is stays `Principal`.
 	Token *TokenFacts
-	// Groups is the audit line's `groups=` field: the group names the request's
-	// credential asserted that this deployment acted on.
-	//
-	// ⚠ NO BACKEND POPULATES IT YET, so `groups=` reads `-` on every line today. It is
-	// declared here so the audit format is settled once rather than moved twice; the
-	// group-federation change is what fills it. CLOSING CONDITION: a backend that sets it,
-	// with a test reading a non-`-` `groups=` value out of `internal/api`'s audit line.
-	// Like `Token`, it is audit-only and no route may branch on it.
-	Groups []string
 }
 
 // TokenFacts is what an audit line records about a verified signed token.
@@ -190,9 +181,10 @@ type Refusal struct {
 	// Reason is the specific check that failed.
 	Reason string
 	// absent marks a refusal whose backend found NO credential of its kind on the
-	// request at all (no session cookie; no proxy identity or secret header). It is read
-	// by [Chain] alone, to decide whether a [VerifiedClaimsRefusal] from another backend
-	// may stand for the whole request — never by a serving path, and never rendered.
+	// request at all. Only the trusted-header backend sets it (neither its identity header
+	// nor its secret header was sent). It is read by [Chain] alone, to decide whether a
+	// [VerifiedClaimsRefusal] from another backend may stand for the whole request —
+	// never by a serving path, and never rendered.
 	absent bool
 }
 
@@ -275,8 +267,17 @@ type Chain []Authenticator
 // not to count the refusal toward the client lockout, so it may stand for the request
 // only when the request presented nothing ELSE that could be a guess: every other refusal
 // must come from a backend reading the same bearer credential ([readsBearer]) or be
-// marked absent (no cookie, no proxy header). Otherwise one genuine expired token sent
-// beside a guessed session cookie or proxy secret would make the guess uncounted.
+// marked absent. Otherwise one genuine expired token sent beside a guessed proxy secret or
+// identity header would make the guess uncounted.
+//
+// ⚠ ONLY THE TRUSTED-HEADER BACKEND MARKS ITSELF ABSENT, AND THAT IS THE LOAD-BEARING HALF:
+// `cmd/cairn-server`'s chain is machine token + JWT + (optionally) trusted header, and
+// without the mark the trusted header's refusal would read as "presented" on EVERY request,
+// so a pod with both armed would count every claim-time refusal. The cookie backend does
+// NOT mark itself: no chain whose refusal `internal/api` reads carries one (the API pod
+// builds its chain with a nil cookie backend), and the browser surface that does carry one
+// counts no bearer failure at all. So in a chain WITH a cookie backend the verified
+// refusal never stands — the fail-closed direction, pinned by a test.
 func (c Chain) Authenticate(r *http.Request) (Identity, error) {
 	var verified error
 	otherPresented := false

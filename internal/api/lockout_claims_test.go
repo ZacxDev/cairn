@@ -101,7 +101,7 @@ type lockHarness struct {
 	lines  []string
 }
 
-func newLockHarness(t *testing.T) *lockHarness {
+func newLockHarness(t *testing.T, requireRole ...string) *lockHarness {
 	t.Helper()
 	h := &lockHarness{matrixHarness: newMatrixHarness(t), signer: newLockSigner(t, lockKid)}
 	h.srv.Audit = func(line string) { h.lines = append(h.lines, line) }
@@ -141,6 +141,12 @@ func newLockHarness(t *testing.T) *lockHarness {
 		Authority: sessions, Keys: keys, Issuer: lockIssuer, Audience: lockAudience,
 		Provider: lockProvider, Now: func() time.Time { return lockClock },
 	})
+	if len(requireRole) > 0 {
+		jwt, err = identity.NewSupabaseJWT(identity.SupabaseConfig{
+			Authority: sessions, Keys: keys, Issuer: lockIssuer, Audience: lockAudience,
+			Provider: lockProvider, RequireRole: requireRole[0], Now: func() time.Time { return lockClock },
+		})
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,8 +189,8 @@ func (h *lockHarness) lastStatus(t *testing.T) string {
 	return rest
 }
 
-// TestASignedTokenFailingAClaimCheckDoesNotLockTheClientOut — measured at THREE claim
-// types (an expired token, a wrong audience, an unknown subject), ten of each from one
+// TestASignedTokenFailingAClaimCheckDoesNotLockTheClientOut — measured at THREE claim-time
+// checks (an expired token, a wrong audience, a wrong issuer), ten of each from one
 // address, and then the good token from that same address must still be served.
 func TestASignedTokenFailingAClaimCheckDoesNotLockTheClientOut(t *testing.T) {
 	for _, arm := range []struct {
@@ -193,7 +199,7 @@ func TestASignedTokenFailingAClaimCheckDoesNotLockTheClientOut(t *testing.T) {
 	}{
 		{"expired", func(c map[string]any) { c["exp"] = lockClock.Add(-time.Hour).Unix() }},
 		{"audience mismatch", func(c map[string]any) { c["aud"] = "a-different-application" }},
-		{"unknown subject", func(c map[string]any) { c["sub"] = "member-unknown" }},
+		{"issuer mismatch", func(c map[string]any) { c["iss"] = "https://other-issuer.example.test/" }},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			h := newLockHarness(t)
@@ -257,12 +263,13 @@ func TestBadCredentialsStillLockTheClientOut(t *testing.T) {
 	}
 }
 
-// TestClaimsRefusalsNeitherAddToNorForgiveTheFailureCount pins the mixed arm, as a
-// DECISION: a claims-refused token records no failure AND no success. Four bad
-// signatures, then ten expired-but-genuine tokens, then one more bad signature — that
-// fifth bad signature is the one that starts the lockout. Counting the expired tokens
-// would lock earlier; treating them as a success would forgive the streak and lock later
-// (or never).
+// TestClaimsRefusalsNeitherAddToNorForgiveTheFailureCount pins the mixed arm: a
+// claims-refused token records no failure. Four bad signatures, then ten expired-but-genuine
+// tokens, then one more bad signature — that fifth bad signature is the one that starts the
+// lockout. Counting the expired tokens would lock on the first of them. ⚠ The "forgive" half
+// is pinned too, but today it cannot fail on its own: `netid.RateLimiter.RecordSuccess` is a
+// no-op, so even a success forgives nothing. It is kept so that a limiter which starts
+// forgiving on success cannot also start forgiving on a claims refusal unnoticed.
 func TestClaimsRefusalsNeitherAddToNorForgiveTheFailureCount(t *testing.T) {
 	h := newLockHarness(t)
 	bad := newLockSigner(t, lockKid).sign(t, goodLockClaims())
@@ -284,38 +291,38 @@ func TestClaimsRefusalsNeitherAddToNorForgiveTheFailureCount(t *testing.T) {
 	}
 }
 
-// TestASignedTokenIsAuditedWithItsSubJtiAndGroups pins the three new audit fields: present
+// TestASignedTokenIsAuditedWithItsSubAndJti pins the two new audit fields: present
 // on a verified token's line (authenticated or claims-refused), ABSENT from every other
 // line (which keeps a machine-token line byte-identical to the oracle's for
 // `tests/dualrun/`), and unable to forge a field or a line.
-func TestASignedTokenIsAuditedWithItsSubJtiAndGroups(t *testing.T) {
+func TestASignedTokenIsAuditedWithItsSubAndJti(t *testing.T) {
 	h := newLockHarness(t)
 
 	if code, _ := h.read(t, h.signer.sign(t, goodLockClaims())); code != 200 {
 		t.Fatalf("precondition: the good token got %d", code)
 	}
-	if line := h.lastLine(t); !strings.HasSuffix(line, " status=recalled sub=member-0001 jti=jti-good groups=-") {
-		t.Fatalf("an authenticated signed token's line must end `sub=… jti=… groups=-`:\n  %s", line)
+	if line := h.lastLine(t); !strings.HasSuffix(line, " status=recalled sub=member-0001 jti=jti-good") {
+		t.Fatalf("an authenticated signed token's line must end `sub=… jti=…`:\n  %s", line)
 	}
 
 	c := goodLockClaims()
 	c["exp"] = lockClock.Add(-time.Hour).Unix()
 	c["jti"] = "jti-expired"
 	h.read(t, h.signer.sign(t, c))
-	if line := h.lastLine(t); !strings.HasSuffix(line, " auth=fail result=401 status=claims-refused sub=member-0001 jti=jti-expired groups=-") {
+	if line := h.lastLine(t); !strings.HasSuffix(line, " auth=fail result=401 status=claims-refused sub=member-0001 jti=jti-expired") {
 		t.Fatalf("a claims-refused line must carry the signed sub and jti:\n  %s", line)
 	}
 
 	noJti := goodLockClaims()
 	delete(noJti, "jti")
 	h.read(t, h.signer.sign(t, noJti))
-	if line := h.lastLine(t); !strings.HasSuffix(line, " jti=- groups=-") {
+	if line := h.lastLine(t); !strings.HasSuffix(line, " jti=-") {
 		t.Fatalf("an absent jti must render `-`:\n  %s", line)
 	}
 
 	h.read(t, matrixWideToken)
-	if line := h.lastLine(t); strings.Contains(line, " sub=") || strings.Contains(line, " jti=") || strings.Contains(line, " groups=") {
-		t.Fatalf("a machine-token line must be unchanged — no sub/jti/groups fields:\n  %s", line)
+	if line := h.lastLine(t); strings.Contains(line, " sub=") || strings.Contains(line, " jti=") {
+		t.Fatalf("a machine-token line must be unchanged — no sub/jti fields:\n  %s", line)
 	}
 	h.read(t, newLockSigner(t, lockKid).sign(t, goodLockClaims()))
 	if line := h.lastLine(t); strings.Contains(line, " sub=") {
@@ -326,6 +333,9 @@ func TestASignedTokenIsAuditedWithItsSubJtiAndGroups(t *testing.T) {
 	evil := goodLockClaims()
 	evil["sub"] = "x status=recalled\nstore-api audit ts=forged"
 	evil["jti"] = "j k=v"
+	// Expired, so the line is a claims-refused one that carries the signed sub — an unknown
+	// subject on an otherwise-valid token is counted and carries no token facts at all.
+	evil["exp"] = lockClock.Add(-time.Hour).Unix()
 	h.read(t, h.signer.sign(t, evil))
 	line := h.lastLine(t)
 	if strings.ContainsAny(line, "\n\r") {
@@ -334,25 +344,58 @@ func TestASignedTokenIsAuditedWithItsSubJtiAndGroups(t *testing.T) {
 	if n := strings.Count(line, " status="); n != 1 {
 		t.Fatalf("a signed sub forged a second status= field (%d):\n  %s", n, line)
 	}
-	if !strings.HasSuffix(line, " sub=x_status=recalled?store-api_audit_ts=forged jti=j_k=v groups=-") {
+	if !strings.HasSuffix(line, " sub=x_status=recalled?store-api_audit_ts=forged jti=j_k=v") {
 		t.Fatalf("the sanitised sub/jti are not what auditField produces:\n  %s", line)
 	}
 }
 
-// TestAuditGroupsCannotForgeAMembership: `groups=` is filled by a later change; its
-// rendering is settled here. A `,` inside one name must not read as two groups.
-func TestAuditGroupsCannotForgeAMembership(t *testing.T) {
-	for _, tc := range []struct {
-		in   []string
-		want string
+// TestARoleMismatchOrUnknownSubjectStillLocksTheClientOut — a verified token refused AFTER
+// `verifyToken` (a `role` that is not the required one, or a subject this control plane
+// holds no user for) is an authentication refusal with no principal, and it COUNTS: an
+// issuer that signs for self-registered users hands such tokens to anybody, so they are
+// the guessing surface the limiter exists for. Five from one address start the lockout.
+func TestARoleMismatchOrUnknownSubjectStillLocksTheClientOut(t *testing.T) {
+	for _, arm := range []struct {
+		name string
+		role string
+		edit func(map[string]any)
 	}{
-		{nil, "-"},
-		{[]string{"alpha"}, "alpha"},
-		{[]string{"alpha", "beta"}, "alpha,beta"},
-		{[]string{"alpha,admin", "a b", "c\nd"}, "alpha?admin,a_b,c?d"},
+		{"role mismatch", "authenticated", func(c map[string]any) { c["role"] = "anon" }},
+		{"unknown subject", "", func(c map[string]any) { c["sub"] = "member-unknown" }},
 	} {
-		if got := auditGroups(tc.in); got != tc.want {
-			t.Fatalf("auditGroups(%q) = %q, want %q", tc.in, got, tc.want)
-		}
+		t.Run(arm.name, func(t *testing.T) {
+			var h *lockHarness
+			if arm.role != "" {
+				h = newLockHarness(t, arm.role)
+			} else {
+				h = newLockHarness(t)
+			}
+			good := goodLockClaims()
+			if arm.role != "" {
+				good["role"] = arm.role
+			}
+			if code, _ := h.read(t, h.signer.sign(t, good)); code != 200 {
+				t.Fatalf("positive control: the good token got %d", code)
+			}
+			c := goodLockClaims()
+			if arm.role != "" {
+				c["role"] = arm.role
+			}
+			arm.edit(c)
+			refused := h.signer.sign(t, c)
+			for i := 1; i <= 5; i++ {
+				code, status := h.read(t, refused)
+				want := "unauthorized"
+				if i == 5 {
+					want = "lockout-triggered"
+				}
+				if code != 401 || status != want {
+					t.Fatalf("request %d: got %d status=%s, want 401 status=%s — a %s refusal must be COUNTED", i, code, status, want, arm.name)
+				}
+			}
+			if code, status := h.read(t, h.signer.sign(t, good)); code != 401 || status != "locked-out" {
+				t.Fatalf("after five %s refusals the address must be locked out; the good token got %d status=%s", arm.name, code, status)
+			}
+		})
 	}
 }

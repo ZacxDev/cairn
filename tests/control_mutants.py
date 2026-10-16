@@ -2026,11 +2026,55 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="the-audit-line-drops-jti",
         path="internal/api/server.go",
-        old='\t\t\t" jti=" + auditField(orDash(rq.token.ID), 128) +\n',
+        old='\t\tline += " jti=" + auditField(orDash(rq.token.ID), 128)\n',
         new="",
-        killer="TestASignedTokenIsAuditedWithItsSubJtiAndGroups",
+        killer="TestASignedTokenIsAuditedWithItsSubAndJti",
         why="`jti` is what joins a request's audit line to the issuer's record of minting "
         "the token; without it a claims-refused stream cannot be attributed to a mint.",
+    ),
+    Mutant(
+        name="a-role-mismatch-escapes-the-lockout",
+        path="internal/identity/supabase.go",
+        old='\t\treturn Identity{}, refuse(SupabaseBackend, "role claim is not "+s.requireRole)',
+        new='\t\treturn Identity{}, newVerifiedClaimsRefusal(refuse(SupabaseBackend, "role claim is not "+s.requireRole), claims)',
+        killer="TestARoleMismatchOrUnknownSubjectStillLocksTheClientOut",
+        extra_killers=("TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified",),
+        why="the tempting widening — the signature verified, so the role refusal 'is not a "
+        "guess' too. Against an issuer that signs for self-registered users anybody can "
+        "hold a genuine token with the wrong role, so this is the guessing surface.",
+    ),
+    Mutant(
+        name="an-unknown-subject-escapes-the-lockout",
+        path="internal/identity/supabase.go",
+        old="\t\treturn Identity{}, refuseUnprovisioned(SupabaseBackend,\n"
+        "\t\t\t\"the token verifies and names a subject this control plane holds no user for\",\n"
+        "\t\t\ts.provider, claims.Subject)\n",
+        new="\t\treturn Identity{}, newVerifiedClaimsRefusal(refuseUnprovisioned(SupabaseBackend,\n"
+        "\t\t\t\"the token verifies and names a subject this control plane holds no user for\",\n"
+        "\t\t\ts.provider, claims.Subject), claims)\n",
+        killer="TestARoleMismatchOrUnknownSubjectStillLocksTheClientOut",
+        why="the same widening on the subject arm: a self-registering issuer mints a genuine "
+        "token for a subject this control plane has never heard of, for anybody.",
+    ),
+    Mutant(
+        name="a-cookie-backend-chain-lets-the-verified-refusal-stand",
+        path="internal/identity/cookiesession.go",
+        old='refuse(CookieSessionBackend, "no session cookie")',
+        new='refuseAbsent(CookieSessionBackend, "no session cookie")',
+        killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
+        why="the absent mark re-added to the cookie backend. No chain whose refusal the API "
+        "pod reads carries one today, so the test pins the fail-closed direction for the day "
+        "one does.",
+    ),
+    Mutant(
+        name="the-trusted-header-never-marks-itself-absent",
+        path="internal/identity/trustedheader.go",
+        old="return Identity{}, refuseAbsent(rf.Backend, rf.Reason)",
+        new="return Identity{}, refuse(rf.Backend, rf.Reason)",
+        killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
+        why="the load-bearing half of the absent mark: the API pod's chain can carry a "
+        "trusted-header backend, and without the mark its refusal reads as a presented "
+        "credential on every request, so every claim-time refusal is counted again.",
     ),
     # ---- the cached key set: the outage promise and its honesty -------------------
     Mutant(
