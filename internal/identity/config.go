@@ -36,10 +36,16 @@ const (
 	// provider* carries the operator-facing contract, and the identifiers move in their own
 	// change so this one stays readable.
 	//
-	// ⚠ IT IS THE ONLY WAY TO GIVE THIS BACKEND A KEY. The two variables that named the
-	// LEGACY symmetric secret are deleted, not deprecated: this build verifies no
-	// shared-secret algorithm. Setting one of them now REFUSES — see `retiredEnv`.
+	// ⚠ IT IS ONE OF EXACTLY TWO WAYS TO GIVE THIS BACKEND A KEY, AND THE OTHER IS
+	// `EnvSupabaseJWKSFile`; setting both is a refusal (`ErrJWKSTwoSources`). The two
+	// variables that named the LEGACY symmetric secret are deleted, not deprecated: this
+	// build verifies no shared-secret algorithm. Setting one of them now REFUSES — see
+	// `retiredEnv`.
 	EnvSupabaseJWKSURL = "CAIRN_OIDC_JWKS_URL"
+	// EnvSupabaseJWKSFile is a local JWKS document, read instead of fetched — so the
+	// issuer is not on the startup path at all. A NEW name with no deprecated spelling, so
+	// it has no `envalias` pair. See `JWKSOptions.File`.
+	EnvSupabaseJWKSFile = "CAIRN_OIDC_JWKS_FILE"
 	// EnvSupabaseIssuer is the required `iss`.
 	EnvSupabaseIssuer = "CAIRN_OIDC_ISSUER"
 	// EnvSupabaseAudience is the required `aud`. Defaults to DefaultSupabaseAudience.
@@ -360,8 +366,19 @@ var supabaseEnv = ledger{
 		{
 			name:      EnvSupabaseJWKSURL,
 			policy:    refusedByConstructor,
-			unset:     "there is no key set, so no token could ever verify",
+			unset:     "there is no key set unless " + EnvSupabaseJWKSFile + " names one, so with neither no token could ever verify",
 			refusedBy: ErrSupabaseNoKeys,
+		},
+		{
+			// `refuseBlank`, NOT `refusedByConstructor` beside its sibling, and the
+			// asymmetry is deliberate. A blank URL read as unset reaches a named rung
+			// (`ErrSupabaseNoKeys`) whatever else is set. A blank FILE read as unset does
+			// not: beside a URL it is silently dropped, and the pod comes up fetching from
+			// the issuer at startup — the very dependency the operator wrote this line to
+			// remove — with nothing saying so.
+			name:   EnvSupabaseJWKSFile,
+			policy: refuseBlank,
+			unset:  "the key set is fetched from " + EnvSupabaseJWKSURL + " instead, so the issuer is back on the startup path",
 		},
 		{
 			name:      EnvSupabaseIssuer,
@@ -501,7 +518,7 @@ func ledgers() []ledger { return []ledger{supabaseEnv, proxyEnv} }
 // cannot arm a backend, which is the distinction that keeps it from being a second
 // spelling of a live setting.
 const retiredSymmetricSecret = "the legacy symmetric (HS256) JWT secret, which this build no longer verifies with at all. Use " +
-	EnvSupabaseJWKSURL + " — the issuer's published asymmetric signing keys"
+	EnvSupabaseJWKSURL + " (or " + EnvSupabaseJWKSFile + ") — the issuer's published asymmetric signing keys"
 
 var retiredEnv = map[string]string{
 	"CAIRN_SUPABASE_JWT_SECRET":      retiredSymmetricSecret,
@@ -1196,10 +1213,14 @@ func secretFrom(inlineName, direct, fileName, path string) ([]byte, error) {
 func supabaseFromEnv(values map[string]string, authority ModelSource) (*SupabaseJWT, error) {
 	r := &reader{values: values}
 
+	// Both sources are read BEFORE either is acted on, and `NewKeySet` is the one place
+	// that decides what two, one or neither means — `ErrJWKSTwoSources` is its refusal, not
+	// a precedence chosen here.
 	var keys *KeySet
-	if url := r.get(EnvSupabaseJWKSURL); url != "" {
+	url, file := r.get(EnvSupabaseJWKSURL), r.get(EnvSupabaseJWKSFile)
+	if url != "" || file != "" {
 		var err error
-		keys, err = NewKeySet(JWKSOptions{URL: url})
+		keys, err = NewKeySet(JWKSOptions{URL: url, File: file})
 		if err != nil {
 			return nil, err
 		}

@@ -1993,6 +1993,72 @@ MUTANTS: tuple[Mutant, ...] = (
         "most wrong exactly when it is most needed. `control.Cache.Refresh` carries the "
         "same rule and the same reasoning.",
     ),
+    # ---- the JWKS FILE source: one source, read locally, refused at startup -------
+    Mutant(
+        name="a-jwks-url-and-a-jwks-file-are-both-accepted",
+        path="internal/identity/jwks.go",
+        old='\tif opts.URL != "" && opts.File != "" {',
+        new="\tif false {",
+        killer="TestAJWKSURLAndAJWKSFileTogetherAreRefused",
+        extra_killers=("TestAJWKSFileBesideAJWKSURLIsRefusedRatherThanRanked",),
+        why="a precedence rule reads as harmless — the file wins, say — and makes a rotation "
+        "of the losing source look applied while the pod keeps verifying with the other. The "
+        "same ruling `secretFrom` makes for the proxy secret.",
+    ),
+    Mutant(
+        name="a-relative-jwks-file-is-accepted",
+        path="internal/identity/jwks.go",
+        old="\tif !filepath.IsAbs(path) {",
+        # `&&`, not a bare `false`: `filepath` has no other use in the file, and an unused
+        # import is a build failure that would read as a harness error, not a verdict.
+        new="\tif false && !filepath.IsAbs(path) {",
+        killer="TestEveryJWKSFileConstructionRefusalIsReachable",
+        why="a relative path resolves against the working directory a container entrypoint "
+        "chooses, so the same manifest reads a different file — or none — depending on an "
+        "image detail nobody reviews beside the setting.",
+    ),
+    Mutant(
+        name="a-bad-jwks-file-read-is-an-empty-success",
+        path="internal/identity/jwks.go",
+        old='\t\treturn nil, fmt.Errorf("identity: jwks file %s: %w", k.file, err)\n\t}\n\treturn keys, nil',
+        new="\t\treturn map[string]jwkKey{}, nil\n\t}\n\treturn keys, nil",
+        killer="TestABadReReadOfAJWKSFileKeepsTheLastGoodSet",
+        extra_killers=("TestTheBinaryREFUSESABadJWKSFileAtStartup",),
+        why="\"a file mid-write is not an outage, serve what parsed\" is the plausible reading, "
+        "and it commits an EMPTY set that refuses every session while reporting itself fresh "
+        "— and at startup it turns the exit-78 refusal into a pod that comes up verifying "
+        "nobody.",
+    ),
+    Mutant(
+        name="the-file-source-skips-the-startup-refusal",
+        path="cmd/cairn-server/main.go",
+        old="if err := supabase.RefreshKeys(context.Background()); err != nil {",
+        new="if err := supabase.RefreshKeys(context.Background()); err != nil && !supabase.KeysFromFile() {",
+        killer="TestTheBinaryREFUSESABadJWKSFileAtStartup",
+        why="\"the file will be fixed and the timer re-reads it\" is the tempting relaxation, "
+        "and it brings up a pod that verifies nobody while its health check passes — the "
+        "state the startup refusal exists to make loud.",
+    ),
+    Mutant(
+        name="sighup-does-not-re-read-the-jwks-file",
+        path="cmd/cairn-server/main.go",
+        old="\t\tif supabase.KeysFromFile() {\n\t\t\tinstallKeyReload(supabase)",
+        new="\t\tif false {\n\t\t\tinstallKeyReload(supabase)",
+        killer="TestSIGHUPReReadsAJWKSFileAndARefusalKeepsTheLastGoodSet",
+        why="the token reload already answers SIGHUP, so an operator who edits the key file "
+        "and signals sees a LOADED line and believes the keys moved; dropping the second "
+        "handler is invisible to every other test.",
+    ),
+    Mutant(
+        name="the-environment-reader-drops-the-jwks-file",
+        path="internal/identity/config.go",
+        old="url, file := r.get(EnvSupabaseJWKSURL), r.get(EnvSupabaseJWKSFile)",
+        new='url, file := r.get(EnvSupabaseJWKSURL), ""',
+        killer="TestAJWKSFileAloneArmsAWorkingVerifier",
+        why="a variable declared in the ledger and never plumbed to the constructor is the "
+        "inert-setting shape this package keeps refusing: the manifest says file, and the "
+        "pod refuses to start for want of keys it was given.",
+    ),
     # ---- the chain and the seam into the server -----------------------------------
     Mutant(
         name="the-chain-propagates-an-identity-naming-nobody",

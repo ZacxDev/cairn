@@ -523,11 +523,20 @@ func main() {
 		// ⚠ THE DEADLINE IS THE FETCH'S OWN. `NewKeySet` gives its client a timeout, so
 		// an unreachable provider fails here in seconds rather than hanging a pod that
 		// would otherwise have started.
+		//
+		// 🔴 AND THE SAME REFUSAL COVERS A KEY SET READ FROM `$CAIRN_OIDC_JWKS_FILE`, WHERE
+		// IT MEANS SOMETHING STRONGER. A file that is missing, oversized or yields no usable
+		// key is a misconfiguration rather than an outage — nothing will fix it by waiting —
+		// and this is the one place either source materializes, so neither gets a second,
+		// laxer startup path.
 		if err := supabase.RefreshKeys(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
-				"subsystem-store-api: identity: the Supabase key set could not be fetched at startup (%s), so no session could be verified and every sign-in would be refused. Refusing to start",
+				"subsystem-store-api: identity: the Supabase key set could not be loaded at startup (%s), so no session could be verified and every sign-in would be refused. Refusing to start",
 				err.Error())))
 			os.Exit(exitConfig)
+		}
+		if supabase.KeysFromFile() {
+			installKeyReload(supabase)
 		}
 		go func() {
 			logf := func(line string) { fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+line)) }
@@ -698,6 +707,39 @@ func installReload(srv *api.Server, tokenFile string, env map[string]string) {
 			fmt.Println(reloadSafe(fmt.Sprintf(
 				"subsystem-store-api: %s %d identities [%s] (was %d [%s])",
 				reloadLoaded, len(records), tokenIDs(records), len(previous), tokenIDs(previous))))
+		}
+	}()
+}
+
+// installKeyReload re-reads a FILE-sourced key set on SIGHUP, beside the token reload that
+// `installReload` performs on the same signal.
+//
+// 🔴 A REFUSED RE-READ CHANGES NOTHING, AND THE LINE SAYS WHAT IS STILL SERVING. `Refresh`
+// keeps the last-known-good set on any failure — a file caught mid-write, a mount that went
+// away, a document with a duplicated `kid` — so a rotation that broke the file does not take
+// every session down with it; the operator is told the count that is still live and that the
+// file is what to fix. The timer in `RunKeyRefresh` re-reads the file too, so a signal is a
+// way to apply an edit NOW, never the only way it is applied.
+//
+// ⚠ ITS OWN WORDS, NOT `reloadLoaded`/`reloadRefused`. Those two prefixes are the token
+// reload's verdict, which an operator — and `TestARefusedReloadDoesNotClaimNothingChanged` —
+// reads after `kill -HUP`; a key-set line carrying them would answer a question about the
+// token table.
+func installKeyReload(backend *identity.SupabaseJWT) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP)
+	go func() {
+		for range signals {
+			before := backend.KeyStatus()
+			if err := backend.RefreshKeys(context.Background()); err != nil {
+				fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+					"subsystem-store-api: identity: JWKS file re-read on SIGHUP refused (%s); still serving the last-known-good %d key(s). Fix the file and send SIGHUP again, or wait for the next refresh",
+					err.Error(), before.Keys)))
+				continue
+			}
+			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+				"subsystem-store-api: identity: JWKS file re-read on SIGHUP: serving %d key(s) (was %d)",
+				backend.KeyStatus().Keys, before.Keys)))
 		}
 	}()
 }
