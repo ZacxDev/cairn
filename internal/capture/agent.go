@@ -30,10 +30,13 @@ type Agent struct {
 	// repo it ran in has that `origin` owner and the routing table does not name the repo's scope
 	// ([Decide]). Nil routes no owner.
 	OwnerRoutes OwnerRoutes
-	Redactor    *redact.Redactor
-	Sink        Sink
-	State       *State
-	Log         io.Writer
+	// Uploadable is every alias this run can upload to (`--run`: those with a `-worker`); [Decide]'s
+	// repo arm never places a session on any other. Nil restricts nothing.
+	Uploadable map[string]bool
+	Redactor   *redact.Redactor
+	Sink       Sink
+	State      *State
+	Log        io.Writer
 
 	// Checkpoint, when set, saves the state. It is called AT ONCE where a crash must not lose a
 	// decision — before an opencode write leaves (its plan), before a re-check placeholder is sent
@@ -541,7 +544,7 @@ func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, r
 	// different answer here once its repo routes elsewhere — and a changed answer for a bound
 	// session is a MOVE like any other: destination probed, prefix withdrawn, whole session
 	// re-shipped from offset 0. Nothing about the repo arm bypasses the withdrawal.
-	dec := Decide(ss.V, a.sessionRepo(ss), a.Routing, a.OwnerRoutes)
+	dec := Decide(ss.V, a.sessionRepo(ss), a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable})
 	if ss.Instance != "" && !dec.Held && dec.Instance != "" && ss.Instance != dec.Instance {
 		// 🔴 THE DESTINATION IS ASKED BEFORE THE CURRENT HOLDER IS TOLD TO FORGET, AND ONLY A DEFINITE
 		// "NOT DELETED HERE" LETS THE WITHDRAWAL GO AHEAD (#273's audit F1, closed in S10; #274's

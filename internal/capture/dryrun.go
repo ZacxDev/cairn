@@ -76,7 +76,7 @@ func (a *Agent) decisionText(v []string, dir string) string {
 	if len(v) == 0 {
 		repo, _ = deriveRepo(dir)
 	}
-	dec := Decide(v, repo, a.Routing, a.OwnerRoutes)
+	dec := Decide(v, repo, a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable})
 	if dec.Held {
 		return "held"
 	}

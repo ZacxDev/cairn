@@ -8,7 +8,15 @@ import "github.com/ZacxDev/cairn/internal/client"
 // assertions rather than on a compile error. Nothing else should call them.
 
 func decide(v []string, repo Repo, routing client.Routing, owners OwnerRoutes) Decision {
-	return Decide(v, repo, routing, owners)
+	return Decide(v, repo, routing, RepoRules{Owners: owners})
 }
 
 func setOwnerRoutes(a *Agent, owners OwnerRoutes) { a.OwnerRoutes = owners }
+
+// setUploadable names the aliases the agent's run can upload to, as `--run`'s `-worker` flags do.
+func setUploadable(a *Agent, aliases ...string) {
+	a.Uploadable = map[string]bool{}
+	for _, alias := range aliases {
+		a.Uploadable[alias] = true
+	}
+}

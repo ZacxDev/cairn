@@ -23,16 +23,16 @@ type Decision struct {
 //     With exactly one instance there is nowhere else it could go, so it ships to that one, where
 //     `*` and unknown names make it owner-only.
 //
-// 🔴 `repo` AND `owners` ARE READ ONLY WHEN V IS EMPTY. A session that recorded a scope is placed
+// 🔴 `repo` AND `rules` ARE READ ONLY WHEN V IS EMPTY. A session that recorded a scope is placed
 // by what it READ, never by where it ran: a session in a repo the second instance's organisation
 // owns that read only default-instance scopes still goes to the default instance, and the V
 // branches below are unchanged by the repo arm (`TestARecordedScopeIsNeverOverruledByTheRepo`).
 //
 // It uses `internal/client`'s routing (`Routing.AliasFor`), the same resolver every `cairn` write
 // uses — never a second spelling of the table.
-func Decide(v []string, repo Repo, routing client.Routing, owners OwnerRoutes) Decision {
+func Decide(v []string, repo Repo, routing client.Routing, rules RepoRules) Decision {
 	if len(v) == 0 {
-		return decideByRepo(repo, routing, owners)
+		return decideByRepo(repo, routing, rules)
 	}
 	multi := routing.MultiInstance()
 	target := ""
@@ -66,6 +66,17 @@ func Decide(v []string, repo Repo, routing client.Routing, owners OwnerRoutes) D
 	return Decision{Instance: target, Reason: "every scope routes to " + target}
 }
 
+// RepoRules is what [decideByRepo] places an empty-V session by, beside the routing table.
+type RepoRules struct {
+	// Owners is `-route-origin-owner`.
+	Owners OwnerRoutes
+	// Uploadable is every alias THIS RUN can upload to — under `--run`, the aliases with a `-worker`.
+	// Nil places no restriction (a caller that uploads nowhere, such as a unit test of the rules).
+	Uploadable map[string]bool
+}
+
+func (r RepoRules) uploadable(alias string) bool { return r.Uploadable == nil || r.Uploadable[alias] }
+
 // decideByRepo places a session that recorded NO scope by the repository it ran in. First match
 // wins:
 //
@@ -76,24 +87,35 @@ func Decide(v []string, repo Repo, routing client.Routing, owners OwnerRoutes) D
 //  2. the repo's `origin` OWNER when `-route-origin-owner OWNER=ALIAS` names it: that alias.
 //  3. the DEFAULT instance — exactly what every empty-V session got before this arm existed.
 //
-// ⚠ A TABLE ENTRY NAMING AN ALIAS THIS HOST DOES NOT CONFIGURE IS NOT A MATCH HERE, and the
-// session falls on to 2 and 3. That is deliberately weaker than the V arm, which HOLDS such a
-// scope: a hold is FINAL and withdraws a shipped prefix, and a session that READ nothing has only
-// its directory against it — a stale table line would otherwise withdraw and freeze every session
-// ever run in that repo. Falling through is what every empty-V session got before.
+// 🔴 AN ALIAS THIS RUN CANNOT UPLOAD TO IS NO MATCH (#292's audit, F1). A table naming the repo's
+// scope for an instance with no `-worker` bound new sessions to an endpoint that does not exist —
+// refused on every run — and left every already-shipped one in `withdrawal-pending` for good, the
+// destination probe having nowhere to go; both at exit 0. Before this arm both shipped to the
+// default. So the answer is the DEFAULT, as before: the session moves on the first run after the
+// operator adds that instance's `-worker`.
+//
+// ⚠ AND A TABLE ENTRY WHOSE ALIAS IS UNUSABLE — not configured on this host, or not uploadable this
+// run — GOES TO 3, NEVER TO 2. The table spoke about this repo, so the owner rule must not override
+// it: an entry pinning the scope to the default would otherwise be overridden whenever the default
+// had no `-worker`. Falling to 3 rather than HOLDING (the V arm holds a scope routed to an
+// unconfigured alias) is deliberate: a hold is FINAL and withdraws a shipped prefix, and a session
+// that READ nothing has only its directory against it — a stale table line would otherwise
+// withdraw and freeze every session ever run in that repo.
 //
 // A session whose directory is unknown, gone, not a git repository, or has no `origin` carries
 // the zero [Repo] and reaches 3.
-func decideByRepo(repo Repo, routing client.Routing, owners OwnerRoutes) Decision {
+func decideByRepo(repo Repo, routing client.Routing, rules RepoRules) Decision {
 	if repo.Scope != "" {
 		if _, named := routing.Routes[repo.Scope]; named {
-			if alias, err := routing.AliasFor(repo.Scope); err == nil {
+			if alias, err := routing.AliasFor(repo.Scope); err == nil && rules.uploadable(alias) {
 				return Decision{Instance: alias, Reason: "no recorded scope; the repo it ran in is scope " + repo.Scope +
 					", which the routing table sends to " + alias}
 			}
+			return Decision{Instance: client.DefaultAlias, Reason: "no recorded scope; the routing table names the repo's " +
+				"scope " + repo.Scope + " for an instance this run cannot upload to: the default instance, owner-only"}
 		}
 	}
-	if alias, ok := owners.AliasFor(repo.Owner); ok {
+	if alias, ok := rules.Owners.AliasFor(repo.Owner); ok && rules.uploadable(alias) {
 		return Decision{Instance: alias, Reason: "no recorded scope; the repo it ran in has origin owner " + repo.Owner +
 			", which -route-origin-owner sends to " + alias}
 	}

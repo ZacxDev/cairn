@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,5 +44,45 @@ func TestRouteOriginOwnerUsageRefusals(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := run(append(dry, "-route-origin-owner", "acme=client"), &out, &errb, env); code != exitOK {
 		t.Fatalf("CONTROL: a well-formed rule: exit %d (%s)", code, errb.String())
+	}
+}
+
+// TestATableRoutedRepoWithNoWorkerShipsToTheDefaultThroughTheBinary is #292's audit F1 as the
+// auditor reproduced it, through the real wiring and the real HTTPSink: a second instance
+// `client` is configured and the routing table sends the repo's scope `beta-notes` to it, but
+// `--run` has a `-worker` for the default instance only. The session must ship to the default —
+// before the fix it was refused on every run ("no worker listener is configured for instance
+// client") at exit 0.
+func TestATableRoutedRepoWithNoWorkerShipsToTheDefaultThroughTheBinary(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	p := newRunPod(t, true)
+	home, tokenFile, env := runWorld(t, runToken)
+	cfg := filepath.Join(home, ".config", "cairn")
+	if err := os.MkdirAll(filepath.Join(cfg, "instances"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "instances", "client.env"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "routes.json"), []byte(`{"beta-notes":"client"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(t.TempDir(), "beta-notes")
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	var b strings.Builder
+	for i := 0; i < 5; i++ {
+		fmt.Fprintf(&b, `{"type":"user","sessionId":"s-0001","cwd":%q,"message":{"role":"user","content":"line %d"}}`+"\n", repo, i)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "projects", "-work-alpha", "s-0001.jsonl"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	code := run([]string{"--run", "-host", "host-a", "-worker", p.url, "-capture-token-file", tokenFile}, &bytes.Buffer{}, &errb, env)
+	recs, _ := p.arc.ReadStream("s-0001", "main")
+	if code != exitOK || len(recs) != 5 || strings.Contains(errb.String(), "refused s-0001") {
+		t.Fatalf("exit %d, %d records stored on the default instance — want 0 and all 5:\n%s", code, len(recs), errb.String())
 	}
 }

@@ -107,7 +107,11 @@ func OriginOwner(raw string) string {
 		return ""
 	}
 	owner := segs[0]
-	if owner == "." || owner == ".." || strings.HasPrefix(owner, "~") {
+	// 🔴 AN OWNER CARRYING `@` OR `:` IS NO OWNER (#292's audit, F2). The scp-like form splits on the
+	// FIRST colon, so `user:secret@host:acme/repo` answered `secret@host:acme` — a credential,
+	// persisted to the state as `repo.owner`. These are characters `ParseOwnerRoutes` already
+	// refuses in an OWNER, so no rule could ever have matched such a segment anyway.
+	if owner == "." || owner == ".." || strings.HasPrefix(owner, "~") || strings.ContainsAny(owner, "@:") {
 		return ""
 	}
 	return owner

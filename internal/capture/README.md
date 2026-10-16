@@ -55,14 +55,19 @@ session is placed by its repo, first match wins (`decideByRepo`):
 1. **The repo's scope, when the routing table NAMES it** → the alias `Routing.AliasFor` gives. The
    scope is derived exactly as the client derives it (`client.ScopeForRepo`: a worktree answers its
    base clone). An explicitly-named scope always wins, so a repo pinned to the default stays there.
-   ⚠ A table entry naming an alias this host does not configure is NOT a match here: the session
-   falls through to 2 and 3 (the `V` arm HOLDS such a scope; a hold is final and withdraws, and a
-   stale table line would otherwise freeze every session ever run in that repo).
+   ⚠ A table entry whose alias this host does not configure, or that this run has no `-worker`
+   for, is NOT a match: the session goes to 3, never to 2 — the owner rule does not override a
+   table that named the repo (the `V` arm HOLDS a scope routed to an unconfigured alias; a hold is
+   final and withdraws, and a stale table line would otherwise freeze every session ever run in
+   that repo). Binding it to an instance with no `-worker` had it refused on every run, or left in
+   `withdrawal-pending` for good, at exit 0 (`TestATableRoutedRepoWithNoWorkerShipsToTheDefault`).
 2. **`-route-origin-owner OWNER=ALIAS`** (repeatable, `--run` and `--dry-run`) → ALIAS, when the
    repo's `origin` URL's owner segment is OWNER — `git@host:owner/repo`, `https://host/owner/repo`,
    `ssh://[user@]host[:port]/owner/repo`, `.git` optional; compared case-insensitively, no host
    compared. ALIAS must be a configured instance, and under `--run` one with a `-worker`, or the
-   binary exits 2.
+   binary exits 2. `--dry-run` validates no endpoint: it treats the aliases its own `-worker` flags
+   name as the uploadable set, so given `--run`'s flags it prints `--run`'s decisions; with no
+   `-worker` at all it treats every configured instance as uploadable.
 3. **The default instance**, as before — also for a session with no recorded directory, a directory
    that is gone or is not a git repo, or a repo with no `origin`.
 
@@ -82,7 +87,8 @@ pass keeps the owner it had then.
 
 🔴 **What the FIRST run with this arm does to sessions an earlier version already shipped.** An
 empty-`V` session bound to the default instance whose repo now routes elsewhere — by the table, or
-by `-route-origin-owner` once the flag is added — gets a different routing answer, and a changed
+by `-route-origin-owner` once the flag is added, and in either case ONLY to an instance this run
+has a `-worker` for — gets a different routing answer, and a changed
 answer for a bound session is a MOVE through § *The withdrawal* below, unchanged: the destination
 is probed first, the default instance is asked to withdraw the prefix, and the WHOLE session is
 re-shipped from offset 0 to the routed instance (`TestAShippedEmptyVSessionMovesThroughTheWithdrawal`).
@@ -91,6 +97,10 @@ leaves it where it is, `withdrawal-pending`, until it can. ⚠ **Two things dela
 bound to an instance that is not taking uploads THIS run with nothing shipped is skipped unread
 (`skipUnread`, unchanged), so it is re-routed only on a run that reaches it; and an opencode root
 whose export is settled moves with nothing exported that run and is re-exported whole on the next.
+
+⚠ **Rolling back is a move too.** A `cairn-capture` older than this arm ignores `dir` and `repo`
+and answers the default for every empty-`V` session, so its first run withdraws each one this arm
+placed elsewhere from that instance and re-ships it whole to the default.
 
 ## Measured facts it is built on (one host, opencode 1.18.29)
 

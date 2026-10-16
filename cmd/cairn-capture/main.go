@@ -40,8 +40,9 @@
 // a session goes to the instance the routing table gives the scope of the repo it ran in, when the
 // table names that scope; else to ALIAS when that repo's `origin` owner is OWNER; else to the
 // default instance (`capture.Decide`). ALIAS must be a configured instance — and, under --run, one
-// with a `-worker` — or it is a usage error (exit 2). A session that recorded a scope is placed by
-// its scopes alone, as before.
+// with a `-worker` — or it is a usage error (exit 2). Neither the table nor the flag places a
+// session on an instance this run has no `-worker` for; it goes to the default instead. A session
+// that recorded a scope is placed by its scopes alone, as before.
 package main
 
 import (
@@ -111,7 +112,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		"host is EXACTLY this one, because the network it is reached over is the transport protection (repeatable; no default)")
 	fs.Var(&ownerRoutes, "route-origin-owner", "OWNER=ALIAS — a session that recorded no scope, run in a repo whose "+
 		"origin URL's owner segment is OWNER (case-insensitive), goes to instance ALIAS, unless the routing table names "+
-		"that repo's scope (repeatable; no default)")
+		"that repo's scope; never to an instance with no -worker (repeatable; no default)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -185,6 +186,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		LedgerDir:    *ledgerDir,
 		Routing:      routing,
 		OwnerRoutes:  owners,
+		Uploadable:   dryUploadable(workers),
 		Redactor:     red,
 		Log:          stderr,
 	}
@@ -359,6 +361,33 @@ func ownerRoutesFor(values []string, routing client.Routing, eps map[string]capt
 	return owners, nil
 }
 
+// uploadable is the aliases `--run` has an upload endpoint for: the repo arm of `capture.Decide`
+// places a session on no other (#292's audit, F1 — a table-routed repo whose instance has no
+// `-worker` was refused on every run, or left in `withdrawal-pending` for good, at exit 0).
+func uploadable(eps map[string]capture.Endpoint) map[string]bool {
+	out := map[string]bool{}
+	for alias := range eps {
+		out[alias] = true
+	}
+	return out
+}
+
+// dryUploadable is the same set for `--dry-run`, which validates no endpoint: the aliases its
+// `-worker` flags name, so a dry run given `--run`'s flags prints `--run`'s decisions. With no
+// `-worker` at all it restricts nothing — `--run` refuses that case outright, so there is no `--run`
+// answer to match, and a dry run then prints what the routing would do with every instance reachable.
+func dryUploadable(workers []string) map[string]bool {
+	if len(workers) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, w := range workers {
+		alias, _ := aliased(w)
+		out[alias] = true
+	}
+	return out
+}
+
 func mapOf(m map[string][]string) map[string]string {
 	out := map[string]string{}
 	for k := range m {
@@ -469,6 +498,7 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		LedgerDir:    c.ledgerDir,
 		Routing:      routing,
 		OwnerRoutes:  owners,
+		Uploadable:   uploadable(eps),
 		Redactor:     red,
 		Sink:         sink,
 		State:        state,

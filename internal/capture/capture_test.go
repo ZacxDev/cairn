@@ -636,7 +636,7 @@ func TestRoutingHonoursReads(t *testing.T) {
 	}
 	// CONTROL: routing on WRITES only queues the clause-(h) fixture for the personal instance —
 	// the difference between that and "held" is the read half of V.
-	if d := Decide([]string{"alpha-notes"}, Repo{}, twoInstances, nil); d.Held || d.Instance != "personal" {
+	if d := Decide([]string{"alpha-notes"}, Repo{}, twoInstances, RepoRules{}); d.Held || d.Instance != "personal" {
 		t.Fatalf("control: writes-only routing = %+v", d)
 	}
 }

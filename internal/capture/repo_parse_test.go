@@ -30,6 +30,10 @@ func TestOriginOwnerReadsTheThreeURLShapes(t *testing.T) {
 		"git://git.example.invalid/acme/alpha-notes.git":               "acme",
 		"https://git.example.invalid/acme/team/alpha-notes.git":        "acme",
 		"  git@git.example.invalid:Acme/alpha-notes.git\n":             "Acme",
+		// No owner: a segment carrying `@` or `:` — the scp-like split takes the FIRST colon, so a
+		// URL with a password in it would otherwise answer the password (#292's audit, F2).
+		"user:fixture-pass@git.example.invalid:acme/alpha-notes.git":  "",
+		"user:fixture-pass@git.example.invalid:2222/acme/alpha-notes": "",
 		// No owner: a single segment, a local path, a file URL, a home-relative path, junk.
 		"https://git.example.invalid/alpha-notes.git": "",
 		"git@git.example.invalid:alpha-notes.git":     "",
@@ -169,5 +173,30 @@ func TestASessionListDirectoryThatIsNotAStringIsNoDirectory(t *testing.T) {
 	roots, err := listRoots([]byte(`[{"id":"a","updated":1,"directory":"/fixture/a"},{"id":"b","updated":2,"directory":5},{"id":"c"}]`), 100)
 	if err != nil || len(roots) != 3 || roots[0].Directory != "/fixture/a" || roots[1].Directory != "" || roots[2].Directory != "" {
 		t.Fatalf("listRoots: %+v, %v", roots, err)
+	}
+}
+
+// TestTheRepoArmPlacesNoSessionOnAnInstanceThisRunCannotUploadTo (#292's audit, F1), on Decide:
+// neither rule binds a session to an alias outside `Uploadable`, and a table entry whose alias is
+// unusable goes to the default — never to the owner rule, which must not override the table.
+func TestTheRepoArmPlacesNoSessionOnAnInstanceThisRunCannotUploadTo(t *testing.T) {
+	onlyDefault := RepoRules{Owners: OwnerRoutes{"acme": "client", "globex": "personal"}, Uploadable: map[string]bool{"personal": true}}
+	onlyClient := RepoRules{Owners: OwnerRoutes{"acme": "client"}, Uploadable: map[string]bool{"client": true}}
+	for _, c := range []struct {
+		name  string
+		repo  Repo
+		rules RepoRules
+		want  string
+	}{
+		{"rule 1 to an alias with no worker", Repo{Scope: "beta-notes"}, onlyDefault, "personal"},
+		{"rule 1 with no worker does not fall to the owner rule", Repo{Scope: "beta-notes", Owner: "globex"}, onlyDefault, "personal"},
+		{"rule 2 to an alias with no worker", Repo{Scope: "gamma-notes", Owner: "acme"}, onlyDefault, "personal"},
+		{"a pin to the default is not overridden when the default has no worker", Repo{Scope: "pinned-notes", Owner: "acme"}, onlyClient, "personal"},
+		{"CONTROL: rule 1 to an alias with a worker", Repo{Scope: "beta-notes"}, onlyClient, "client"},
+		{"CONTROL: rule 2 to an alias with a worker", Repo{Scope: "gamma-notes", Owner: "acme"}, onlyClient, "client"},
+	} {
+		if d := Decide(nil, c.repo, repoRouting, c.rules); d.Held || d.Instance != c.want {
+			t.Errorf("%s: %+v, want %s", c.name, d, c.want)
+		}
 	}
 }

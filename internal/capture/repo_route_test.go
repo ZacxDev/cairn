@@ -279,7 +279,6 @@ func TestDecidePlacesAnEmptyVSessionByItsRepo(t *testing.T) {
 		{"the table's scope beats the owner rule", Repo{Scope: "beta-notes", Owner: "globex"}, owners, "client"},
 		{"the owner rule, for a scope the table does not name", Repo{Scope: "gamma-notes", Owner: "acme"}, owners, "client"},
 		{"the owner rule folds case", Repo{Scope: "gamma-notes", Owner: "ACME"}, owners, "client"},
-		{"a table entry for an UNCONFIGURED alias falls through to the owner rule", Repo{Scope: "stale-notes", Owner: "acme"}, owners, "client"},
 	} {
 		if d := decide(nil, c.repo, repoRouting, c.owners); d.Held || d.Instance != c.want {
 			t.Errorf("%s: %+v, want %s", c.name, d, c.want)
@@ -302,6 +301,7 @@ func TestDecideKeepsTheDefaultWhenNothingMatches(t *testing.T) {
 		{"a repo with no origin", Repo{Scope: "gamma-notes"}},
 		{"no repo at all (not git, gone, or no directory recorded)", Repo{}},
 		{"an unconfigured table entry and no owner rule", Repo{Scope: "stale-notes"}},
+		{"an unconfigured table entry is never overridden by the owner rule", Repo{Scope: "stale-notes", Owner: "acme"}},
 	} {
 		if d := decide(nil, c.repo, repoRouting, owners); d.Held || d.Instance != client.DefaultAlias {
 			t.Errorf("%s: %+v, want the default instance", c.name, d)
@@ -324,5 +324,54 @@ func TestARecordedScopeIsNeverOverruledByTheRepo(t *testing.T) {
 		if with != without {
 			t.Errorf("V=%v: with a repo %+v, without %+v — the repo must not move a recorded scope", v, with, without)
 		}
+	}
+}
+
+// TestATableRoutedRepoWithNoWorkerShipsToTheDefault (#292's audit, F1): the table names the repo's
+// scope for `client`, but this run can upload only to the default instance. The answer is the
+// default — as before the repo arm — never an instance the run would refuse the session for on
+// every pass.
+func TestATableRoutedRepoWithNoWorkerShipsToTheDefault(t *testing.T) {
+	e := repoEnv(t)
+	repo := gitRepo(t, t.TempDir(), "beta-notes", "git@git.example.invalid:acme/beta-notes.git")
+	claudeIn(t, e, "s-noworker", repo, 2)
+	a := newAgent(t, e, repoRouting, &fakeRunner{}, &bytes.Buffer{})
+	setOwnerRoutes(a, OwnerRoutes{"acme": "client"})
+	setUploadable(a, "personal")
+	sum := mustRun(t, a)
+	mustBeEmptyV(t, a, "s-noworker")
+	if got := a.State.Sessions["s-noworker"].Instance; got != "personal" || len(spooled(t, e, "personal", "s-noworker", "main")) != 2 {
+		t.Fatalf("a table-routed repo whose instance has no worker this run: bound to %q, %d records on the default (%+v) — "+
+			"want the default, with both records", got, len(spooled(t, e, "personal", "s-noworker", "main")), sum)
+	}
+}
+
+// TestAShippedSessionStaysPutWhenTheRoutedInstanceHasNoWorker (#292's audit, F1, the move case): a
+// session already on the default instance whose repo the table now routes to an instance with no
+// worker this run is NOT moved — no destination probe, no withdrawal, nothing pending — and keeps
+// shipping to the default.
+func TestAShippedSessionStaysPutWhenTheRoutedInstanceHasNoWorker(t *testing.T) {
+	e := repoEnv(t)
+	repo := gitRepo(t, t.TempDir(), "delta-notes", "")
+	path := claudeIn(t, e, "s-stay", repo, 2)
+	before := repoRouting
+	before.Routes = map[string]string{"alpha-notes": "personal"}
+	a := newAgent(t, e, before, &fakeRunner{}, &bytes.Buffer{})
+	setUploadable(a, "personal")
+	mustRun(t, a)
+	if a.State.Sessions["s-stay"].Instance != "personal" {
+		t.Fatal("CONTROL: with the repo's scope in no table, run 1 must ship to the default instance")
+	}
+	a.Routing = repoRouting
+	a.Routing.Routes = map[string]string{"delta-notes": "client"}
+	appendTo(t, path, claudeLine("s-stay", repo, 2))
+	sum := mustRun(t, a)
+	if got := a.State.Sessions["s-stay"].Instance; got != "personal" || sum.WithdrawalPending != 0 || len(e.sink.probes) != 0 ||
+		len(e.sink.withdrawn["personal"]) != 0 {
+		t.Fatalf("routed to an instance with no worker: bound to %q, %+v, probes %v, withdrawn %v — want it left on the "+
+			"default, nothing probed, withdrawn or pending", got, sum, e.sink.probes, e.sink.withdrawn)
+	}
+	if n := len(spooled(t, e, "personal", "s-stay", "main")); n != 3 {
+		t.Fatalf("the default holds %d records — want the appended line shipped there too (3)", n)
 	}
 }
