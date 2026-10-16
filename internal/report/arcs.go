@@ -65,7 +65,7 @@ const (
 	// PRINTED EXACTLY WHEN ONE THAT DID IS IN THE ANSWER — so a schema-1 answer keeps its bytes and
 	// an answer that contradicts the line above it says so in the same body.
 	ArcsOptInLine = "visibility exception: an arc marked `declared-visible` OPTED IN and is listed to readers of ANY scope it declares, whether or not they can read its home"
-	ArcOptInLine  = "visibility exception: this arc OPTED IN — it is ALSO shown to readers of any scope it declares, whether or not they can read its home"
+	ArcOptInLine  = "visibility exception (visible_to_declared: true): this arc OPTED IN — it is ALSO shown to readers of any scope it declares, whether or not they can read its home"
 	// ArcSummaryCarriedLine follows a summary kept across a schema-1 push (`arcs.Merge`).
 	ArcSummaryCarriedLine = "⚠ summary carried from an earlier registration: the latest push used schema 1, which cannot carry a summary or the opt-in, so both were kept rather than erased"
 )
@@ -143,7 +143,7 @@ func Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) 
 		}
 		line := ArcLine{Home: reg.Home, Slug: reg.Slug, Status: reg.Status, ClosingKind: reg.ClosingKind,
 			Members: len(reg.Members), Declared: reg.Declares(res.Scope), RegisteredAt: reg.RegisteredAt,
-			OptIn: reg.VisibleToDeclaredScopes}
+			OptIn: reg.VisibleToDeclared}
 		if reg.Summary != nil {
 			line.Aliases = reg.Summary.Aliases
 		}
@@ -470,7 +470,7 @@ func (r ArcReport) RenderText() string {
 	b.WriteString("  " + SessionsAttributionLine + "\n")
 	b.WriteString("  " + ArcVisibilityLine + "\n")
 	b.WriteString("  " + ArcsRegistrationLine + "\n")
-	if r.Status == StatusArcFound && r.Reg.VisibleToDeclaredScopes {
+	if r.Status == StatusArcFound && r.Reg.VisibleToDeclared {
 		b.WriteString("  " + ArcOptInLine + "\n")
 	}
 	if r.Status == StatusArcFound && r.Damaged {

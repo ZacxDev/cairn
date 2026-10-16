@@ -20,7 +20,7 @@ func optInSnapshot() *arcs.Snapshot {
 			Members:      []arcs.Member{{Session: "s-roam-01", Role: "wrote"}},
 			RegisteredBy: "fixture-registrar", RegisteredAt: "2000-01-06T07:08:09Z"}
 		if optIn {
-			r.Schema, r.VisibleToDeclaredScopes = arcs.SchemaSummary, true
+			r.Schema, r.VisibleToDeclared = arcs.SchemaSummary, true
 		}
 		return r
 	}

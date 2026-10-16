@@ -173,7 +173,7 @@ func ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, 
 			continue
 		}
 		rep.Checked++
-		rep.OptIn = rep.OptIn || reg.VisibleToDeclaredScopes
+		rep.OptIn = rep.OptIn || reg.VisibleToDeclared
 		switch reg.Status {
 		case arcs.StatusOpen:
 			rep.Open++

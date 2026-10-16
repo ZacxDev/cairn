@@ -435,7 +435,7 @@ A `schema: 2` payload may add two OPTIONAL fields; everything else is as above.
   slug, deduplicated, sorted). `arc-show` prints it after the members, provenance line first
   (`summary: the registering tool's own word, read from <repo_path> at commit <commit> (committed
   <committed_at>)`); a listing row gains ` · aliases a, b`.
-- **`visible_to_declared_scopes: true`** — the arc's **opt-in**: it is also shown, on `arc-show`,
+- **`visible_to_declared: true`** — the arc's **opt-in**: it is also shown, on `arc-show`,
   `arcs`, `arcs --check` and the browser's arcs and session pages, to readers of **any declared
   scope**, whether or not they can read its home. Its body then carries `visibility exception: …`
   and its listing row ` · declared-visible`, so the answer says why it is there. Unset or `false`
@@ -459,7 +459,7 @@ names the field, never the value. Unknown fields are still refused, at every dep
 | direction | what happens |
 |---|---|
 | an old client → a new pod | unchanged. Schema-1 registrations are accepted, and both read verbs print the pod's body verbatim, so an old client shows a summary and the opt-in lines as a new one does. Every arc answer about schema-1 arcs is **byte-identical** to the old pod's, headers included |
-| a new client → an old pod | the old pod refuses any schema-2 payload with a 400. `arc-register` recognises that pod's own refusal (exact lines, measured), re-sends the same registration as **schema 1** without `summary` and `visible_to_declared_scopes`, and says so on stderr: `… predates arc schema 2 and refused the schema-2 payload — re-sending as schema 1: … the summary and the declared-scope visibility opt-in are NOT stored`. The exit is the registration's own. Any other refusal is reported as itself |
+| a new client → an old pod | the old pod refuses any schema-2 payload with a 400. `arc-register` recognises that pod's own refusal (exact lines, measured), re-sends the same registration as **schema 1** without `summary` and `visible_to_declared`, and says so on stderr: `… predates arc schema 2 and refused the schema-2 payload — re-sending as schema 1: … the summary and the declared-scope visibility opt-in are NOT stored`. The exit is the registration's own. Any other refusal is reported as itself |
 | a journal written by a new pod, read by an old one | a record that uses neither new field is written as **schema 1**, byte for byte, so it still reads. A record that uses one is **skipped** by the old pod and counted as damage (`⚠ the registration journal holds record(s) that could not be read`, and an operator-log line); the arc shows its last schema-1 state, or is not shown at all if it never had one. Nothing is deleted: rolling forward again shows it |
 
 ⚠ **So roll every binary that reads the arc journal before any tooling sends schema 2** —

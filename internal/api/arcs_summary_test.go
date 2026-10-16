@@ -24,7 +24,7 @@ func arcV2(optIn bool) string {
 		flag = "true"
 	}
 	return `{"schema":2,"status":"open","closing_kind":"check","declared_scopes":["beta-notes"],` +
-		`"visible_to_declared_scopes":` + flag + `,` + summaryOf + `}`
+		`"visible_to_declared":` + flag + `,` + summaryOf + `}`
 }
 
 // TestTheDeclaredScopeOptInIsAVisibilityMatrix: an arc homed in alpha that declares beta.
@@ -42,7 +42,7 @@ func TestTheDeclaredScopeOptInIsAVisibilityMatrix(t *testing.T) {
 	}{
 		{"not opted in", arcV2(false), false},
 		{"opted in", arcV2(true), true},
-		{"opted in, declares only its home", `{"schema":2,"visible_to_declared_scopes":true,` + summaryOf + `}`, false},
+		{"opted in, declares only its home", `{"schema":2,"visible_to_declared":true,` + summaryOf + `}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
@@ -89,9 +89,9 @@ func TestTheListingAndTheShowAgreeAboutEveryArc(t *testing.T) {
 	arcsByKey := map[string]string{
 		"alpha-notes/opted-in":   arcV2(true),
 		"alpha-notes/not-opted":  arcV2(false),
-		"beta-notes/opted-home":  `{"schema":2,"declared_scopes":["alpha-notes"],"visible_to_declared_scopes":true}`,
+		"beta-notes/opted-home":  `{"schema":2,"declared_scopes":["alpha-notes"],"visible_to_declared":true}`,
 		"beta-notes/plain-home":  `{"schema":1,"declared_scopes":["alpha-notes"]}`,
-		"alpha-notes/only-alpha": `{"schema":2,"visible_to_declared_scopes":true}`,
+		"alpha-notes/only-alpha": `{"schema":2,"visible_to_declared":true}`,
 	}
 	for key, body := range arcsByKey {
 		if put := h.do(t, "PUT", "/api/v1/arc/"+key, wideToken, nil, body); put.status != 200 {
@@ -145,7 +145,7 @@ func TestAnOptInCannotReachAScopeTheRegistrantCannotWrite(t *testing.T) {
 	h := newHarness(t)
 	withJournal(t, h)
 	refused := h.do(t, "PUT", "/api/v1/arc/beta-notes/sneak", narrowToken, nil,
-		`{"schema":2,"declared_scopes":["alpha-notes"],"visible_to_declared_scopes":true}`)
+		`{"schema":2,"declared_scopes":["alpha-notes"],"visible_to_declared":true}`)
 	if refused.status != 404 || refused.body != "not found\n" {
 		t.Fatalf("an opt-in into a scope the registrant cannot write must be the write 404: %d %q", refused.status, refused.body)
 	}
@@ -153,7 +153,7 @@ func TestAnOptInCannotReachAScopeTheRegistrantCannotWrite(t *testing.T) {
 		t.Fatalf("the refused arc reached alpha's listing:\n%s", got.body)
 	}
 	if ok := h.do(t, "PUT", "/api/v1/arc/beta-notes/sneak", narrowToken, nil,
-		`{"schema":2,"visible_to_declared_scopes":true}`); ok.status != 200 {
+		`{"schema":2,"visible_to_declared":true}`); ok.status != 200 {
 		t.Fatalf("control: an opt-in within the registrant's own scopes registers: %d %q", ok.status, ok.body)
 	}
 }

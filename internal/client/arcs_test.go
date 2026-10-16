@@ -186,7 +186,7 @@ func prePodOf(next http.Handler) http.Handler {
 }
 
 const schemaTwoPayload = `{"schema":2,"status":"open","members":[{"session":"s-0007","role":"originated"}],` +
-	`"visible_to_declared_scopes":true,"summary":{"state_now":["moved"],"next_steps":[],"task_refs":[],"aliases":[],` +
+	`"visible_to_declared":true,"summary":{"state_now":["moved"],"next_steps":[],"task_refs":[],"aliases":[],` +
 	`"source":{"repo_path":"docs/h.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}}}`
 
 // TestANewClientFallsBackToSchemaOneAgainstAnOldPodAndSaysWhatWasLost: a host whose tooling sends a
@@ -230,7 +230,7 @@ func TestTheFallbackFiresOnlyOnAnOldPodsOwnRefusal(t *testing.T) {
 		want            bool
 	}{
 		"old pod, schema 2":      {preSchemaTwoRefusals[1], `{"schema":2,"summary":{}}`, true},
-		"old pod, opt-in only":   {preSchemaTwoRefusals[2], `{"schema":2,"visible_to_declared_scopes":true}`, true},
+		"old pod, opt-in only":   {preSchemaTwoRefusals[2], `{"schema":2,"visible_to_declared":true}`, true},
 		"old pod, nothing new":   {preSchemaTwoRefusals[0], `{"schema":2}`, true},
 		"new pod's own refusal":  {"bad request: summary.state_now[0] must not be blank", `{"schema":2,"summary":{}}`, false},
 		"old pod, schema 1 body": {preSchemaTwoRefusals[0], `{"schema":1}`, false},

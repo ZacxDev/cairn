@@ -269,11 +269,11 @@ func ArcRegister(env Env, opts Options) (int, error) {
 var preSchemaTwoRefusals = []string{
 	"bad request: schema must be 1",
 	`bad request: body must be one JSON object of the registration schema (json: unknown field "summary")`,
-	`bad request: body must be one JSON object of the registration schema (json: unknown field "visible_to_declared_scopes")`,
+	`bad request: body must be one JSON object of the registration schema (json: unknown field "visible_to_declared")`,
 }
 
 // schemaOneFallback is "this refusal came from a pre-schema-2 pod, and here is the same
-// registration as schema 1": the payload with `summary` and `visible_to_declared_scopes` removed and
+// registration as schema 1": the payload with `summary` and `visible_to_declared` removed and
 // `schema` set to 1. ok is false for every other refusal, and for a payload that is not a schema-2
 // JSON object — the client still does not VALIDATE the payload (the pod's `arcs.DecodePayload` is
 // the one validator); it removes two keys an old pod cannot read, and the pod judges the rest.
@@ -292,7 +292,7 @@ func schemaOneFallback(payload []byte, err error) ([]byte, bool) {
 		return nil, false
 	}
 	delete(fields, "summary")
-	delete(fields, "visible_to_declared_scopes")
+	delete(fields, "visible_to_declared")
 	fields["schema"] = json.RawMessage("1")
 	out, mErr := json.Marshal(fields)
 	if mErr != nil {

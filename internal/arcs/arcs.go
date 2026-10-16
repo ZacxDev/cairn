@@ -112,10 +112,10 @@ type Registration struct {
 	// SCHEMA 2 (`summary.go`). Both are `omitempty`, so a record using neither marshals to
 	// exactly the schema-1 bytes.
 	//
-	// VisibleToDeclaredScopes is the arc's OPT-IN to be shown to readers of any declared scope
+	// VisibleToDeclared is the arc's OPT-IN to be shown to readers of any declared scope
 	// ([Registration.VisibleTo]). Summary is the tool's bounded account of where the arc stands.
-	VisibleToDeclaredScopes bool     `json:"visible_to_declared_scopes,omitempty"`
-	Summary                 *Summary `json:"summary,omitempty"`
+	VisibleToDeclared bool     `json:"visible_to_declared,omitempty"`
+	Summary           *Summary `json:"summary,omitempty"`
 	// SummaryCarried is set by the POD, never the payload: the summary and the opt-in were kept
 	// from an earlier registration because the push that replaced it was SCHEMA 1, which cannot
 	// carry either — merge rule 7's "an unmeasured leg never erases a measured one", one level up.
@@ -159,8 +159,8 @@ type payload struct {
 	ReportedAt       *string         `json:"reported_at"`
 	Members          []payloadMember `json:"members"`
 	// Schema 2 only; a schema-1 payload naming either is refused.
-	VisibleToDeclaredScopes *bool    `json:"visible_to_declared_scopes"`
-	Summary                 *Summary `json:"summary"`
+	VisibleToDeclared *bool    `json:"visible_to_declared"`
+	Summary           *Summary `json:"summary"`
 }
 
 type payloadMember struct {
@@ -209,13 +209,13 @@ func DecodePayload(body []byte, home, slug string) (reg Registration, unjoinable
 	if p.Schema == nil || (*p.Schema != Schema && *p.Schema != SchemaSummary) {
 		return Registration{}, 0, payloadErr("schema must be %d or %d", Schema, SchemaSummary)
 	}
-	if *p.Schema == Schema && (p.Summary != nil || p.VisibleToDeclaredScopes != nil) {
-		return Registration{}, 0, payloadErr("summary and visible_to_declared_scopes need schema %d", SchemaSummary)
+	if *p.Schema == Schema && (p.Summary != nil || p.VisibleToDeclared != nil) {
+		return Registration{}, 0, payloadErr("summary and visible_to_declared need schema %d", SchemaSummary)
 	}
 	reg = Registration{Schema: Schema, Home: key.Home, Slug: key.Slug,
 		Status: StatusUnknown, ClosingKind: ClosingNone, payloadSchema: *p.Schema}
-	if p.VisibleToDeclaredScopes != nil {
-		reg.VisibleToDeclaredScopes = *p.VisibleToDeclaredScopes
+	if p.VisibleToDeclared != nil {
+		reg.VisibleToDeclared = *p.VisibleToDeclared
 	}
 	if reg.Summary, err = decodeSummary(p.Summary); err != nil {
 		return Registration{}, 0, err
@@ -348,7 +348,7 @@ func Merge(prev *Registration, next Registration) Registration {
 		return next
 	}
 	if next.payloadSchema == Schema && prev.usesSchemaTwo() {
-		next.Summary, next.VisibleToDeclaredScopes = prev.Summary, prev.VisibleToDeclaredScopes
+		next.Summary, next.VisibleToDeclared = prev.Summary, prev.VisibleToDeclared
 		next.SummaryCarried = true
 		next.Schema = SchemaSummary
 	}

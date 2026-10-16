@@ -64,20 +64,20 @@ func TestASchemaTwoPayloadUsingNothingNewIsStoredAsTheSchemaOneBytes(t *testing.
 		`"declared_scopes":["alpha-notes"],"writers_measured":false,"readers_measured":false,"commits_total":0,` +
 		`"commits_unstamped":0,"reported_at":"","members":[],"registered_by":"","registered_at":"2000-01-06T07:08:09Z"}` + "\n"
 	one := journalLine(t, `{"schema":1,"status":"open"}`)
-	two := journalLine(t, `{"schema":2,"status":"open","visible_to_declared_scopes":false}`)
+	two := journalLine(t, `{"schema":2,"status":"open","visible_to_declared":false}`)
 	if one != want || two != want {
 		t.Fatalf("schema-1 line:\n%s\nschema-2-with-nothing-new line:\n%s\nwant:\n%s", one, two, want)
 	}
 	// Control: a record that DOES use schema 2 is written under it.
-	if got := journalLine(t, `{"schema":2,"visible_to_declared_scopes":true}`); !strings.HasPrefix(got, `{"schema":2,`) ||
-		!strings.Contains(got, `"visible_to_declared_scopes":true`) {
+	if got := journalLine(t, `{"schema":2,"visible_to_declared":true}`); !strings.HasPrefix(got, `{"schema":2,`) ||
+		!strings.Contains(got, `"visible_to_declared":true`) {
 		t.Fatalf("an opted-in record must be schema 2:\n%s", got)
 	}
 }
 
 // TestASchemaOnePayloadCannotCarrySchemaTwoFields: refused, not silently ignored.
 func TestASchemaOnePayloadCannotCarrySchemaTwoFields(t *testing.T) {
-	refused(t, `{"schema":1,"visible_to_declared_scopes":true}`, "need schema 2")
+	refused(t, `{"schema":1,"visible_to_declared":true}`, "need schema 2")
 	refused(t, `{"schema":1,"summary":{}}`, "need schema 2")
 }
 
@@ -179,17 +179,17 @@ func TestASchemaOnePushCarriesTheSummaryAndASchemaTwoPushReplacesIt(t *testing.T
 		}
 		return out.Record
 	}
-	first := push(strings.Replace(summaryJSON(nil), `{"schema":2,`, `{"schema":2,"visible_to_declared_scopes":true,`, 1))
-	if first.Summary == nil || !first.VisibleToDeclaredScopes || first.SummaryCarried {
+	first := push(strings.Replace(summaryJSON(nil), `{"schema":2,`, `{"schema":2,"visible_to_declared":true,`, 1))
+	if first.Summary == nil || !first.VisibleToDeclared || first.SummaryCarried {
 		t.Fatalf("first push: %+v", first)
 	}
 	carried := push(`{"schema":1,"status":"closed"}`)
-	if carried.Status != StatusClosed || carried.Summary == nil || !carried.VisibleToDeclaredScopes ||
+	if carried.Status != StatusClosed || carried.Summary == nil || !carried.VisibleToDeclared ||
 		!carried.SummaryCarried || carried.Schema != SchemaSummary {
 		t.Fatalf("a schema-1 push must update the status and CARRY the summary: %+v", carried)
 	}
 	cleared := push(`{"schema":2,"status":"closed"}`)
-	if cleared.Summary != nil || cleared.VisibleToDeclaredScopes || cleared.SummaryCarried || cleared.Schema != Schema {
+	if cleared.Summary != nil || cleared.VisibleToDeclared || cleared.SummaryCarried || cleared.Schema != Schema {
 		t.Fatalf("a schema-2 push that omits both clears them: %+v", cleared)
 	}
 	snap, err := j.Read()
@@ -205,12 +205,12 @@ func TestASchemaOnePushCarriesTheSummaryAndASchemaTwoPushReplacesIt(t *testing.T
 // what it uses — schema 1 carrying schema-2 keys, schema 2 carrying none — and a stored summary
 // breaking a bound. Control: the well-formed schema-2 record is applied.
 func TestOneArcStateHasOneSpellingInTheJournal(t *testing.T) {
-	good := strings.TrimSpace(journalLine(t, `{"schema":2,"visible_to_declared_scopes":true}`))
+	good := strings.TrimSpace(journalLine(t, `{"schema":2,"visible_to_declared":true}`))
 	for name, line := range map[string]string{
 		"schema 1 with the opt-in": strings.Replace(good, `"schema":2`, `"schema":1`, 1),
-		"schema 2 using nothing":   strings.Replace(good, `,"visible_to_declared_scopes":true`, "", 1),
+		"schema 2 using nothing":   strings.Replace(good, `,"visible_to_declared":true`, "", 1),
 		"schema 3":                 strings.Replace(good, `"schema":2`, `"schema":3`, 1),
-		"schema 1 marked carried":  strings.Replace(strings.Replace(good, `,"visible_to_declared_scopes":true`, `,"summary_carried":true`, 1), `"schema":2`, `"schema":1`, 1),
+		"schema 1 marked carried":  strings.Replace(strings.Replace(good, `,"visible_to_declared":true`, `,"summary_carried":true`, 1), `"schema":2`, `"schema":1`, 1),
 	} {
 		if snap := fold([]byte(line + "\n")); snap.Skipped != 1 || snap.Records != 0 {
 			t.Fatalf("%s must be skipped: %+v\n%s", name, snap, line)
@@ -230,7 +230,7 @@ func TestOneArcStateHasOneSpellingInTheJournal(t *testing.T) {
 func TestVisibleToIsTheHomeOrAnOptedInDeclaredScope(t *testing.T) {
 	reg := Registration{Home: "alpha-notes", DeclaredScopes: []string{"alpha-notes", "beta-notes"}}
 	opted := reg
-	opted.VisibleToDeclaredScopes = true
+	opted.VisibleToDeclared = true
 	for _, tc := range []struct {
 		name    string
 		reg     Registration

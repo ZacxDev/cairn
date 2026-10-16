@@ -246,7 +246,7 @@ func validSummary(s *Summary) bool {
 
 // VisibleTo is THE arc visibility predicate (operator decision Q1, widened by schema 2's opt-in):
 // an arc exists for a caller iff its HOME scope is readable — or the arc OPTED IN
-// (`visible_to_declared_scopes`) and at least one of its DECLARED scopes is readable.
+// (`visible_to_declared`) and at least one of its DECLARED scopes is readable.
 //
 // 🔴 ONE PREDICATE, EVERY READER. `report.Arcs`, `report.Arc`, `report.ArcsAcross`,
 // `report.ArcsCheck` and `report.SessionsAcross` all call this and nothing else, so a listing and a
@@ -261,7 +261,7 @@ func (r Registration) VisibleTo(visible store.ScopeSet) bool {
 	if visible.Allows(r.Home) {
 		return true
 	}
-	if !r.VisibleToDeclaredScopes {
+	if !r.VisibleToDeclared {
 		return false
 	}
 	for _, d := range r.DeclaredScopes {
@@ -274,5 +274,5 @@ func (r Registration) VisibleTo(visible store.ScopeSet) bool {
 
 // usesSchemaTwo is "this record needs schema 2 to be written down".
 func (r Registration) usesSchemaTwo() bool {
-	return r.Summary != nil || r.VisibleToDeclaredScopes
+	return r.Summary != nil || r.VisibleToDeclared
 }

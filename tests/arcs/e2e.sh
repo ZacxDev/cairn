@@ -90,7 +90,7 @@ PY
   # 1c. Schema 2's opt-in IGNORED by the one visibility predicate: the opted-in arc homed in alpha
   #     must then stay invisible to the beta-only outsider, and its assertion go red.
   sabotage opt-in-ignored internal/arcs/summary.go \
-    $'\tif !r.VisibleToDeclaredScopes {' \
+    $'\tif !r.VisibleToDeclared {' \
     $'\tif true {' \
     "outsider-sees-opted-in-arc-with-its-summary"
   # 2. The check unable to report a finding: every state is "clean", so the 9 must go red.
@@ -312,7 +312,7 @@ assert check-journal-damaged-exits-9 eval 'rc_is 9 && has "- journal-damaged · 
 # Registered last, so no count above moves. The outsider reads beta only: it now sees this arc and
 # its summary, and still never the alpha-homed arc that did not opt in.
 cat >"$work/arc5.json" <<'JSON'
-{"schema": 2, "status": "open", "declared_scopes": ["beta-notes"], "visible_to_declared_scopes": true,
+{"schema": 2, "status": "open", "declared_scopes": ["beta-notes"], "visible_to_declared": true,
  "summary": {"closing_condition": "the widget queue stays drained", "state_now": ["queue drained once"],
              "next_steps": ["watch it for a day"], "task_refs": ["tracker:T-7"], "aliases": ["Queue Drain"],
              "source": {"repo_path": "docs/handoff-queue.md", "commit": "0123456789abcdef0123456789abcdef01234567",
@@ -321,7 +321,7 @@ JSON
 cairn writer arc-register --scope alpha-notes --slug e2e-opted-in --from "$work/arc5.json"
 assert register-schema-two-opted-in eval 'rc_is 0 && has "arc-registered: alpha-notes/e2e-opted-in · members=0 · unjoinable=0" && [[ -z "$err" ]]'
 cairn outsider arc-show --scope alpha-notes --slug e2e-opted-in
-assert outsider-sees-opted-in-arc-with-its-summary eval 'rc_is 0 && has "status=arc-found home=alpha-notes slug=e2e-opted-in" && has "visibility exception: this arc OPTED IN" && has "next steps (ranked): 1" && has "1. watch it for a day" && has "aliases: queue-drain"'
+assert outsider-sees-opted-in-arc-with-its-summary eval 'rc_is 0 && has "status=arc-found home=alpha-notes slug=e2e-opted-in" && has "visibility exception (visible_to_declared: true): this arc OPTED IN" && has "next steps (ranked): 1" && has "1. watch it for a day" && has "aliases: queue-drain"'
 cairn outsider arcs --scope beta-notes
 assert outsider-lists-opted-in-arc-not-the-other eval 'rc_is 0 && has "- alpha-notes/e2e-opted-in · declared · status open · closing none · 0 members · declared-visible · aliases queue-drain" && lacks "e2e-rollout"'
 cairn outsider arc-show --scope alpha-notes --slug e2e-rollout
