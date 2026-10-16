@@ -531,7 +531,7 @@ func main() {
 		// laxer startup path.
 		if err := supabase.RefreshKeys(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
-				"subsystem-store-api: identity: the Supabase key set could not be loaded at startup (%s), so no session could be verified and every sign-in would be refused. Refusing to start",
+				"subsystem-store-api: identity: the OIDC key set could not be loaded at startup (%s), so no session could be verified and every sign-in would be refused. Refusing to start",
 				err.Error())))
 			os.Exit(exitConfig)
 		}

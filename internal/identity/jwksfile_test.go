@@ -2,11 +2,10 @@ package identity
 
 // The JWKS FILE source: `JWKSOptions.File` / `CAIRN_OIDC_JWKS_FILE`.
 //
-// 🔴 EVERY KEY RULE IS ASSERTED THROUGH THE FILE SOURCE, NOT ONLY THROUGH THE URL ONE. The two
-// sources share `parseJWKS` and `KeySet.key` by construction, and that is a claim about the
-// code a test cannot read; what it CAN do is build a file-sourced set and watch each rule fire
-// on it. A future refactor that gave the file its own parser would then be red here rather
-// than a second, unaudited implementation of "which keys verify a session".
+// The two sources share `parseJWKS` and `KeySet.key` by construction, so the key RULES are
+// measured once, through the shared parser, in `jwks_test.go`. What is asserted here is the
+// file source's own behaviour, plus one invariant guard that it really does reach that parser
+// (`TestAJWKSFileIsParsedByTheSharedJWKSParser`).
 
 import (
 	"context"
@@ -239,46 +238,24 @@ func TestAJWKSFileThatNeverParsedVerifiesNothing(t *testing.T) {
 	}
 }
 
-// TestAJWKSFileObeysTheKidRules — the two `kid` rules, through the file source.
+// TestAJWKSFileIsParsedByTheSharedJWKSParser — ONE assertion: a file-sourced refresh refuses a
+// document with exactly the error `parseJWKS` gives for the same bytes.
 //
-// 🔴 THE MUTATION THESE ARE FOR IS "THE FILE SOURCE SKIPS A KID CHECK". Today it cannot,
-// because there is no file-specific parser or resolver for a check to be skipped in; these
-// arms are what makes adding one a red test rather than a quiet second implementation.
-func TestAJWKSFileObeysTheKidRules(t *testing.T) {
-	a := newRSASigner(t, "rsa-a", 2048)
-	b := newECSigner(t, "ec-b")
-
-	t.Run("a duplicate kid refuses the whole document", func(t *testing.T) {
-		dup := b.publicJWK(t)
-		dup["kid"] = "rsa-a"
-		set := fileKeySet(t, writeJWKSFile(t, jwksDocumentOf(t, a.publicJWK(t), dup)))
-		err := set.Refresh(context.Background())
-		if err == nil || !strings.Contains(err.Error(), `declares kid "rsa-a" twice`) {
-			t.Fatalf("a file declaring one kid twice must refuse whole, got %v", err)
-		}
-	})
-
-	t.Run("a token with no kid is refused when two keys could verify it", func(t *testing.T) {
-		a2 := newRSASigner(t, "rsa-a2", 2048)
-		set := fileKeySet(t, writeJWKSFile(t, jwksDocumentOf(t, a.publicJWK(t), a2.publicJWK(t))))
-		if err := set.Refresh(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		_, err := Verify(a.sign(t, defaultClaims(), map[string]any{"kid": nil}), verifierOverSet(set))
-		if !errors.Is(err, ErrNoKey) || !strings.Contains(err.Error(), "names no kid and 2 keys") {
-			t.Fatalf("an unkeyed token against two candidate keys must be refused, got %v", err)
-		}
-		// Control: the same token WITH its kid verifies, so the refusal is about the kid.
-		if _, err := Verify(a.sign(t, defaultClaims(), nil), verifierOverSet(set)); err != nil {
-			t.Fatalf("control: the keyed token must verify: %v", err)
-		}
-	})
-
-	t.Run("a key below the RSA floor is dropped", func(t *testing.T) {
-		weak := newRSASigner(t, "rsa-weak", 1024)
-		set := fileKeySet(t, writeJWKSFile(t, jwksDocumentOf(t, weak.publicJWK(t))))
-		if err := set.Refresh(context.Background()); !errors.Is(err, ErrJWKSEmpty) {
-			t.Fatalf("a file whose only key is below %d bits must yield no usable key, got %v", MinRSABits, err)
-		}
-	})
+// ⚠ AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No bug ever gave the file source its own
+// parser, so this cannot have been red on any tree that had the file source; it pins the shape
+// that makes every key rule in `parseJWKS` (duplicate `kid`, dropped `oct` and sub-floor RSA,
+// the on-curve check) hold for file keys without re-asserting each rule here — those rules are
+// already measured through the shared parser by `jwks_test.go`. The fixture is a duplicate
+// `kid` because that refusal's text is produced by `parseJWKS` and by nothing else, so a
+// second parser that agreed on valid documents would still disagree here.
+func TestAJWKSFileIsParsedByTheSharedJWKSParser(t *testing.T) {
+	a, b := newRSASigner(t, "rsa-a", 2048), newECSigner(t, "ec-b")
+	dup := b.publicJWK(t)
+	dup["kid"] = "rsa-a"
+	doc := jwksDocumentOf(t, a.publicJWK(t), dup)
+	_, want := parseJWKS(doc)
+	err := fileKeySet(t, writeJWKSFile(t, doc)).Refresh(context.Background())
+	if want == nil || err == nil || !strings.HasSuffix(err.Error(), ": "+want.Error()) {
+		t.Fatalf("the file source must refuse with parseJWKS's own error for the same bytes\n  parseJWKS: %v\n  file:      %v", want, err)
+	}
 }

@@ -170,7 +170,7 @@ func TestTheBinaryREFUSESABadJWKSFileAtStartup(t *testing.T) {
 		env  []string
 		want []string
 	}{
-		{"malformed", []string{jwksFileEnv + "=" + malformed}, []string{malformed, "jwks is not JSON", "Refusing to start"}},
+		{"malformed", []string{jwksFileEnv + "=" + malformed}, []string{malformed, "jwks is not JSON", "the OIDC key set could not be loaded at startup", "Refusing to start"}},
 		{"missing", []string{jwksFileEnv + "=" + missing}, []string{missing, "no such file or directory", "Refusing to start"}},
 		{"no usable key", []string{jwksFileEnv + "=" + noKey}, []string{noKey, "the JWKS document carries no usable key", "Refusing to start"}},
 		{"relative", []string{jwksFileEnv + "=conf/jwks.json"}, []string{`"conf/jwks.json" is relative, so which file it names depends on the working directory`}},

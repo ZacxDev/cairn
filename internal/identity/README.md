@@ -531,7 +531,9 @@ What stays the same, because it is one code path rather than a second one:
 - **the parser.** The file goes through the same `parseJWKS` a fetched body does, under the same
   256 KiB cap, so every rule in *The JWT verifier* holds for it: a duplicate `kid` refuses the whole
   document, `oct` and sub-2048-bit RSA keys are dropped, an unkeyed token is refused when more than
-  one key could verify it. `jwksfile_test.go` asserts each through the file source.
+  one key could verify it. Those rules are measured once, through the shared parser, in
+  `jwks_test.go`; `TestAJWKSFileIsParsedByTheSharedJWKSParser` is an invariant guard that the
+  file source really reaches it.
 - **the startup refusal.** A file that is missing, not JSON, oversized or yields no usable key is
   exit 78 naming the path — and here the refusal means more than it does for a URL: nothing will
   fix a bad file by waiting.
@@ -554,6 +556,16 @@ What is new:
 refresh; a file source picks up only what somebody writes into the file. Publish the new key into
 the file BEFORE the issuer starts signing with it, and remove the old one only after its last token
 has expired — the same overlap any JWKS rotation needs, done by hand.
+
+🔴 **REVOCATION BY REMOVING A `kid` IS BOUNDED BY THE RE-READ, NOT BY THE EDIT.** Tokens signed
+by a key you delete from the file keep verifying until this process re-reads it: on SIGHUP, or
+at the next refresh (`DefaultJWKSInterval`, 10m). When the file is a mounted configuration
+object, add the orchestrator's own propagation delay before the new bytes are even on disk — on
+Kubernetes, the kubelet's ConfigMap sync period. So the bound is **SIGHUP, or the refresh interval
+plus that sync delay**, and a SIGHUP sent before the sync lands re-reads the OLD file.
+⚠ **Mount the DIRECTORY, never the file through `subPath`.** A `subPath` mount is a bind of the
+file as it was at container start and is never updated, so every re-read — timer or signal — sees
+the original keys forever, and a removed `kid` is never revoked until the pod restarts.
 
 ⚠ **`cmd/cairn-ui` READS THE SAME VARIABLE THROUGH THE SAME LEDGER**, so a file source works there
 too, with that surface's own startup policy unchanged: a failed first read is a WARNING that
