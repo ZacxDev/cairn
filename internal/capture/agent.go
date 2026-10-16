@@ -26,10 +26,14 @@ type Agent struct {
 	Runner       OpencodeRunner
 	LedgerDir    string
 	Routing      client.Routing
-	Redactor     *redact.Redactor
-	Sink         Sink
-	State        *State
-	Log          io.Writer
+	// OwnerRoutes is `-route-origin-owner`: where a session that recorded no scope goes when the
+	// repo it ran in has that `origin` owner and the routing table does not name the repo's scope
+	// ([Decide]). Nil routes no owner.
+	OwnerRoutes OwnerRoutes
+	Redactor    *redact.Redactor
+	Sink        Sink
+	State       *State
+	Log         io.Writer
 
 	// Checkpoint, when set, saves the state. It is called AT ONCE where a crash must not lose a
 	// decision — before an opencode write leaves (its plan), before a re-check placeholder is sent
@@ -60,6 +64,8 @@ type Agent struct {
 	// recurs is the first [Recurs] answer seen among ANY of the session's failed writes ([Agent.held]),
 	// so a recurring refusal behind an ordinary first failure still counts.
 	recurs Recurrence
+	// repoCache is this run's git answer per session directory ([Agent.sessionRepo]).
+	repoCache map[string]repoAnswer
 }
 
 func (a *Agent) listCap() int {
@@ -196,6 +202,8 @@ func (a *Agent) logf(format string, args ...any) {
 // in [Summary] and read by the caller after the pass has completed and the state is saved.
 func (a *Agent) Run() (Summary, error) {
 	var sum Summary
+	// Git's answers are cached for ONE run: an unsettled one (no git to ask) must be asked again.
+	a.repoCache = nil
 	if a.ClaudeRoot != "" {
 		sessions, err := discoverClaude(a.ClaudeRoot)
 		if err != nil {
@@ -528,7 +536,12 @@ func union(a, b []string) []string {
 // to withdraw from and the prefix stayed where the rule says it must not be. Every change of
 // `Instance` or `Held` made here is checkpointed AT ONCE, and a save that fails sends nothing.
 func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, reset bool, err error) {
-	dec := Decide(ss.V, a.Routing)
+	// 🔴 THE REPO ARM GOES THROUGH THIS SAME PATH, AND THAT IS HOW AN ALREADY-SHIPPED SESSION MOVES.
+	// A session with no recorded scope that an earlier version bound to the default instance gets a
+	// different answer here once its repo routes elsewhere — and a changed answer for a bound
+	// session is a MOVE like any other: destination probed, prefix withdrawn, whole session
+	// re-shipped from offset 0. Nothing about the repo arm bypasses the withdrawal.
+	dec := Decide(ss.V, a.sessionRepo(ss), a.Routing, a.OwnerRoutes)
 	if ss.Instance != "" && !dec.Held && dec.Instance != "" && ss.Instance != dec.Instance {
 		// 🔴 THE DESTINATION IS ASKED BEFORE THE CURRENT HOLDER IS TOLD TO FORGET, AND ONLY A DEFINITE
 		// "NOT DELETED HERE" LETS THE WITHDRAWAL GO AHEAD (#273's audit F1, closed in S10; #274's
@@ -749,6 +762,9 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
 	ss.Declared = union(ss.Declared, res.Declare)
+	if len(ss.V) == 0 && ss.Dir == "" {
+		ss.Dir = claudeCwd(cs.Streams["main"])
+	}
 
 	ship, reset, err := a.route(cs.Root, ss, sum)
 	if err != nil || !ship {
@@ -1051,6 +1067,9 @@ func (a *Agent) runOpencode(lr listedRoot, sum *Summary) (err error) {
 	ss.Evidence = d.Evidence()
 	ss.V = union(ss.V, res.V)
 	ss.Declared = union(ss.Declared, res.Declare)
+	if len(ss.V) == 0 && ss.Dir == "" {
+		ss.Dir = lr.Directory
+	}
 
 	ship, reset, err := a.route(root, ss, sum)
 	if err != nil || !ship {

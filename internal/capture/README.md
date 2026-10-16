@@ -30,7 +30,9 @@ operator's act.
    persisted evidence of earlier runs, and the client read ledgers of the root and every child —
    a UNION with the stored `V`, so a deleted ledger cannot shrink it.
 3. **Routes** (`Decide`, decision 16) over `V` *including* the records about to ship. A scope the
-   routing table explicitly sends to an unconfigured alias is HELD at any instance count.
+   routing table explicitly sends to an unconfigured alias is HELD at any instance count. A session
+   whose `V` is **empty** is placed by the repository it ran in — § *A session that recorded no
+   scope* below.
 4. **Acts**: ship to the routed instance — the client read ledger FIRST (S11, decision 3a): the
    root's `<session>.jsonl` and every opencode child's, new complete lines only, as the root's
    `ledger` stream through the opencode path's saved-plan resume, a line that is not JSON (or a
@@ -43,13 +45,61 @@ operator's act.
    watermark advances only after its write succeeds. One session's failure is refused and logged;
    the run continues; whether the pass then exits 3 is the exit-status section below.
 
+## A session that recorded no scope: placed by its repository
+
+Most sessions read and write no scope at all, so `V` is empty — and an empty `V` used to go to the
+DEFAULT instance unconditionally. On a host with a second instance, every session run inside a repo
+belonging to the second instance's organisation was shipped to the wrong tenant. Now an empty-`V`
+session is placed by its repo, first match wins (`decideByRepo`):
+
+1. **The repo's scope, when the routing table NAMES it** → the alias `Routing.AliasFor` gives. The
+   scope is derived exactly as the client derives it (`client.ScopeForRepo`: a worktree answers its
+   base clone). An explicitly-named scope always wins, so a repo pinned to the default stays there.
+   ⚠ A table entry naming an alias this host does not configure is NOT a match here: the session
+   falls through to 2 and 3 (the `V` arm HOLDS such a scope; a hold is final and withdraws, and a
+   stale table line would otherwise freeze every session ever run in that repo).
+2. **`-route-origin-owner OWNER=ALIAS`** (repeatable, `--run` and `--dry-run`) → ALIAS, when the
+   repo's `origin` URL's owner segment is OWNER — `git@host:owner/repo`, `https://host/owner/repo`,
+   `ssh://[user@]host[:port]/owner/repo`, `.git` optional; compared case-insensitively, no host
+   compared. ALIAS must be a configured instance, and under `--run` one with a `-worker`, or the
+   binary exits 2.
+3. **The default instance**, as before — also for a session with no recorded directory, a directory
+   that is gone or is not a git repo, or a repo with no `origin`.
+
+A session that recorded ANY scope is placed by its scopes alone; the repo is not consulted
+(`TestARecordedScopeIsNeverOverruledByTheRepo`).
+
+**Where the directory comes from**: a Claude Code session's FIRST record carrying a `cwd` (within
+the main stream's first 1 MiB), an opencode root's `session list` `directory`. **Git is asked the
+way the client asks it** — bare `git` by name (`packages.cairn-capture` now carries `gitMinimal` on
+its wrapper's `PATH`, as `packages.cairn-go` does), `rev-parse` twice and `remote get-url origin`.
+The state keeps the directory and the answer (`dir`, `repo`: a scope and an owner — **never the
+remote URL**, which can carry a credential). The answer is derived ONCE and kept: a worktree removed
+after its work merged must not turn "gone" into "no repo" and withdraw the session back to the
+default (`TestARemovedWorktreeDoesNotMoveTheSessionBack`). A git that could not be RUN is not an
+answer and is asked again next run. ⚠ The cost: an `origin` changed after a session's first routed
+pass keeps the owner it had then.
+
+🔴 **What the FIRST run with this arm does to sessions an earlier version already shipped.** An
+empty-`V` session bound to the default instance whose repo now routes elsewhere — by the table, or
+by `-route-origin-owner` once the flag is added — gets a different routing answer, and a changed
+answer for a bound session is a MOVE through § *The withdrawal* below, unchanged: the destination
+is probed first, the default instance is asked to withdraw the prefix, and the WHOLE session is
+re-shipped from offset 0 to the routed instance (`TestAShippedEmptyVSessionMovesThroughTheWithdrawal`).
+It is neither stranded on the default nor duplicated on both; a destination that cannot be asked
+leaves it where it is, `withdrawal-pending`, until it can. ⚠ **Two things delay it**: a session
+bound to an instance that is not taking uploads THIS run with nothing shipped is skipped unread
+(`skipUnread`, unchanged), so it is re-routed only on a run that reaches it; and an opencode root
+whose export is settled moves with nothing exported that run and is re-exported whole on the next.
+
 ## Measured facts it is built on (one host, opencode 1.18.29)
 
 - `opencode export` **truncates at exit 0 when stdout is a pipe** (somewhere in 8–96 KiB; the
   boundary varies), so stdout is a regular temp file and a document that does not parse ships
   nothing.
 - The export carries **no part `time_updated`**, so a part's version is a digest of its bytes.
-- `session list` names the **current project's root sessions only**.
+- `session list` names the **current project's root sessions only**, and each row carries the
+  `directory` the session ran in (162 of 162 rows, over two projects).
 - `session list` answers **at most 100 rows unless `-n` is given**, exit 0, nothing on stderr: 100
   of a project's 202 roots with no `-n`, 50 at `-n 50`, all 202 at `-n 100000`. So every list is
   asked with `-n SessionListCap` (1000000), and a list that comes back with that many rows is

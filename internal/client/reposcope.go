@@ -102,6 +102,24 @@ func ScopeForRepo(repo string) (string, error) {
 	return DeriveScope(strings.TrimSpace(top), strings.TrimSpace(common)), nil
 }
 
+// OriginURL is `git remote get-url origin` in `repo`, trimmed. RUNS GIT, through the same
+// [runGit] — bare `git` by name, `GIT_OPTIONAL_LOCKS=0` — as [ScopeForRepo], so the two answers a
+// caller derives about one directory come from one git on one PATH.
+//
+// `remote get-url` rather than reading `remote.origin.url`: it applies `url.<base>.insteadOf`, so
+// the answer is the URL git would actually fetch from. A repo with no `origin` is a [*GitError]
+// with a non-negative Code (git ran and said so); a git that could not be run at all is Code -1.
+//
+// ⚠ THE URL MAY CARRY A CREDENTIAL (`https://<token>@host/…`). Its one caller,
+// `internal/capture`, keeps the OWNER segment and nothing else; do not log or persist the URL.
+func OriginURL(repo string) (string, error) {
+	out, err := runGit(repo, "remote", "get-url", "origin")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // RepoPathMissingMessage is the ONE spelling of "that `--repo` value is not a directory".
 //
 // 🔴 TWO LEADS, BECAUSE THEY ARE TWO DIFFERENT MISTAKES. A path that is ABSENT and a path

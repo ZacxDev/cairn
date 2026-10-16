@@ -44,7 +44,7 @@ func (a *Agent) DryRun(w io.Writer) error {
 			return err
 		}
 		for _, root := range firstSeen(roots, seen) {
-			a.dryOpencode(w, root.ID)
+			a.dryOpencode(w, root)
 		}
 	}
 	return nil
@@ -68,8 +68,15 @@ func (t tally) String() string {
 	return strings.Join(parts, ",")
 }
 
-func (a *Agent) decisionText(v []string) string {
-	dec := Decide(v, a.Routing)
+// decisionText is the routing decision a dry run prints. A session with no recorded scope is
+// placed by the repo in `dir`, asked of git exactly as `--run` asks it ([deriveRepo]); nothing is
+// remembered, so a dry run asks again every time.
+func (a *Agent) decisionText(v []string, dir string) string {
+	var repo Repo
+	if len(v) == 0 {
+		repo, _ = deriveRepo(dir)
+	}
+	dec := Decide(v, repo, a.Routing, a.OwnerRoutes)
 	if dec.Held {
 		return "held"
 	}
@@ -119,11 +126,16 @@ func (a *Agent) dryClaude(w io.Writer, cs claudeSession) {
 	}
 	a.foldLedger(d, cs.Root)
 	v := d.Result().V
+	dir := ""
+	if len(v) == 0 {
+		dir = claudeCwd(cs.Streams["main"])
+	}
 	fmt.Fprintf(w, "claude %s streams=%d records=%d blobs=%d refused=%d classes=%s redactions=%s v=[%s] decision=%s\n",
-		cs.Root, len(cs.Streams), records, len(cs.Blobs), refused, classes, hits, strings.Join(v, ","), a.decisionText(v))
+		cs.Root, len(cs.Streams), records, len(cs.Blobs), refused, classes, hits, strings.Join(v, ","), a.decisionText(v, dir))
 }
 
-func (a *Agent) dryOpencode(w io.Writer, root string) {
+func (a *Agent) dryOpencode(w io.Writer, lr listedRoot) {
+	root := lr.ID
 	d := scopeuse.NewDeriver()
 	classes, hits := tally{}, tally{}
 	units, streams := 0, 0
@@ -169,5 +181,5 @@ func (a *Agent) dryOpencode(w io.Writer, root string) {
 	a.foldLedger(d, root)
 	v := d.Result().V
 	fmt.Fprintf(w, "opencode %s streams=%d units=%d classes=%s redactions=%s v=[%s] decision=%s\n",
-		root, streams, units, classes, hits, strings.Join(v, ","), a.decisionText(v))
+		root, streams, units, classes, hits, strings.Join(v, ","), a.decisionText(v, lr.Directory))
 }

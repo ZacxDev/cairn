@@ -26,7 +26,7 @@
 //
 //	cairn-capture --self-test [-seed N]
 //	cairn-capture --dry-run [-claude-root DIR] [-opencode-project DIR]... [-opencode-discover] [-opencode-bin BIN]
-//	              [-ledger-dir DIR] [-denylist FILE]
+//	              [-ledger-dir DIR] [-denylist FILE] [-route-origin-owner OWNER=ALIAS]...
 //	cairn-capture --run -host LABEL -worker [ALIAS=]URL -capture-token-file [ALIAS=]FILE [-state FILE]
 //	              [-host-key FILE] [-allow-plaintext-host [ALIAS=]HOST]... [the --dry-run reading flags]
 //
@@ -35,6 +35,13 @@
 // worker HOST, exactly, for which plain `http` is accepted because the network it is reached over (a
 // private encrypted mesh) is itself the transport protection. The run says so on stderr every time;
 // an opt-in that admits nothing (its worker is `https` by now) is a warning line, never a refusal.
+//
+// 🔴 `-route-origin-owner OWNER=ALIAS` PLACES ONLY SESSIONS THAT RECORDED NO SCOPE (repeatable). Such
+// a session goes to the instance the routing table gives the scope of the repo it ran in, when the
+// table names that scope; else to ALIAS when that repo's `origin` owner is OWNER; else to the
+// default instance (`capture.Decide`). ALIAS must be a configured instance — and, under --run, one
+// with a `-worker` — or it is a usage error (exit 2). A session that recorded a scope is placed by
+// its scopes alone, as before.
 package main
 
 import (
@@ -94,13 +101,17 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		ocDisc     = fs.Bool("opencode-discover", false, "also enumerate every project `opencode debug scrap` names "+
 			"(unioned with -opencode-project; a project whose worktree is gone is listed through its first existing sandbox, "+
 			"else skipped; both counted on stderr)")
-		ocDirs multi
+		ocDirs      multi
+		ownerRoutes multi
 	)
 	fs.Var(&ocDirs, "opencode-project", "an opencode project directory to enumerate (repeatable; `session list` lists ONE project's roots)")
 	fs.Var(&workers, "worker", "--run: [ALIAS=]URL of an instance's worker listener (repeatable; no alias is the default instance)")
 	fs.Var(&tokenFiles, "capture-token-file", "--run: [ALIAS=]FILE holding that instance's capture token, mode 0600 (repeatable)")
 	fs.Var(&plaintext, "allow-plaintext-host", "--run: [ALIAS=]HOST — accept plain http for that instance's -worker when its URL's "+
 		"host is EXACTLY this one, because the network it is reached over is the transport protection (repeatable; no default)")
+	fs.Var(&ownerRoutes, "route-origin-owner", "OWNER=ALIAS — a session that recorded no scope, run in a repo whose "+
+		"origin URL's owner segment is OWNER (case-insensitive), goes to instance ALIAS, unless the routing table names "+
+		"that repo's scope (repeatable; no default)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -131,7 +142,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	if *runOnce {
 		return runPass(runConfig{host: *host, state: *statePath, hostKey: *hostKey, maxRequest: *maxRequest,
 			workers: workers, tokenFiles: tokenFiles, plaintext: plaintext, stateHome: stateHome, claudeRoot: *claudeRoot,
-			ocDirs: ocDirs, ocDiscover: *ocDisc, ocBin: *ocBin, ledgerDir: *ledgerDir, denylist: *denylist}, stderr, getenv)
+			ocDirs: ocDirs, ocDiscover: *ocDisc, ocBin: *ocBin, ledgerDir: *ledgerDir, denylist: *denylist,
+			ownerRoutes: ownerRoutes}, stderr, getenv)
 	}
 	// 🔴 --dry-run WRITES NOTHING, THE HOST KEY INCLUDED. It prints counts by rule, never a tag, so
 	// an ephemeral in-memory key is all it needs; creating the persistent key file as a side effect
@@ -159,6 +171,11 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitError
 	}
+	owners, err := capture.ParseOwnerRoutes(ownerRoutes, routing)
+	if err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
+		return exitUsage
+	}
 	runner := capture.ExecRunner{Bin: *ocBin}
 	dirs, discRefused := opencodeDirs(*ocDisc, ocDirs, runner, stderr)
 	agent := &capture.Agent{
@@ -167,6 +184,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		Runner:       runner,
 		LedgerDir:    *ledgerDir,
 		Routing:      routing,
+		OwnerRoutes:  owners,
 		Redactor:     red,
 		Log:          stderr,
 	}
@@ -189,6 +207,7 @@ type runConfig struct {
 	denylist                        string
 	ocDirs                          []string
 	ocDiscover                      bool
+	ownerRoutes                     []string
 }
 
 // opencodeDirs is the opencode project directories a pass enumerates: `-opencode-project` alone,
@@ -319,6 +338,27 @@ func endpoints(c runConfig, routing client.Routing) (eps map[string]capture.Endp
 	return out, plain, unused, nil
 }
 
+// ownerRoutesFor is `-route-origin-owner` under --run: [capture.ParseOwnerRoutes], and every alias
+// it names must also have a `-worker`.
+//
+// 🔴 A RULE WHOSE INSTANCE HAS NO WORKER IS A USAGE ERROR UNDER --run, not a warning. Unlike an
+// unused `-allow-plaintext-host` it is not inert: it MOVES sessions — each one already on the
+// default instance would be probed against a destination nothing can reach and sit in
+// `withdrawal-pending` on every run, and each new one would be refused on every run.
+func ownerRoutesFor(values []string, routing client.Routing, eps map[string]capture.Endpoint) (capture.OwnerRoutes, error) {
+	owners, err := capture.ParseOwnerRoutes(values, routing)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range values {
+		_, alias, _ := strings.Cut(v, "=")
+		if _, ok := eps[alias]; !ok {
+			return nil, fmt.Errorf("-route-origin-owner %s names instance %s, which has no -worker %s=<url>", v, alias, alias)
+		}
+	}
+	return owners, nil
+}
+
 func mapOf(m map[string][]string) map[string]string {
 	out := map[string]string{}
 	for k := range m {
@@ -358,6 +398,11 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		return fail(err)
 	}
 	eps, plain, unused, err := endpoints(c, routing)
+	if err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
+		return exitUsage
+	}
+	owners, err := ownerRoutesFor(c.ownerRoutes, routing, eps)
 	if err != nil {
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitUsage
@@ -423,6 +468,7 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		Runner:       runner,
 		LedgerDir:    c.ledgerDir,
 		Routing:      routing,
+		OwnerRoutes:  owners,
 		Redactor:     red,
 		Sink:         sink,
 		State:        state,
