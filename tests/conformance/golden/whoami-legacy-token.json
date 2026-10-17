@@ -1,0 +1,37 @@
+{
+  "body": {
+    "bytes": 176,
+    "kind": "text_lines",
+    "sha256": "e6f34f9aaf4cb27375c316b8cad00cb63fb339bf2428fcd255362d35fcb0b0ab",
+    "text_lines": [
+      "{\"principal\":\"legacy\",\"status\":\"not-federated\",\"groups\":{\"mapped\":[],\"unmapped\":[]},\"scopes\":[\"alpha-notes\",\"beta-notes\",\"hollow-set\",\"linked-set\",\"rubble-heap\",\"tagged-set\"]}",
+      ""
+    ]
+  },
+  "case": "whoami-legacy-token",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "176"
+    ],
+    [
+      "Content-Type",
+      "application/json"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "whoami"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

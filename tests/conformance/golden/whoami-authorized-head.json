@@ -1,0 +1,36 @@
+{
+  "body": {
+    "bytes": 0,
+    "kind": "text_lines",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "text_lines": [
+      ""
+    ]
+  },
+  "case": "whoami-authorized-head",
+  "headers": [
+    [
+      "Cache-Control",
+      "no-store"
+    ],
+    [
+      "Content-Length",
+      "181"
+    ],
+    [
+      "Content-Type",
+      "application/json"
+    ],
+    [
+      "Server",
+      "subsystem-store"
+    ],
+    [
+      "X-Store-Status",
+      "whoami"
+    ]
+  ],
+  "reason": "OK",
+  "recorded_from": "cmd/cairn-server",
+  "status": 200
+}

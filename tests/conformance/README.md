@@ -170,6 +170,11 @@ digest; the cross-check that Python's spelling equals Go's is the `sources-autho
 would read `sources-undeclared` if the fold skipped a seeded line for a wrong revision. The
 corpus boots ONE server with ONE journal, so the unconfigured 200 and the unreadable-journal 503
 are NOT rows: their witnesses are the literal-body tests in `internal/api/sources_test.go`.
+The `whoami-*` rows need no journal at all, and they can send only NON-federated callers: the
+corpus boots on a token file with no OIDC verifier, so every row answers `not-federated`. The
+three federated bodies (`mapped`, `groups-unmapped`, `no-groups`) are NOT rows; their witnesses
+are the literal-body tests in `internal/api/whoami_test.go`, over a real journal and a real
+signed token.
 The oracle is never told. The seed holds an EARLIER and a LATER registration of one arc, so the
 latest-wins fold is on the wire, and an arc homed in `alpha-notes` that DECLARES `beta-notes`, so
 `arcs-hidden-home` (narrow-reader, which cannot read alpha) pins the home-scope visibility rule
