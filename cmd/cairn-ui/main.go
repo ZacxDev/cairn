@@ -988,8 +988,8 @@ func main() {
 		// the door re-arms with no restart.
 		if err := supabase.RefreshKeys(ctx); err != nil {
 			fmt.Fprintf(os.Stderr,
-				"cairn-ui: WARNING identity: the Supabase key set could not be fetched at startup (%s). "+
-					"No provider session can be verified until a fetch succeeds, so the %s button is "+
+				"cairn-ui: WARNING identity: the OIDC key set could not be loaded at startup (%s). "+
+					"No provider session can be verified until a load succeeds, so the %s button is "+
 					"WITHHELD and those routes answer 503 — the credential form, the entries page and "+
 					"every existing session are UNAFFECTED, which is why this is not a refusal to start. "+
 					"The refresh loop keeps trying and the button re-arms by itself\n",
