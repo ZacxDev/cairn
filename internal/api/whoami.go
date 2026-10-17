@@ -81,7 +81,10 @@ func whoamiOf(p control.Principal, auth control.Authorization) whoamiView {
 		Groups:    whoamiGroups{Mapped: []string{}, Unmapped: []string{}},
 		Scopes:    []string{},
 	}
-	if fed, federated := auth.Federation(); federated && p.Kind == control.KindFederated {
+	// `Federation` is set only by `control.ResolveFederated` (and carried through narrowing),
+	// which is also the only producer of a `KindFederated` principal, so the report alone
+	// decides: a second test on the principal's kind could never disagree with it.
+	if fed, federated := auth.Federation(); federated {
 		view.Status = string(fed.Status)
 		view.Groups.Mapped = sortedNonNil(fed.Mapped)
 		view.Groups.Unmapped = sortedNonNil(fed.Unmapped)

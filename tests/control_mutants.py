@@ -7771,12 +7771,12 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="whoami-reports-any-caller-as-federated",
         path="internal/api/whoami.go",
-        old="federated && p.Kind == control.KindFederated {\n",
-        new="federated || true {\n",
+        old="\tif fed, federated := auth.Federation(); federated {\n",
+        new="\tif fed, federated := auth.Federation(); federated || true {\n",
         killer="TestWhoamiGivesANonFederatedCallerItsOwnView",
-        why="dropping the 'is this a federated caller' test because 'the report is empty for the "
-        "others anyway' — it is not empty, it is the zero value, and a machine token is then "
-        "answered with a status the contract does not define.",
+        why="dropping the 'did federation produce this authority' test because 'the report is "
+        "empty for the others anyway' — it is the zero value, and a machine token is then "
+        "answered with an empty status the contract does not define.",
     ),
     Mutant(
         name="whoami-serialises-an-empty-list-as-null",
