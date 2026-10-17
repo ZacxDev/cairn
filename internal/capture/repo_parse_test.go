@@ -193,6 +193,14 @@ func TestTheRepoArmPlacesNoSessionOnAnInstanceThisRunCannotUploadTo(t *testing.T
 		{"rule 2 to an alias with no worker", Repo{Scope: "gamma-notes", Owner: "acme"}, onlyDefault, "personal"},
 		{"a pin to the default is not overridden when the default has no worker", Repo{Scope: "pinned-notes", Owner: "acme"}, onlyClient, "personal"},
 		{"CONTROL: rule 1 to an alias with a worker", Repo{Scope: "beta-notes"}, onlyClient, "client"},
+		{"a session BOUND to the routed alias stays bound when it has no worker", Repo{Scope: "beta-notes"},
+			RepoRules{Uploadable: map[string]bool{"personal": true}, Bound: "client"}, "client"},
+		{"rule 2: a bound session stays bound too", Repo{Scope: "gamma-notes", Owner: "acme"},
+			RepoRules{Owners: OwnerRoutes{"acme": "client"}, Uploadable: map[string]bool{"personal": true}, Bound: "client"}, "client"},
+		{"a session bound to the default stays on the default", Repo{Scope: "beta-notes"},
+			RepoRules{Uploadable: map[string]bool{"personal": true}, Bound: "personal"}, "personal"},
+		{"an UNCONFIGURED alias still places a bound session on the default", Repo{Scope: "stale-notes"},
+			RepoRules{Uploadable: map[string]bool{"personal": true}, Bound: "client"}, "personal"},
 		{"CONTROL: rule 2 to an alias with a worker", Repo{Scope: "gamma-notes", Owner: "acme"}, onlyClient, "client"},
 	} {
 		if d := Decide(nil, c.repo, repoRouting, c.rules); d.Held || d.Instance != c.want {

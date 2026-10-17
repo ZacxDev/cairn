@@ -55,12 +55,17 @@ session is placed by its repo, first match wins (`decideByRepo`):
 1. **The repo's scope, when the routing table NAMES it** → the alias `Routing.AliasFor` gives. The
    scope is derived exactly as the client derives it (`client.ScopeForRepo`: a worktree answers its
    base clone). An explicitly-named scope always wins, so a repo pinned to the default stays there.
-   ⚠ A table entry whose alias this host does not configure, or that this run has no `-worker`
-   for, is NOT a match: the session goes to 3, never to 2 — the owner rule does not override a
-   table that named the repo (the `V` arm HOLDS a scope routed to an unconfigured alias; a hold is
-   final and withdraws, and a stale table line would otherwise freeze every session ever run in
-   that repo). Binding it to an instance with no `-worker` had it refused on every run, or left in
-   `withdrawal-pending` for good, at exit 0 (`TestATableRoutedRepoWithNoWorkerShipsToTheDefault`).
+   ⚠ A table entry whose alias this host does not configure sends the session to 3, never to 2 —
+   the owner rule does not override a table that named the repo (the `V` arm HOLDS a scope routed
+   to an unconfigured alias; a hold is final and withdraws, and a stale table line would otherwise
+   freeze every session ever run in that repo).
+   ⚠ An alias that IS configured but that this run has no `-worker` for (rule 1 or rule 2) receives
+   no NEW session: a session bound nowhere yet goes to 3 — binding it there had it refused on every
+   run, or left in `withdrawal-pending` for good, at exit 0
+   (`TestATableRoutedRepoWithNoWorkerShipsToTheDefault`). 🔴 A session ALREADY BOUND anywhere keeps
+   its binding on such a run and is refused and retried there, never re-placed: one the arm moved
+   to that alias was withdrawn from the default, which keeps a withdrawal as a deletion, so a move
+   back answered 410 and HELD it for good (`TestAMovedSessionIsNotReplacedWhenALaterRunLacksItsWorker`).
 2. **`-route-origin-owner OWNER=ALIAS`** (repeatable, `--run` and `--dry-run`) → ALIAS, when the
    repo's `origin` URL's owner segment is OWNER — `git@host:owner/repo`, `https://host/owner/repo`,
    `ssh://[user@]host[:port]/owner/repo`, `.git` optional; compared case-insensitively, no host

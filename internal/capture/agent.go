@@ -544,7 +544,7 @@ func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, r
 	// different answer here once its repo routes elsewhere — and a changed answer for a bound
 	// session is a MOVE like any other: destination probed, prefix withdrawn, whole session
 	// re-shipped from offset 0. Nothing about the repo arm bypasses the withdrawal.
-	dec := Decide(ss.V, a.sessionRepo(ss), a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable})
+	dec := Decide(ss.V, a.sessionRepo(ss), a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: ss.Instance})
 	if ss.Instance != "" && !dec.Held && dec.Instance != "" && ss.Instance != dec.Instance {
 		// 🔴 THE DESTINATION IS ASKED BEFORE THE CURRENT HOLDER IS TOLD TO FORGET, AND ONLY A DEFINITE
 		// "NOT DELETED HERE" LETS THE WITHDRAWAL GO AHEAD (#273's audit F1, closed in S10; #274's

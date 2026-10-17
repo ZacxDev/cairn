@@ -40,9 +40,10 @@
 // a session goes to the instance the routing table gives the scope of the repo it ran in, when the
 // table names that scope; else to ALIAS when that repo's `origin` owner is OWNER; else to the
 // default instance (`capture.Decide`). ALIAS must be a configured instance — and, under --run, one
-// with a `-worker` — or it is a usage error (exit 2). Neither the table nor the flag places a
-// session on an instance this run has no `-worker` for; it goes to the default instead. A session
-// that recorded a scope is placed by its scopes alone, as before.
+// with a `-worker` — or it is a usage error (exit 2). Neither the table nor the flag places a NEW
+// session on an instance this run has no `-worker` for; it goes to the default instead, while a
+// session already bound there stays bound and is retried. A session that recorded a scope is placed
+// by its scopes alone, as before.
 package main
 
 import (
