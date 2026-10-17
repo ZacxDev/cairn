@@ -98,7 +98,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from testlib import mutant_tree  # noqa: E402
+from testlib import mutant_select, mutant_tree  # noqa: E402
 
 PY_ROUTING = "tests/test_cairn_instances.py"
 PY_STORE = "tests/test_subsystem_read_store.py"
@@ -1030,7 +1030,7 @@ def judge(selected: list[str], killed: list[str], survived: list[str],
     return 1 if (survived or wrong_reason) else 0
 
 
-def aggregate(results_dir: Path) -> int:
+def aggregate(results_dir: Path, expected: list[str] | None = None) -> int:
     """The SEAM GUARD over the shards, then the one SUMMARY an unsharded run prints.
 
     Every shard carries its own copy of `positive-control`, so that row is checked to be in
@@ -1038,7 +1038,8 @@ def aggregate(results_dir: Path) -> int:
     exactly one shard; `mutant_tree.load_shard_results` is the same loader the authz battery's
     aggregate uses.
     """
-    expected = [m.id for m in MUTANTS]
+    if expected is None:
+        expected = [m.id for m in MUTANTS]
     docs, problems = mutant_tree.load_shard_results(
         results_dir, "routing", table_digest(), expected, always={CONTROL})
     if problems:
@@ -1055,6 +1056,26 @@ def aggregate(results_dir: Path) -> int:
                  sorted(wrong, key=order.get))
 
 
+def scope_rows(rows: list[Mutant], env) -> tuple[list[Mutant], str]:
+    """The rows a run under `--scope-from-event` executes (`testlib/mutant_select.py`).
+
+    A row's inputs are its `target`, and the tests that kill it: a Go row's package `*_test.go`
+    files (and `testdata/`); a pytest row's `suites`, the root `conftest.py` and `tests/testlib/`.
+    `positive-control` is not selected here for its own sake — every shard that runs any row
+    carries it (`main`).
+    """
+    changed, why = mutant_select.changed_paths(dict(env))
+
+    def inputs(m: Mutant):
+        if m.go_package:
+            tests = mutant_select.package_tests([m.go_package])
+        else:
+            tests = lambda p: p in m.suites or p == "conftest.py" or p.startswith("tests/testlib/")
+        return lambda p: p == m.target or tests(p)
+    return mutant_select.select(rows, changed, why, harness=("tests/routing_mutants.py",),
+                                inputs=inputs, key=lambda m: m.id)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tests/routing_mutants.py")
     parser.add_argument("--only", default=None, help="a comma-separated subset of mutant ids")
@@ -1065,10 +1086,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--aggregate", type=Path, metavar="DIR",
                         help="check the shard results in DIR cover the battery exactly once, "
                         "and print the battery's SUMMARY from them; runs no mutant")
+    parser.add_argument("--scope-from-event", action="store_true",
+                        help="on a pull_request (EVENT/PR_BASE/PR_HEAD in the environment) run "
+                        "only the rows whose target or killing tests changed; every other event, "
+                        "and anything undeterminable, runs the whole battery")
     args = parser.parse_args(argv)
 
+    scoped = list(MUTANTS)
+    if args.scope_from_event:
+        scoped, line = scope_rows(MUTANTS, os.environ)
+        print(line, flush=True)
+        # The control rides with ANY selected row, so a scoped run is never without one; with
+        # nothing else selected there is no verdict for it to vouch for, and it is dropped.
+        others = [m for m in scoped if m.id != CONTROL]
+        scoped = ([m for m in MUTANTS if m.id == CONTROL] + others) if others else []
+
     if args.aggregate:
-        return aggregate(args.aggregate)
+        return aggregate(args.aggregate, [m.id for m in scoped])
 
     if args.list:
         for mutant in MUTANTS:
@@ -1076,8 +1110,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     wanted = None if args.only is None else set(args.only.split(","))
-    selected = [m for m in MUTANTS if wanted is None or m.id in wanted]
-    if not selected:
+    selected = [m for m in scoped if wanted is None or m.id in wanted]
+    if not selected and (wanted is not None or not args.scope_from_event):
         print(f"REFUSING: --only {args.only!r} selected no mutant", file=sys.stderr)
         return 2
     shard = (1, 1)
@@ -1089,8 +1123,24 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         selected = mutant_tree.shard_rows(selected, shard, key=lambda m: m.id,
                                           front=slow_rows(), always={CONTROL})
-        print(f"SHARD {shard[0]}/{shard[1]}: {len(selected)} of {len(MUTANTS)} rows "
-              f"(`{CONTROL}` in every shard)", flush=True)
+        # A scoped shard dealt no row of its own runs nothing, its control included.
+        if all(m.id == CONTROL for m in selected):
+            selected = selected if not args.scope_from_event else []
+        print(f"SHARD {shard[0]}/{shard[1]}: {len(selected)} of {len(scoped)} rows in scope "
+              f"({len(MUTANTS)} in the table; `{CONTROL}` in every shard that runs a row)",
+              flush=True)
+
+    # 🔴 NOTHING SELECTED IS A PASS WITH A COUNT, NOT A SKIP: `SUMMARY mutants=0`, and a results
+    # file the aggregate checks like any other.
+    if not selected:
+        if args.results:
+            args.results.parent.mkdir(parents=True, exist_ok=True)
+            args.results.write_text(json.dumps({
+                "battery": "routing", "shard": list(shard), "table": table_digest(),
+                "selected": [], "positive_control": "not-needed",
+                "killed": [], "survived": [], "wrong_reason": [],
+            }, indent=1, sort_keys=True), encoding="utf-8")
+        return judge([], [], [], [])
 
     work = Path(tempfile.mkdtemp(prefix="cairn-mutants-"))
     killed, survived, wrong_reason = [], [], []

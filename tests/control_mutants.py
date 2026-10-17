@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import queue
 import re
 import shutil
@@ -63,7 +64,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 
-from testlib import mutant_tree  # noqa: E402
+from testlib import mutant_select, mutant_tree  # noqa: E402
 
 #: 🔴 MORE THAN ONE PACKAGE, BECAUSE THE GUARDS THIS BATTERY EXERCISES SPAN A SEAM — AND
 #: NO TOTAL IS WRITTEN DOWN HERE ON PURPOSE. This header opened "FOUR PACKAGES, NOT ONE"
@@ -8081,7 +8082,7 @@ def table_digest(rows=None) -> str:
     return h.hexdigest()
 
 
-def aggregate(results_dir: Path) -> int:
+def aggregate(results_dir: Path, expected: list[str] | None = None) -> int:
     """The SEAM GUARD over the shards, and the battery's one SUMMARY rebuilt from them.
 
     🔴 EVERY SHARD CAN BE GREEN WHILE THE BATTERY IS NOT. A shard enforces the refusals over
@@ -8091,7 +8092,8 @@ def aggregate(results_dir: Path) -> int:
     shard count, cut from one table. Exit 2 for that — "could not vouch", never "failed" —
     and then `judge` over the union, which is the old single run's SUMMARY and refusals.
     """
-    expected = [m.name for m in MUTANTS]
+    if expected is None:
+        expected = [m.name for m in MUTANTS]
     loaded, problems = mutant_tree.load_shard_results(
         results_dir, "control", table_digest(), expected)
     if problems:
@@ -8109,6 +8111,23 @@ def aggregate(results_dir: Path) -> int:
     return 0 if judge(by_name, expected, t) else 1
 
 
+def scope_rows(rows: list[Mutant], env) -> tuple[list[Mutant], str]:
+    """The rows a run under `--scope-from-event` executes (`testlib/mutant_select.py`).
+
+    A row's inputs are its target `path` and the `*_test.go` files (plus `testdata/`) of every
+    package `scope_for` runs for it — where its named killers live. `scope_for` raising (a killer
+    that cannot be located) makes the row RUN, and then refuse loudly as it always has.
+    """
+    changed, why = mutant_select.changed_paths(dict(env))
+    index = mutant_tree.go_test_index(REPO_ROOT) if changed is not None else {}
+
+    def inputs(m: Mutant):
+        tests = mutant_select.package_tests(scope_for(m, index)[0])
+        return lambda p: p == m.path or tests(p)
+    return mutant_select.select(rows, changed, why, harness=("tests/control_mutants.py",),
+                                inputs=inputs, key=lambda m: m.name)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--show", action="store_true", help="print each edit and exit without running")
@@ -8120,6 +8139,10 @@ def main() -> int:
     ap.add_argument("--aggregate", type=Path, metavar="DIR",
                     help="check the shard results in DIR cover the battery exactly once, and "
                     "print the battery's SUMMARY from them; runs no mutant")
+    ap.add_argument("--scope-from-event", action="store_true",
+                    help="on a pull_request (EVENT/PR_BASE/PR_HEAD in the environment) run only "
+                    "the rows whose target or killing tests changed; every other event, and "
+                    "anything undeterminable, runs the whole battery (`testlib/mutant_select.py`)")
     args = ap.parse_args()
 
     stale_hint = sorted(SLOW_ROWS - {m.name for m in MUTANTS})
@@ -8127,8 +8150,14 @@ def main() -> int:
         print(f"control_mutants: SLOW_ROWS names no row: {stale_hint}", file=sys.stderr)
         return 2
 
+    if args.scope_from_event:
+        scoped, line = scope_rows(MUTANTS, os.environ)
+        print(line, flush=True)
+    else:
+        scoped = list(MUTANTS)
+
     if args.aggregate:
-        return aggregate(args.aggregate)
+        return aggregate(args.aggregate, [m.name for m in scoped])
 
     if args.show:
         for m in MUTANTS:
@@ -8136,6 +8165,34 @@ def main() -> int:
             print(f"\n=== {m.name}  [{label}]\n    {m.path}\n    why: {m.why}")
             print(f"    -   {m.old!r}\n    +   {m.new!r}")
         return 0
+
+    selected = [m for m in scoped if not args.only or m.name == args.only]
+    if args.only and not selected:
+        print(f"control_mutants: no mutant named {args.only!r} in scope", file=sys.stderr)
+        return 2
+    shard = (1, 1)
+    if args.shard:
+        try:
+            shard = mutant_tree.parse_shard(args.shard)
+        except ValueError as exc:
+            print(f"control_mutants: {exc}", file=sys.stderr)
+            return 2
+        selected = mutant_tree.partition(selected, shard[1], key=lambda m: m.name,
+                                         front=SLOW_ROWS)[shard[0] - 1]
+        print(f"SHARD {shard[0]}/{shard[1]}: {len(selected)} of {len(scoped)} rows in scope "
+              f"({len(MUTANTS)} in the table)")
+
+    # 🔴 NOTHING SELECTED IS A PASS WITH A COUNT, NOT A SKIP: the SUMMARY reads `mutants=0` and
+    # the results file says so, so the aggregate checks this shard like any other. No positive
+    # control runs, because there is no verdict for it to vouch for.
+    if not selected:
+        if args.results:
+            args.results.parent.mkdir(parents=True, exist_ok=True)
+            args.results.write_text(json.dumps({
+                "battery": "control", "shard": list(shard), "table": table_digest(),
+                "selected": [], "positive_control": "not-needed", "tally": asdict(Tally()),
+            }, indent=1, sort_keys=True), encoding="utf-8")
+        return 0 if judge({m.name: m for m in MUTANTS}, [], Tally()) else 1
 
     if not go_available():
         print("control_mutants: REFUSING — no `go` on PATH.", file=sys.stderr)
@@ -8147,20 +8204,6 @@ def main() -> int:
         )
         return 2
 
-    selected = [m for m in MUTANTS if not args.only or m.name == args.only]
-    if args.only and not selected:
-        print(f"control_mutants: no mutant named {args.only!r}", file=sys.stderr)
-        return 2
-    shard = (1, 1)
-    if args.shard:
-        try:
-            shard = mutant_tree.parse_shard(args.shard)
-        except ValueError as exc:
-            print(f"control_mutants: {exc}", file=sys.stderr)
-            return 2
-        selected = mutant_tree.partition(selected, shard[1], key=lambda m: m.name,
-                                         front=SLOW_ROWS)[shard[0] - 1]
-        print(f"SHARD {shard[0]}/{shard[1]}: {len(selected)} of {len(MUTANTS)} rows")
     jobs = max(1, min(args.jobs, len(selected) or 1))
 
     index = mutant_tree.go_test_index(REPO_ROOT)

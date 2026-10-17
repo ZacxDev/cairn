@@ -61,8 +61,8 @@ itself — six sites; the package doc is now the only one that states it, and th
 point. Read it there, including the two things this section used to under-claim and
 over-claim respectively:
 
-- the replacement is stronger than "a test instead of a build failure" sounds — all three
-  Go derivations run these tests in `doCheck`, so an import-ban failure **is** a build
+- the replacement is stronger than "a test instead of a build failure" sounds — every Go
+  derivation depends on `mkGoModuleTests`, which runs these tests, so an import-ban failure **is** a build
   failure for anyone building through nix;
 - and it is weaker in one way no phrasing removes — a build refusal cannot be satisfied by
   deleting a file, and this one can. The `ok` floor in the `go` CI job is what notices a

@@ -561,31 +561,49 @@
       # copies and this was one of them.
       #
       # What this file contributes to it, and the reason the pointer is here at all:
-      # all three derivations below set `doCheck = true` with `checkPhase` spelled out
-      # as `go vet ./...` then `go test ./...`, so the policy's tests run in the
-      # PACKAGE build a consumer makes rather than only in CI. That is what makes an
-      # import-ban failure a BUILD failure for anyone building through nix — the same
-      # consequence `vendorHash = null` had, which is the strongest thing that can be
-      # said for the replacement and is said in full over there.
+      # every Go derivation below DEPENDS ON `mkGoModuleTests`, whose `checkPhase` is
+      # `go vet ./...` then `go test ./...` over the whole module, so the policy's tests
+      # run in the PACKAGE build a consumer makes rather than only in CI. That is what
+      # makes an import-ban failure a BUILD failure for anyone building through nix —
+      # the same consequence `vendorHash = null` had, which is the strongest thing that
+      # can be said for the replacement and is said in full over there.
       #
       # ⚠ A VENDOR HASH IS NOT A DEPENDENCY GATE AND MUST NOT BE READ AS ONE. It
       # pins the BYTES of whatever the module graph resolves to; it says nothing
       # about which modules are in that graph, and adding one just changes the hash.
-      mkGoServer = pkgs: (buildGoPinned pkgs) {
-        pname = "cairn-server";
+      #
+      # 🔴 THE ROOT MODULE'S TESTS, ONCE — AND EVERY GO PACKAGE BELOW DEPENDS ON THIS
+      # DERIVATION, SO NONE OF THEM CAN BUILD WHILE IT IS RED. Each package used to carry
+      # this `checkPhase` itself, and because every one of them spelled out the WHOLE
+      # module (`./...`), the same suite ran four times per `nix` CI job (measured on
+      # main run 39002177385: `cairn-server`, `cairn-ui`, `cairn-go`, `cairn-capture`,
+      # 52-61 s each) and twice more per `publish-image` run. One store path, so nix runs
+      # it once per build and reuses it for every package that names it.
+      #
+      # ⚠ THE PACKAGES REFERENCE IT AS AN ATTRIBUTE (`moduleTests`), WHICH MAKES IT A BUILD
+      # INPUT AND NOTHING MORE: it reaches no installed output and no closure. A consumer
+      # building any one package still builds this first — the property the block above
+      # leans on — and a substituted package is substituted exactly as before.
+      mkGoModuleTests = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-go-module-tests";
         inherit version;
         src = onlyGo pkgs;
         vendorHash = goVendorHash;
 
-        subPackages = [ "cmd/cairn-server" ];
+        # Nothing to compile or install beyond what the check phase builds for itself.
+        buildPhase = ''
+          runHook preBuild
+          runHook postBuild
+        '';
 
         # 🔴 THE UNIT TESTS RUN IN THE BUILD, NOT ONLY IN `checks`. A consumer
         # that pins this flake builds the PACKAGE and never runs
         # `nix flake check`, so a broken token parser or a broken tar writer
         # would otherwise reach a machine — and `checks` is also where a
-        # `--no-link` CI job is easiest to forget.
+        # `--no-link` CI job is easiest to forget. (Every package below depends on
+        # this derivation, which is how "in the build" still holds.)
         doCheck = true;
-        # 🔴 `gitMinimal` FOR THE CHECK PHASE ONLY (all four Go derivations): the client read
+        # 🔴 `gitMinimal` FOR THE CHECK PHASE ONLY: the client read
         # ledger's tests (S11) run a bare `recall` whose scope `--repo .` derives by invoking `git`
         # by bare name, so without it the sandbox failed them on `exec: "git": not found`. It
         # reaches no installed output; the wrappers' PATH is decided separately below.
@@ -620,6 +638,29 @@
           go test ./...
           runHook postCheck
         '';
+
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out
+          echo "go vet ./... && go test ./... passed for ${version}" > $out/passed
+          runHook postInstall
+        '';
+      };
+
+      mkGoServer = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-server";
+        inherit version;
+        src = onlyGo pkgs;
+        vendorHash = goVendorHash;
+
+        subPackages = [ "cmd/cairn-server" ];
+
+        # 🔴 NO `checkPhase` HERE: the module's tests are `mkGoModuleTests`, a build input of
+        # this package, so this cannot build while they are red. Re-enabling `doCheck` with
+        # the DEFAULT check phase would bring back the `subPackages`-narrowed walk that block
+        # describes; re-enabling it spelled out would run the whole suite a second time.
+        doCheck = false;
+        moduleTests = mkGoModuleTests pkgs;
 
         meta = with pkgs.lib; {
           description = "The Go port of the cairn store API (P1: dual-run against the Python oracle)";
@@ -668,20 +709,10 @@
 
         nativeBuildInputs = [ pkgs.makeWrapper ];
 
-        # 🔴 THE UNIT TESTS RUN IN THE BUILD, AND `checkPhase` IS SPELLED OUT BECAUSE THE
-        # DEFAULT HONOURS `subPackages` AND THAT MADE IT VACUOUS ON THE SERVER DERIVATION —
-        # measured there: a GREEN check phase that ran ZERO tests, because `subPackages` had
-        # scoped the test walk to the one directory with none. Every test in this module
-        # lives under `internal/`.
-        doCheck = true;
-        # `gitMinimal` for the check phase only — see `mkGoServer`.
-        nativeCheckInputs = [ pkgs.gitMinimal ];
-        checkPhase = ''
-          runHook preCheck
-          go vet ./...
-          go test ./...
-          runHook postCheck
-        '';
+        # 🔴 THE UNIT TESTS RUN IN THE BUILD — as `mkGoModuleTests`, a build input of this
+        # package; see that block for why `doCheck` here stays off.
+        doCheck = false;
+        moduleTests = mkGoModuleTests pkgs;
 
         postInstall = ''
           wrapProgram $out/bin/cairn \
@@ -700,8 +731,8 @@
       # 🔴 THE TRANSCRIPT CAPTURE AGENT (S2 of the transcripts/plugins plan) — A SEPARATE BINARY,
       # NOT A `cairn` VERB, because it reads every session transcript on its host and the reader
       # installed everywhere should not. It is under the import ban (`internal/depspolicy`'s
-      # `LinkedBinaryRoots`), and its check phase runs the whole module's tests like the other Go
-      # derivations. `--run` (S3b) uploads over the capture/v1 contract — to an instance that is
+      # `LinkedBinaryRoots`), and it depends on `mkGoModuleTests` like the other Go derivations,
+      # so it cannot build while the module's tests are red. `--run` (S3b) uploads over the capture/v1 contract — to an instance that is
       # armed; every instance is unarmed today (O16) and answers 503, which the agent holds on.
       # ⚠ NO `opencode` ON ITS PATH, deliberately: it runs `opencode export` by bare name, and the
       # answer has to be the opencode the host's sessions were written by — a pinned copy here
@@ -724,15 +755,9 @@
           wrapProgram $out/bin/cairn-capture \
             --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.gitMinimal ]}
         '';
-        doCheck = true;
-        # `gitMinimal` for the check phase only — see `mkGoServer`.
-        nativeCheckInputs = [ pkgs.gitMinimal ];
-        checkPhase = ''
-          runHook preCheck
-          go vet ./...
-          go test ./...
-          runHook postCheck
-        '';
+        # The module's tests: `mkGoModuleTests`, a build input (see that block).
+        doCheck = false;
+        moduleTests = mkGoModuleTests pkgs;
         meta = with pkgs.lib; {
           description = "The cairn session-transcript capture agent (redacts on the host; uploads nothing yet)";
           homepage = "https://github.com/ZacxDev/cairn";
@@ -748,29 +773,35 @@
       # Built from `plugins/` ALONE — the module requires nothing, not even the parent, which
       # `internal/depspolicy`'s nested-module ledger checks — so `vendorHash = null` is EXACT here
       # rather than the hole it was for the root module: a `require` appearing would fail this build
-      # (no vendor hash to fetch it under) as well as that ledger. Its check phase runs the module's
-      # own suite against the in-process fake provider and fake pod. A one-shot run for a user timer;
+      # (no vendor hash to fetch it under) as well as that ledger. `mkPluginModuleTests` runs the
+      # module's own suite against the in-process fake provider and fake pod. A one-shot run for a user timer;
       # the manifest the operator registers ships beside it in `share/`.
       #
       # 🔴 EXAMPLE PLUGIN B — CLICKUP TICKET MATCHING (S10) — IS THE SAME DERIVATION WITH ANOTHER NAME:
-      # one module, one source filter, and EACH package's check phase runs the WHOLE module's suite, so
-      # the code the two plugins share (`plugins/internal/…`) cannot pass in one and fail in the other.
-      # `gitMinimal` is a CHECK input only: plugin B's suite runs the real `git` over a repository it
+      # one module, one source filter, and BOTH packages depend on the ONE `mkPluginModuleTests` run of
+      # the WHOLE module's suite, so the code the two plugins share (`plugins/internal/…`) cannot pass
+      # for one and fail for the other. `gitMinimal` is a CHECK input only: plugin B's suite runs the real `git` over a repository it
       # creates (and FAILS rather than skips without one); the installed binary takes its `git` and its
       # GitHub CLI from the operator's own PATH, by flag.
-      mkPlugin = pkgs: name: description: (buildGoPinned pkgs) {
-        pname = "cairn-${name}";
+      onlyPlugins = pkgs: pkgs.lib.cleanSourceWith {
+        src = ./.;
+        name = "cairn-plugins-source";
+        filter = path: type:
+          let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+          in rel == "plugins" || pkgs.lib.hasPrefix "plugins/" rel;
+      };
+      # The plugins module's suite, ONCE, for both plugin packages — `mkGoModuleTests`'s shape
+      # and reason, one module over (`go test ./...` spelled out, never narrowed by `subPackages`).
+      mkPluginModuleTests = pkgs: (buildGoPinned pkgs) {
+        pname = "cairn-plugins-module-tests";
         inherit version;
-        src = pkgs.lib.cleanSourceWith {
-          src = ./.;
-          name = "cairn-plugins-source";
-          filter = path: type:
-            let rel = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
-            in rel == "plugins" || pkgs.lib.hasPrefix "plugins/" rel;
-        };
+        src = onlyPlugins pkgs;
         modRoot = "plugins";
         vendorHash = null;
-        subPackages = [ name ];
+        buildPhase = ''
+          runHook preBuild
+          runHook postBuild
+        '';
         doCheck = true;
         nativeCheckInputs = [ pkgs.gitMinimal ];
         checkPhase = ''
@@ -779,6 +810,22 @@
           go test ./...
           runHook postCheck
         '';
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out
+          echo "go vet ./... && go test ./... passed for the plugins module at ${version}" > $out/passed
+          runHook postInstall
+        '';
+      };
+      mkPlugin = pkgs: name: description: (buildGoPinned pkgs) {
+        pname = "cairn-${name}";
+        inherit version;
+        src = onlyPlugins pkgs;
+        modRoot = "plugins";
+        vendorHash = null;
+        subPackages = [ name ];
+        doCheck = false;
+        moduleTests = mkPluginModuleTests pkgs;
         postInstall = ''
           mv "$out/bin/${name}" "$out/bin/cairn-${name}"
           install -Dm444 ${name}/manifest.json "$out/share/cairn-${name}/manifest.json"
@@ -831,11 +878,8 @@
       # a PATH entry with no caller, which is the shape this repository refuses
       # elsewhere as exported API with no consumer.
       #
-      # ⚠ WHAT `doCheck` HERE BUYS THAT THE OTHER TWO DERIVATIONS DO NOT: nothing.
-      # `checkPhase` is `go test ./...` in all three, so the UI's tests already run
-      # in the pod's and the client's builds too. It is spelled out identically
-      # anyway, because the failure that made it necessary — `subPackages` silently
-      # scoping the test walk — is a property of this builder, not of a package.
+      # ⚠ ITS TESTS ARE THE MODULE'S TESTS: `mkGoModuleTests` runs `go test ./...` once,
+      # and this package, the pod and the client all depend on that one run.
       mkGoUI = pkgs: (buildGoPinned pkgs) {
         pname = "cairn-ui";
         inherit version;
@@ -844,15 +888,8 @@
 
         subPackages = [ "cmd/cairn-ui" ];
 
-        doCheck = true;
-        # `gitMinimal` for the check phase only — see `mkGoServer`.
-        nativeCheckInputs = [ pkgs.gitMinimal ];
-        checkPhase = ''
-          runHook preCheck
-          go vet ./...
-          go test ./...
-          runHook postCheck
-        '';
+        doCheck = false;
+        moduleTests = mkGoModuleTests pkgs;
 
         meta = with pkgs.lib; {
           description = "The cairn browser surface: entries page, sign-in (credential form and GitHub), share flow; published and deployed";
@@ -1515,6 +1552,9 @@
 
       checks = forAll (pkgs: {
         cairn = mkCairn pkgs;
+        # Each module's suite, once; every Go package below depends on its module's entry.
+        go-module-tests = mkGoModuleTests pkgs;
+        plugins-module-tests = mkPluginModuleTests pkgs;
         cairn-server-go = mkGoServer pkgs;
         cairn-go = mkGoClient pkgs;
         cairn-ui = mkGoUI pkgs;
@@ -2015,8 +2055,8 @@
         '';
 
         # 🔴 THE POSITIVE HALF FOR THE GO SERVER, AND IT IS A DIFFERENT CLAIM
-        # FROM "IT COMPILES". The package's own `checkPhase` runs the unit
-        # tests; this runs the BINARY and reads what it prints, which is the one
+        # FROM "IT COMPILES". `mkGoModuleTests`, a build input of the package, runs
+        # the unit tests; this runs the BINARY and reads what it prints, which is the one
         # thing a compile cannot establish — that the dispatch tables were
         # actually wired and agree with the ledger the conformance suite reads.
         #

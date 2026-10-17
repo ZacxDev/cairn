@@ -1350,8 +1350,25 @@ jobs:
           - { battery: routing, shard: 6/8 }
           - { battery: routing, shard: 7/8 }
           - { battery: routing, shard: 8/8 }
+    # 🔴 ON A PULL REQUEST EACH BATTERY RUNS ONLY THE ROWS WHOSE TARGET FILE OR KILLING TESTS THE PR
+    # CHANGED (`--scope-from-event`, `tests/testlib/mutant_select.py`); a push to `main` and
+    # `workflow_dispatch` run every row. It FAILS SAFE: an undeterminable diff, a change to a
+    # battery's harness (its own file, `testlib/mutant_{tree,select}.py`, `ci_paths.py`, this file,
+    # `go.mod`/`go.sum`) and a row whose inputs cannot be mapped all run. A shard dealt no row
+    # PASSES with `SUMMARY mutants=0` in its log — never a skipped job — and `mutants-aggregate`
+    # re-derives the same selection and checks the shards cover exactly it. The scoping log line is
+    # `MUTANT SCOPE: …`. What it cannot see — an edit elsewhere masking a mutant — is what the full
+    # battery on `main` is for.
+    env:
+      EVENT: ${{ github.event_name }}
+      PR_BASE: ${{ github.event.pull_request.base.sha }}
+      PR_HEAD: ${{ github.event.pull_request.head.sha }}
     steps:
+      # The whole history: the scope is diffed from the PR's MERGE-BASE (`ci_paths.py`), and a
+      # missing commit makes that diff fail — which runs the whole battery, safe but slow.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
@@ -1404,7 +1421,7 @@ jobs:
       - name: prove every authz guard can go RED (each mutant on the test that names it)
         if: matrix.battery == 'control'
         run: >-
-          python3 tests/control_mutants.py --shard ${{ matrix.shard }} --jobs 2
+          python3 tests/control_mutants.py --shard ${{ matrix.shard }} --jobs 2 --scope-from-event
           --results "$RUNNER_TEMP/mutant-results/control-${{ strategy.job-index }}.json"
 
       # 🔴 THE THIRD MUTATION BATTERY, WIRED IN BECAUSE ITS OWN RATIONALE DEPENDED ON IT
@@ -1438,7 +1455,7 @@ jobs:
       - name: prove every routing and ANCHOR guard can go RED
         if: matrix.battery == 'routing'
         run: >-
-          python3 tests/routing_mutants.py --shard ${{ matrix.shard }}
+          python3 tests/routing_mutants.py --shard ${{ matrix.shard }} --scope-from-event
           --results "$RUNNER_TEMP/mutant-results/routing-${{ strategy.job-index }}.json"
 
       - name: upload this shard's verdicts for the seam check
@@ -1463,8 +1480,15 @@ jobs:
     needs: [changes, mutants]
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.heavy != 'false') }}
     runs-on: ubuntu-latest
+    # The same event fields and history as `mutants`, so it re-derives the SAME selection.
+    env:
+      EVENT: ${{ github.event_name }}
+      PR_BASE: ${{ github.event.pull_request.base.sha }}
+      PR_HEAD: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -1474,10 +1498,10 @@ jobs:
           path: mutant-results
           merge-multiple: true
       - name: every authz mutant ran in exactly one shard, and the battery's one SUMMARY
-        run: python3 tests/control_mutants.py --aggregate mutant-results
+        run: python3 tests/control_mutants.py --aggregate mutant-results --scope-from-event
       - name: every routing mutant ran in exactly one shard, the control in all, and one SUMMARY
         if: ${{ !cancelled() }}
-        run: python3 tests/routing_mutants.py --aggregate mutant-results
+        run: python3 tests/routing_mutants.py --aggregate mutant-results --scope-from-event
 
   # 🔴 THE P2 GATE, AND IT IS ITS OWN JOB FOR THE SAME REASON THE CORPUS IS: its verdict is
   # readable on its own in the checks list, and a failure in either language can never mask it.
@@ -1948,6 +1972,17 @@ jobs:
       - name: the server image builds
         run: nix build .#packages.x86_64-linux.server-image --no-link --print-build-logs
 
+      # 🔴 EACH GO MODULE'S SUITE RUNS ONCE IN THIS JOB, HERE, UNDER THE PINNED TOOLCHAIN — a
+      # second, independent reading of the `go` job's verdict (the `setup-go` toolchain, no
+      # sandbox). Every Go package below DEPENDS on its module's entry, so none of them can build
+      # while it is red, and none re-runs it: they used to carry the same `go test ./...` each,
+      # which ran the root module's suite four times and the plugins module's twice per job.
+      # Built first and by name so the log shows the test run in one place.
+      - name: the root module's unit tests pass under the pinned toolchain (once, for every Go package)
+        run: nix build .#checks.x86_64-linux.go-module-tests --no-link --print-build-logs
+      - name: the plugins module's suite passes under the pinned toolchain (once, for both plugins)
+        run: nix build .#checks.x86_64-linux.plugins-module-tests --no-link --print-build-logs
+
       # 🔴 THE GO POD'S IMAGE IS BUILT HERE FOR THE REASON THE PYTHON ONE ABOVE IS, AND
       # ONE MORE. `tests/test_flake_go_image_runtime_contract.py` is a STRUCTURAL check on
       # `flake.nix` — it reads the declaration and is blind to layer contents by
@@ -1958,11 +1993,11 @@ jobs:
       - name: the Go server image builds
         run: nix build .#packages.x86_64-linux.server-image-go --no-link --print-build-logs
 
-      # The Go server is packaged too, and its build RUNS the unit tests — so this
-      # step is a second, independent reading of the `go` job's verdict under the
-      # PINNED toolchain rather than the one `setup-go` installed. Two tiers, both
-      # read: an environment silently decides which tests execute, and greening one
-      # while the other stays unobservable moves a bug rather than removing it.
+      # The Go server is packaged too, and its build DEPENDS ON the module's unit tests
+      # (the `go-module-tests` step above) — a second, independent reading of the `go`
+      # job's verdict under the PINNED toolchain rather than the one `setup-go` installed.
+      # Two tiers, both read: an environment silently decides which tests execute, and
+      # greening one while the other stays unobservable moves a bug rather than removing it.
       - name: the Go server package builds, and its unit tests pass under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-server-go --no-link --print-build-logs
 
@@ -2021,13 +2056,13 @@ jobs:
         run: nix build .#checks.x86_64-linux.ui-screenshots-are-current --no-link --print-build-logs
 
       # The Go CLIENT is packaged too, and for the same reasons: a consumer will eventually pin
-      # it, and its build runs the unit tests under the PINNED toolchain rather than the one
-      # `setup-go` installed. Two tiers, both read.
+      # it, and its build depends on the unit tests under the PINNED toolchain rather than the
+      # one `setup-go` installed. Two tiers, both read.
       - name: the Go client package builds, and its unit tests pass under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-go --no-link --print-build-logs
 
-      # The transcript capture agent (S2 of the transcripts/plugins plan): its package builds and
-      # runs the module's tests under the pinned toolchain, and CLOSING-CONDITION PART 3 — its
+      # The transcript capture agent (S2 of the transcripts/plugins plan): its package builds on
+      # the module's tests under the pinned toolchain, and CLOSING-CONDITION PART 3 — its
       # redaction self-test — runs as the BUILT binary, content-checked (the SUMMARY pair with
       # caught = planted and clean-damaged = 0). 🔴 THIS JOB IS THE ONLY TIER THAT RUNS THE BINARY:
       # a `go run … --self-test` step in the `go` job was removed on review (D3) because this job
@@ -2037,10 +2072,10 @@ jobs:
         run: nix build .#packages.x86_64-linux.cairn-capture --no-link --print-build-logs
       - name: the capture agent's redaction self-test passes as built (planted=P caught=P clean-damaged=0)
         run: nix build .#checks.x86_64-linux.cairn-capture-self-test --no-link --print-build-logs
-      # The summary plugin (S9): its NESTED module built alone, its suite in the check phase.
+      # The summary plugin (S9): its NESTED module built alone, on the `plugins-module-tests` run.
       - name: the summary plugin builds, and its suite passes under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-summary --no-link --print-build-logs
-      # The ClickUp plugin (S10): the same module and the same check phase — the whole module's suite,
+      # The ClickUp plugin (S10): the same module and the same suite run — the whole module's,
       # with `git` as a check input — under its own name, with its own manifest beside it.
       - name: the clickup plugin builds, and the module's suite passes under the pinned toolchain
         run: nix build .#packages.x86_64-linux.cairn-clickup --no-link --print-build-logs
@@ -2061,8 +2096,8 @@ jobs:
       - name: packages.default and apps.default both resolve to the Go client
         run: nix build .#checks.x86_64-linux.default-is-the-go-client --no-link --print-build-logs
 
-      # 🔴 THE BROWSER SURFACE BUILDS, AND ITS UNIT TESTS RUN UNDER THE PINNED
-      # TOOLCHAIN. This is also the only CI step that builds ANY artefact with the
+      # 🔴 THE BROWSER SURFACE BUILDS, ON ITS UNIT TESTS UNDER THE PINNED
+      # TOOLCHAIN (the module's, run once above). This is also the only CI step that builds ANY artefact with the
       # new `vendorHash` from a clean store, so a lock file and a hash that came
       # apart fail here rather than in a consumer's `nix build`.
       # ⚠ THERE IS NO `…-declares-its-routes` STEP FOR THE UI, UNLIKE THE POD AND THE
