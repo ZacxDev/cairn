@@ -230,112 +230,85 @@ func TestNoSummaryProblemRefusesTheRegistration(t *testing.T) {
 	}
 }
 
-// TestARealCredentialIsNeverExplainedAwayAsAPlaceholder: the RAW text is scanned, and these were
-// stored verbatim by a draft that masked every `<…>` before scanning. Each must be redacted. Every
-// value is built at run time so no literal token sits in this file. The `$`-glued rows pin the other
-// half: a lower-case `$word` is not a placeholder, and a `$UPPER` run that is itself a credential
-// is a value. The kept-as-written controls are the placeholders proper.
-func TestARealCredentialIsNeverExplainedAwayAsAPlaceholder(t *testing.T) {
+// storedAs runs ONE state_now item through the whole summary pipeline (sanitize, scan window,
+// redaction, clip) and returns what is stored.
+func storedAs(t *testing.T, text string) string {
+	t.Helper()
+	reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, text)}))
+	if reg.Summary == nil || len(reg.Summary.StateNow) != 1 {
+		t.Fatalf("%q: no item stored: %+v %q", text, reg.Summary, adjusted(reg))
+	}
+	return reg.Summary.StateNow[0]
+}
+
+// TestEveryTextAConfidentRuleMatchesAsSentIsRedacted: the raw text is scanned and nothing explains a
+// hit away, so every row below — each one a text some earlier design stored verbatim — is redacted.
+// They are round 3's bracketed credentials, round 4's placeholder-inside-a-value rows, round 5's
+// stray-sigil rows, and a placeholder in a credential position, which is now redacted BY DESIGN.
+// The precondition is asserted per row: a row the raw scan does not match would prove nothing here.
+// Values are built at run time so no literal token sits in this file.
+func TestEveryTextAConfidentRuleMatchesAsSentIsRedacted(t *testing.T) {
 	pw := "Xk9mQ2pL" + "r7vB"
 	ghp := "gh" + "p_" + strings.Repeat("Ab3d", 9)
 	npm := "np" + "m_" + strings.Repeat("Ab3d", 9)
 	aiza := "AI" + "za" + strings.Repeat("Ab3dE", 7)
 	akia := "AK" + "IA" + strings.Repeat("Q7ZX", 4)
-	for text, rule := range map[string]string{
-		"db is <postgres://app:" + pw + "@db.example.test:5432/app>": "url-userinfo-password",
-		"use <redis://:" + pw + "@cache-0:6379>":                     "url-userinfo-password",
-		"token <" + ghp + ">":                                        "github-token",
-		"<" + npm + ">":                                              "npm-token",
-		"<" + aiza + ">":                                             "google-api-key",
-		"<" + akia + ">":                                             "aws-access-key-id",
-		"https://app:$ecretPass9" + "x@db.example.test/app":          "url-userinfo-password",
-		"https://app:$" + akia + "@db.example.test/app":              "",
-		// A placeholder beside an UNRELATED credential explains nothing about it.
-		"postgresql://app:${PGPASSWORD}@db/app and " + ghp: "github-token",
-		// Deleting the placeholder would join the token to the next letter, past the rule's
-		// boundary; it is replaced by a space instead.
-		"key " + akia + "${SUFFIX}Q": "aws-access-key-id",
-	} {
-		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, text)}))
-		got := adjusted(reg)
-		if !strings.HasPrefix(got, AdjustmentLinePrefix+"redacted summary.state_now[0] rule=") ||
-			(rule != "" && got != AdjustmentLinePrefix+"redacted summary.state_now[0] rule="+rule) ||
-			!strings.HasPrefix(reg.Summary.StateNow[0], "[redacted: ") {
-			t.Errorf("%q must be redacted (%s): adjustments %q, stored %q", text, rule, got, reg.Summary.StateNow[0])
-		}
+	scan, err := scanner()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, keep := range []string{
-		"postgresql://app:${PGPASSWORD}@db/app",
-		"postgresql://app:$PGPASSWORD@db/app",
-		"https://user:***@host.example.test/path",
-		"Authorization: Bearer <token>",
-	} {
-		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, keep)}))
-		if adjusted(reg) != "" || reg.Summary.StateNow[0] != keep {
-			t.Errorf("control: %q must be kept as written: %q", keep, adjusted(reg))
-		}
-	}
-}
-
-// TestAPlaceholderBesideOrInsideARealValueExplainsNothing is round 4's ten rows: a placeholder-shaped
-// run inside, before or after a REAL value. Replacing it by a space splits the value into pieces no
-// rule's character class spans, so a space-only scan read the raw hit as explained and stored these
-// verbatim; the last four also need the deleted scan, because the bearer/authorization classes
-// cannot match through `$`, `{` or `*` at all. Each must be redacted. Values built at run time.
-func TestAPlaceholderBesideOrInsideARealValueExplainsNothing(t *testing.T) {
-	pw := "Xk9mQ2pL" + "r7vB"
 	for _, text := range []string{
-		"postgres://app:${X}" + pw + "@db",
-		"postgres://app:" + pw + "${X}@db",
-		"postgres://app:Xk9mQ2$PLr7vB@db",
-		"postgres://app:hunter2***Xk9mQ@db",
-		"postgres://app:Xk9m***@db",
-		"redis://:$REDIS" + pw + "@r:6379",
-		"Authorization: Bearer $X" + pw,
-		"Authorization: Bearer ${X} " + pw,
-		"Bearer *** " + pw,
-		"x-api-key: ***" + pw,
+		// round 3: bracketed or glued credentials
+		"db is <postgres://app:" + pw + "@db.example.test:5432/app>", "use <redis://:" + pw + "@cache-0:6379>",
+		"token <" + ghp + ">", "<" + npm + ">", "<" + aiza + ">", "<" + akia + ">",
+		"https://app:$ecretPass9x@db.example.test/app", "https://app:$" + akia + "@db.example.test/app",
+		"postgresql://app:${PGPASSWORD}@db/app and " + ghp, "key " + akia + "${SUFFIX}Q",
+		// round 4: a placeholder inside or beside a real password
+		"postgres://app:${X}" + pw + "@db", "postgres://app:" + pw + "${X}@db", "postgres://app:Xk9mQ2$PLr7vB@db",
+		"postgres://app:hunter2***Xk9mQ@db", "postgres://app:Xk9m***@db", "redis://:$REDIS" + pw + "@r:6379",
+		// round 5: a stray sigil glued to a token
+		"key " + akia + "$x", "foo*" + ghp, "x{" + ghp + "}", "v**" + aiza, "w$" + akia,
+		// a placeholder in a credential position: redacted by design
+		"postgresql://app:${PGPASSWORD}@db/app", "postgresql://app:$PGPASSWORD@db/app", "https://user:***@host.example.test/path",
+		// a credential straddling the clip cut is seen whole (the scan reads cap + scanMargin)
+		strings.Repeat("x", 480) + " " + ghp,
 	} {
-		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, text)}))
-		if !strings.HasPrefix(adjusted(reg), AdjustmentLinePrefix+"redacted summary.state_now[0] rule=") ||
-			!strings.HasPrefix(reg.Summary.StateNow[0], "[redacted: ") {
-			t.Errorf("%q must be redacted: adjustments %q, stored %q", text, adjusted(reg), reg.Summary.StateNow[0])
+		if firstConfident(scan, text) == "" {
+			t.Errorf("PRECONDITION: no confident rule matches %q as sent; it does not belong in this table", text)
+			continue
+		}
+		if got := storedAs(t, text); !strings.HasPrefix(got, "[redacted: ") {
+			t.Errorf("%q must be redacted, stored %q", text, got)
 		}
 	}
 }
 
-// TestEachReadingOfAGluedPlaceholderHasItsOwnRow: one row per reading `secretRule` scans, each built
-// so that ONLY that reading catches it — so dropping any one reading turns exactly its row red. The
-// AWS rule is the instrument because its trailing `\b` makes joins and splits observable. Values are
-// built at run time.
-func TestEachReadingOfAGluedPlaceholderHasItsOwnRow(t *testing.T) {
-	akia := "AK" + "IA" + "Q7ZXQ7ZXQ7ZXQ7ZX"
-	for name, text := range map[string]string{
-		"sigils deleted, name kept":   "Bearer $QQQQ7abc",
-		"whole run deleted (join)":    "key " + akia[:12] + "${X}" + akia[12:],
-		"run replaced by a space":     "key " + akia + "${SUFFIX}Q",
-		"a $NAME prefix deleted":      "key $X" + akia,
-		"a stray sigil deleted":       "Bearer Q7IpSjk$0exuW00S",
-		"a glued *** is no stand-in":  "x-api-key: ***Xk9mQ2pLr7vB",
-		"a secret straddling the cut": strings.Repeat("x", 480) + " " + "gh" + "p_" + strings.Repeat("Ab3d", 9),
+// TestTextNoConfidentRuleMatchesIsStoredAsWritten: prose that merely LOOKS like a placeholder or a
+// header is stored unchanged, because no confident rule matches it as sent — a variable in prose,
+// emphasis, a bracketed token NAME, and a random id only a BROAD rule matches. The redaction is the
+// confident rules' verdict on the raw text, nothing more and nothing less.
+func TestTextNoConfidentRuleMatchesIsStoredAsWritten(t *testing.T) {
+	for _, text := range []string{
+		"add the tool to $PATH first", "***bold*** is the convention here", "Authorization: Bearer <token>",
+		"x-api-key: <your-key>", "redis://:<password>@cache:6379", "costs $5 per month", "set ${HOME}/bin first",
+		// A BROAD rule (entropy) matches this random id; only the confident subset redacts.
+		"the run id is Qx7Lm2Np8Rt4Vw6Zy9Ab3",
 	} {
-		reg, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, text)}))
-		if !strings.HasPrefix(adjusted(reg), AdjustmentLinePrefix+"redacted summary.next_steps[0] rule=") {
-			t.Errorf("%s: %q must be redacted, adjustments %q", name, text, adjusted(reg))
+		if got := storedAs(t, text); got != text {
+			t.Errorf("%q must be stored as written, stored %q", text, got)
 		}
 	}
 }
 
-// TestEveryRuleHoldsAgainstPlaceholderNeighbours generates, for EVERY confident rule the scan acts on,
-// a real-shaped value in its credential position, and then each placeholder BEFORE, INSIDE (three
-// cut points) and AFTER it, with and without a separating space, plus values with a `$UPPER` run
-// occurring naturally inside them (seeded). A variant is a LEAK when it is stored verbatim although
-// the SAME text without the placeholder (the generator's own `without`, separators kept) is
-// redacted: the placeholder then hid a credential the scan would otherwise have caught. The kept
-// controls are the placeholder ALONE in each credential position. The counts are printed; the
-// positive control is that the placeholder-free texts are redacted at least at a floor, so a
-// generator that stopped producing secrets cannot pass.
-func TestEveryRuleHoldsAgainstPlaceholderNeighbours(t *testing.T) {
+// TestEveryRawHitIsRedactedAcrossTheGeneratedCorpus generates, for EVERY confident rule the scan
+// acts on, a real-shaped value in its credential position, and around it each placeholder shape
+// BEFORE, INSIDE (three cut points) and AFTER, with and without a space; each stray sigil glued on
+// either side; and values with a `$UPPER` run inside them (four seeds). Every text goes through the
+// WHOLE pipeline. A LEAK is a text a confident rule matches as sent that is stored unredacted —
+// expected 0. Also counted, and printed: texts whose placeholder-free twin a rule matches but which
+// no rule matches as sent (the bearer and authorization classes cannot match through `$`, `{` or
+// `*`); those are stored, by the raw-scan design. The positive control is a floor on raw hits.
+func TestEveryRawHitIsRedactedAcrossTheGeneratedCorpus(t *testing.T) {
 	var rng *rand.Rand
 	pick := func(set string, n int) string {
 		var b strings.Builder
@@ -375,21 +348,20 @@ func TestEveryRuleHoldsAgainstPlaceholderNeighbours(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ran, rawHits, leaks, kept := 0, 0, 0, 0
-	check := func(r rule, text, without string) {
+	ran, rawHits, leaks, twinOnly := 0, 0, 0, 0
+	check := func(r rule, text, twin string) {
 		ran++
-		if base, err := secretRule(without); err != nil || base == "" {
-			return // without the placeholder this text is not caught either; nothing was hidden
+		if firstConfident(scan, text) == "" {
+			if firstConfident(scan, twin) != "" {
+				twinOnly++
+			}
+			return
 		}
 		rawHits++
-		got, err := secretRule(text)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got == "" {
+		if got := storedAs(t, text); !strings.HasPrefix(got, "[redacted: ") {
 			leaks++
 			if leaks <= 10 {
-				t.Errorf("LEAK (%s): %q stored verbatim", r.name, text)
+				t.Errorf("LEAK (%s): %q stored %q", r.name, text, got)
 			}
 		}
 	}
@@ -399,26 +371,23 @@ func TestEveryRuleHoldsAgainstPlaceholderNeighbours(t *testing.T) {
 			for _, ph := range placeholders {
 				for range 3 {
 					v := r.value()
-					type variant struct{ with, without string }
+					type variant struct{ with, twin string }
 					variants := []variant{{ph + v, v}, {v + ph, v}, {ph + " " + v, " " + v}, {v + " " + ph, v + " "}}
 					for _, k := range []int{1, len(v) / 2, len(v) - 1} {
 						variants = append(variants, variant{v[:k] + ph + v[k:], v})
 					}
 					for _, vv := range variants {
-						check(r, r.tmpl(vv.with), r.tmpl(vv.without))
+						check(r, r.tmpl(vv.with), r.tmpl(vv.twin))
 					}
 				}
-				// The placeholder ALONE in the credential position is what it stands for: kept, when
-				// the raw scan hits at all.
-				alone := r.tmpl(ph)
-				if firstConfident(scan, alone) != "" {
-					if got, _ := secretRule(alone); got != "" {
-						t.Errorf("control: the placeholder alone %q must be kept, got rule %s", alone, got)
-					}
-					kept++
-				}
+				check(r, r.tmpl(ph), r.tmpl(ph)) // the placeholder alone in the credential position
 			}
-			// `$UPPER` runs that occur naturally inside random values.
+			for _, sig := range []string{"$", "*", "**", "{", "}", "$x", "x$"} {
+				v := r.value()
+				check(r, r.tmpl(sig+v), r.tmpl(v))
+				check(r, r.tmpl(v+sig), r.tmpl(v))
+				check(r, "w"+sig+r.tmpl(v), r.tmpl(v))
+			}
 			for range 40 {
 				v := r.value()
 				k := 1 + rng.IntN(len(v)-1)
@@ -427,13 +396,13 @@ func TestEveryRuleHoldsAgainstPlaceholderNeighbours(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("placeholder neighbours: %d texts generated over %d rules, %d whose placeholder-free twin is redacted, %d of those leaked; %d placeholder-alone controls kept",
-		ran, len(rules), rawHits, leaks, kept)
+	t.Logf("generated corpus: %d texts over %d rules; %d matched as sent, %d of those leaked; %d stored because only their placeholder-free twin matches",
+		ran, len(rules), rawHits, leaks, twinOnly)
 	if leaks != 0 {
-		t.Fatalf("%d of %d texts leaked", leaks, rawHits)
+		t.Fatalf("%d of %d raw-hit texts leaked", leaks, rawHits)
 	}
-	if rawHits < ran/2 || kept < 40 {
-		t.Fatalf("POSITIVE CONTROL: only %d of %d placeholder-free twins were redacted and %d controls kept — the generator is not producing what it claims", rawHits, ran, kept)
+	if rawHits < ran/2 {
+		t.Fatalf("POSITIVE CONTROL: only %d of %d texts matched as sent — the generator is not producing what it claims", rawHits, ran)
 	}
 }
 
@@ -498,36 +467,6 @@ func TestARedactedAliasIsDroppedNotStoredAsAJunkName(t *testing.T) {
 	if adjusted(reg2) != AdjustmentLinePrefix+"redacted summary.aliases[0] rule=github-token\n"+AdjustmentLinePrefix+"dropped summary.aliases[0] reason=redacted" ||
 		strings.Join(reg2.Summary.Aliases, "|") != "ok" {
 		t.Fatalf("adjustments %q, aliases %q", adjusted(reg2), reg2.Summary.Aliases)
-	}
-}
-
-// TestAPlaceholderIsNotASecret: the placeholder shapes in a credential position are kept as written
-// — `${NAME}`, an upper-case `$NAME`, `***` — while the SAME positions holding a real-shaped value
-// are still redacted. Both halves, so a scan that stopped looking passes neither. The `<…>` rows are
-// kept for a different reason: `<…>` is NOT a placeholder, and no confident rule matches through `<`,
-// so they never produce a hit to explain.
-func TestAPlaceholderIsNotASecret(t *testing.T) {
-	for _, keep := range []string{
-		"postgresql://app:${PGPASSWORD}@db:5432/app",
-		"postgresql://app:$PGPASSWORD@db:5432/app",
-		"redis://:<password>@cache:6379",
-		"https://user:***@host.example.test/path",
-		"Authorization: Bearer ${API_TOKEN}",
-		"x-api-key: <your-key>",
-	} {
-		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, keep)}))
-		if adjusted(reg) != "" || reg.Summary.StateNow[0] != keep {
-			t.Fatalf("placeholder %q must be kept as written: %q", keep, adjusted(reg))
-		}
-	}
-	for real, rule := range map[string]string{
-		"postgresql://app:" + "s3cr3t-Value9" + "@db:5432/app": "url-userinfo-password",
-		"Authorization: Bearer " + "abc12345":                  "authorization",
-	} {
-		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(1, real)}))
-		if adjusted(reg) != AdjustmentLinePrefix+"redacted summary.state_now[0] rule="+rule {
-			t.Fatalf("POSITIVE CONTROL: %q in the same position must still be redacted (%s): %q", real, rule, adjusted(reg))
-		}
 	}
 }
 

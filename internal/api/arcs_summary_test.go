@@ -240,6 +240,7 @@ func TestAProblemSummaryNeverRefusesTheArcAndTheResponseNamesEveryAdjustment(t *
 		"summary-adjusted: redacted summary.next_steps[3] rule=sk-key\n" +
 		"summary-adjusted: redacted summary.next_steps[4] rule=stripe-key\n" +
 		"summary-adjusted: redacted summary.next_steps[5] rule=jwt\n" +
+		"summary-adjusted: redacted summary.next_steps[6] rule=url-userinfo-password\n" +
 		"summary-adjusted: sanitized summary.next_steps[7] replaced=1\n" +
 		"summary-adjusted: dropped summary.next_steps[8] reason=blank\n"
 	if got.status != 200 || got.headers.Get("X-Store-Status") != "arc-registered" || got.body != want {
@@ -248,7 +249,7 @@ func TestAProblemSummaryNeverRefusesTheArcAndTheResponseNamesEveryAdjustment(t *
 	shown := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, "").body
 	for _, line := range []string{"\nstatus: open\n", "\n- s-0042 · originated", "\nnext steps (ranked): 8\n",
 		"\n  " + strings.Repeat("x", 497) + "…\n", "\n  [redacted: authorization]\n", "\n  [redacted: jwt]\n",
-		"\n  postgresql://app:${PGPASSWORD}@db:5432/app\n", "\n  two lines\n"} {
+		"\n  [redacted: url-userinfo-password]\n", "\n  two lines\n"} {
 		if !strings.Contains(shown, line) {
 			t.Fatalf("arc-show lacks %q:\n%s", line, shown)
 		}
@@ -284,8 +285,10 @@ func TestEachFormerSummaryRefusalNowRegistersTheArc(t *testing.T) {
 	}{
 		{"over-long item", `"state_now":` + list(strings.Repeat("z", 612)) + `,"next_steps":[]`,
 			"summary-adjusted: clipped summary.state_now[0] bytes=612 max=500", "\n  " + strings.Repeat("z", 497) + "…\n"},
+		// A placeholder in a credential position is REDACTED by design: the raw text is scanned and
+		// nothing explains a hit away — and it registers, which is the point of this test.
 		{"placeholder in a password position", `"state_now":` + list("postgresql://app:${PGPASSWORD}@db:5432/app") + `,"next_steps":[]`,
-			"", "\n  postgresql://app:${PGPASSWORD}@db:5432/app\n"},
+			"summary-adjusted: redacted summary.state_now[0] rule=url-userinfo-password", "\n  [redacted: url-userinfo-password]\n"},
 		{"placeholder token", `"state_now":` + list("Authorization: Bearer <token>") + `,"next_steps":[]`,
 			"", "\n  Authorization: Bearer <token>\n"},
 		{"secret-shaped item", `"state_now":` + list("Authorization: Bearer "+"abc12345") + `,"next_steps":[]`,

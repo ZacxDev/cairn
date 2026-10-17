@@ -507,28 +507,17 @@ and `aliases` item — goes through four steps, in this order:
    `unicode.IsControl` reports (tab and newline included), U+2028 and U+2029 becomes a space — the
    answer is lines, and an embedded newline could print a line that reads as the pod's own;
 2. **dropped** if nothing but whitespace is left;
-3. **redacted**: scanned for a **confident secret** — the same rule subset memos refuse on — and
-   on a hit stored as `[redacted: <rule>]` (`[redacted: github-token]`). The scan reads the item up
-   to its cap plus 1 KiB, so a credential straddling the cut is seen whole. A hit is ignored only
-   when a **separated placeholder** explains it:
-   - the placeholders are `${NAME}`, an upper-case `$NAME` and a run of three or more `*`. They are
-     word-shaped, so never a URL, a host or a token with a `:`, `/`, `@` or `.`; `<…>` is never one;
-   - a placeholder is **separated** when neither neighbour is a word character
-     (`app:${PGPASSWORD}@db`, `Bearer ${TOKEN}`, `user:***@host`), and when it holds no credential
-     of its own;
-   - a **glued** placeholder (`app:${X}Xk9…@db`, `Bearer $XQ7f…`, `x-api-key: ***Xk9…`) explains
-     nothing. Every reading of it is scanned, and any reading that hits redacts: its sigils deleted
-     with the name kept, the run deleted, the run replaced by a space, and for a `$NAME` each prefix
-     of the name deleted;
-   - a `$`, `{`, `}` or `*` that is part of no placeholder is deleted before scanning, because the
-     bearer and authorization rules cannot match through one (`Bearer Q7Ip$0ex…`).
-
-   So `postgresql://app:${PGPASSWORD}@db:5432/app`, `postgresql://app:$PGPASSWORD@db:5432/app`,
-   `https://user:***@host` and `Authorization: Bearer <token>` are kept as written. Every
-   placeholder beside or inside a real value is redacted: measured over 9,724 generated texts
-   across every confident rule, with 0 leaks. A redaction names the rule of the hit no placeholder
-   explains. ⚠ A credential hidden behind a greedy `$NAME` prefix longer than 64 characters is not
-   seen;
+3. **redacted**: the text **as sent** is scanned for a **confident secret** — the same rule subset
+   memos refuse on — and on any hit stored as `[redacted: <rule>]` (`[redacted: github-token]`).
+   The scan reads the item up to its cap plus 1 KiB, so a credential straddling the cut is seen
+   whole. **Nothing explains a hit away:** a placeholder in a credential position is redacted by
+   design — `postgresql://app:${PGPASSWORD}@db/app`, `postgresql://app:$PGPASSWORD@db/app` and
+   `https://user:***@host` are stored as `[redacted: url-userinfo-password]`. A hit costs that one
+   item's text and never the registration, which is why no placeholder logic is worth its leaks.
+   Text no confident rule matches as sent is stored as written: `$PATH` in prose, `***bold***`,
+   `Authorization: Bearer <token>`, `x-api-key: <your-key>`. ⚠ That includes a real value a
+   rule's character class cannot see through: the bearer and authorization rules do not match across
+   `$`, `{`, `}` or `*`, so `Bearer $X` + a value or `x-api-key: ***` + a value is stored as written;
 4. **clipped** to its byte cap at a UTF-8 rune boundary, ending in `…` (U+2026, whose 3 bytes count
    within the cap).
 

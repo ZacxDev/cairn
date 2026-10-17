@@ -116,140 +116,32 @@ func scanner() (*redact.Redactor, error) {
 	return scan, nil
 }
 
-// secretRule is the first CONFIDENT rule `s` hits, or "". The confident subset is memo's, spelled
-// once there: the rules that match a credential by its own shape. The broad rules (`key-context`,
-// `entropy`) are not acted on anywhere in this tree, for memo's measured reason — they damage
-// honest prose at a rate that would redact ordinary handoff text.
+// secretRule is the first CONFIDENT rule the RAW text hits, or "". The confident subset is memo's,
+// spelled once there: the rules that match a credential by its own shape. The broad rules
+// (`key-context`, `entropy`) are not acted on anywhere in this tree, for memo's measured reason —
+// they damage honest prose at a rate that would redact ordinary handoff text.
 //
-// 🔴 A HIT IS IGNORED ONLY WHEN A *SEPARATED* PLACEHOLDER EXPLAINS IT. The placeholders are
-// `${NAME}`, an upper-case `$NAME` and a run of three or more `*`; one that is a credential by itself
-// is a value, not a placeholder. A placeholder is SEPARATED when the characters on both sides of it
-// are not word characters (or the text ends there) — as a real stand-in is written:
-// `app:${PGPASSWORD}@db`, `Bearer ${TOKEN}`, `user:***@host`. Only a separated placeholder can
-// explain a hit. One GLUED to word characters (`app:${X}Xk9…@db`, `Bearer $XQ7fQkj…`, `npm_…$XJ`)
-// is ambiguous — which characters are the stand-in and which the value cannot be told from the text
-// — so every reading of it is scanned, and any reading that hits redacts:
-//   - its sigils deleted and its name kept (`$XQ7fQkj…` → `XQ7fQkj…`);
-//   - the whole run deleted (`${X}Xk9…` → `Xk9…`);
-//   - the run replaced by a space (`AKIA…${X}Q` → `AKIA… Q`: deleting would join `Q` to the token,
-//     past its rule's boundary);
-//   - for a `$NAME`, every prefix of it deleted (`$XAIza…` → `AIza…`), because a greedy name can
-//     swallow the start of a value.
-//
-// Separated placeholders are deleted in every reading, and a stray sigil (a `$`, `{`, `}` or `*` that
-// is part of no placeholder, as in `Bearer Q7Ip$0ex…`) is deleted too, because the bearer and
-// authorization classes cannot match through one. `TestEveryRuleHoldsAgainstPlaceholderNeighbours`
-// measures all of this across every confident rule, and `TestEachReadingOfAGluedPlaceholderHasItsOwnRow`
-// holds one row only each reading catches.
-//
-// 🔴 `<…>` IS DELIBERATELY NOT A PLACEHOLDER — retracted. An earlier draft masked every `<…>` before
-// scanning and stored the original, which let a markdown autolink holding a real connection string
-// (`<postgres://app:pw@db/app>`), or a bracketed token (`<ghp_…>`), through verbatim. And it was
-// never needed: no confident rule's character class admits `<` or `>`, so a text like
-// `Authorization: Bearer <token>` produces no hit to explain in the first place.
+// 🔴 THE TEXT AS SENT, AND NOTHING ELSE — NO PLACEHOLDER EVER EXPLAINS A HIT. RETRACTED, after three
+// rounds: a placeholder-aware design tried to keep `postgresql://app:${PGPASSWORD}@db/app` by asking
+// whether a `${NAME}`, `$NAME` or `***` "explained" the hit, and every round of it shipped a NEW leak
+// the round before had not had — masking `<…>` stored bracketed real credentials; a space split a
+// value (`app:${X}Xk9…@db`); deleting stray sigils glued a token to its neighbour past its rule's
+// boundary (`AKIA…$x`, `foo*ghp_…`). The logic existed only to spare such text a REFUSAL, and no
+// summary problem refuses anything any more: a hit costs that one item's text, stored as
+// `[redacted: <rule>]`. So a placeholder in a credential position IS redacted, by design, and the
+// measured cost on real handoff text is about nothing (0 of 4,267 real summary items refused).
 func secretRule(s string) (string, error) {
 	scan, err := scanner()
 	if err != nil {
 		return "", err
 	}
-	runs := placeholder.FindAllStringIndex(s, -1)
-	type run struct {
-		start, end int
-		separated  bool
-	}
-	var spans []run
-	maxName := 0
-	for _, r := range runs {
-		m := s[r[0]:r[1]]
-		// A placeholder-shaped run that HOLDS a credential can explain nothing: it is read like a
-		// glued one, every reading of it scanned.
-		sep := !holdsCredential(scan, m) &&
-			(r[0] == 0 || !isWordByte(s[r[0]-1])) && (r[1] == len(s) || !isWordByte(s[r[1]]))
-		spans = append(spans, run{r[0], r[1], sep})
-		if !sep && strings.HasPrefix(m, "$") && !strings.HasPrefix(m, "${") && len(m)-1 > maxName {
-			maxName = len(m) - 1
-		}
-	}
-	// reading rebuilds the text with every separated run deleted and every glued run rewritten by
-	// `glued`, then deletes the stray sigils.
-	reading := func(glued func(m string) string) string {
-		var b strings.Builder
-		last := 0
-		for _, sp := range spans {
-			b.WriteString(s[last:sp.start])
-			if !sp.separated {
-				b.WriteString(glued(s[sp.start:sp.end]))
-			}
-			last = sp.end
-		}
-		b.WriteString(s[last:])
-		return straySigil.ReplaceAllString(b.String(), "")
-	}
-	// With no placeholder every reading is the text with its stray sigils deleted. The raw text itself
-	// is NOT a separate scan, deliberately: no confident rule's class admits a `$`, `{`, `}` or `*`
-	// except url-userinfo's password, which matches the text without them too — the one difference is
-	// a "password" made of nothing but sigils (`app:**@db`), which is no credential. As a separate arm
-	// it changed no verdict in any test or generated text (its mutant survived), so it is not kept.
-	scans := []string{
-		reading(func(m string) string { return straySigil.ReplaceAllString(m, "") }),
-		reading(func(string) string { return "" }),
-		reading(func(string) string { return " " }),
-	}
-	for k := 1; k < min(maxName, maxPrefixReadings); k++ {
-		scans = append(scans, reading(func(m string) string {
-			if !strings.HasPrefix(m, "$") || strings.HasPrefix(m, "${") || len(m)-1 <= k {
-				return ""
-			}
-			return m[1+k:]
-		}))
-	}
-	// The rule NAMED is the first hit no placeholder explains.
-	for _, text := range scans {
-		if r := firstConfident(scan, text); r != "" {
-			return r, nil
-		}
-	}
-	return "", nil
+	return firstConfident(scan, s), nil
 }
 
-// holdsCredential is "this placeholder-shaped run carries a credential of its own": the run, its
-// name without the sigils, or any suffix of that name hits — so `$XAKIA…` (an `AKIA…` key behind a
-// one-letter prefix that defeats the rule's leading boundary) is a value, not a variable.
-func holdsCredential(scan *redact.Redactor, m string) bool {
-	name := straySigil.ReplaceAllString(m, "")
-	if firstConfident(scan, m) != "" {
-		return true
-	}
-	for k := 0; k < min(len(name), maxPrefixReadings); k++ {
-		if firstConfident(scan, name[k:]) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// maxPrefixReadings bounds the prefix readings of a `$NAME` run (and the suffixes `holdsCredential`
-// tries): each is a full scan, and an unbounded loop over a hostile 1 MiB run of capitals would be
-// quadratic. Measured: a 500-byte `$` + 498-capital item costs ~70 ms unbounded. ⚠ The limit: a
-// credential hidden behind a greedy `$NAME` prefix longer than this is not seen.
-const maxPrefixReadings = 64
-
-// scanMargin is how far past an item's cap the secret scan reads (`keepText`).
+// scanMargin is how far past an item's cap the scan reads (`keepText`): the part that can be STORED
+// plus enough to see a credential that straddles the cut, so the cost is bounded by the cap rather
+// than by what a sender chose to send.
 const scanMargin = 1024
-
-func isWordByte(c byte) bool {
-	return c == '_' || c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
-}
-
-// placeholder is every shape the scan treats as a possible stand-in for a value: purely
-// word-shaped, so it can carry no `:`, `/`, `@` or `.` — never a URL, a host or a token with a
-// separator. Whether it EXPLAINS anything depends on whether it is separated (`secretRule`).
-var placeholder = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*|\*{3,}`)
-
-// straySigil is a placeholder's punctuation left over once the placeholders are masked: deleted
-// before scanning, because no confident rule's class admits it and a value carrying one is otherwise
-// invisible.
-var straySigil = regexp.MustCompile(`[${}*]`)
 
 func firstConfident(scan *redact.Redactor, s string) string {
 	_, hits := scan.String(s)
