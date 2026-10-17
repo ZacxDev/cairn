@@ -79,8 +79,11 @@ session is placed by its repo, first match wins (`decideByRepo`):
    binary exits 2. `--dry-run` validates no endpoint: it treats the aliases its own `-worker` flags
    name as the uploadable set, and reads where `--run` BOUND each session — and the repo it kept —
    from `--run`'s state file (`-state`), READ-ONLY: no lock, no save. So given `--run`'s flags and
-   state it prints `--run`'s decision (`TestADryRunReadsWhereRunBoundTheSession`), `deferred` for a
-   session `--run` would send nothing of this run. With no state file it says so on stderr and
+   state it prints `--run`'s decision (`TestADryRunReadsWhereRunBoundTheSession`): over the stored
+   `V` union what it read, by the repo `--run` KEPT (through the same resolver, so a worktree removed
+   since still answers as in `--run`), `deferred` for a session `--run` would send nothing of this
+   run, and `held` / `deleted` for one the state marks so, which `--run` skips before routing
+   (`cmd/cairn-capture/dryparity_test.go`). With no state file it says so on stderr and
    treats every session as bound nowhere yet; with no `-worker` at all it treats every configured
    instance as uploadable.
 3. **The default instance**, as before — also for a session with no recorded directory, a directory

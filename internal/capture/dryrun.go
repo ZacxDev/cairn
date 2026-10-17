@@ -69,36 +69,44 @@ func (t tally) String() string {
 	return strings.Join(parts, ",")
 }
 
-// decisionText is the routing decision a dry run prints for session `root`. A session with no
-// recorded scope is placed by its repo: the one `--run`'s state kept for it, when there is one, else
-// the repo in `dir`, asked of git exactly as `--run` asks it ([deriveRepo]).
+// decisionText is the routing decision a dry run prints for session `root`: the one `--run` would
+// make, given `--run`'s flags and state.
 //
-// 🔴 IT READS WHERE `--run` BOUND THE SESSION, FROM THE STATE, READ-ONLY (#292's audit, round 3, F2).
-// [RepoRules.place]'s answer depends on the session's binding, so a dry run that treated every
-// session as unbound printed a decision `--run` would not make for a bound one. `a.State` is what
-// the caller loaded with [LoadState] — never saved, never locked; nil (no state file) is every
-// session unbound, and the caller says so on stderr.
+// 🔴 IT READS WHAT `--run` KEPT FOR THE SESSION, FROM THE STATE, READ-ONLY (#292's audit, round 3,
+// F2; #293's audit). `a.State` is what the caller loaded with [LoadState] — never saved, never
+// locked; nil (no state file) is every session new, and the caller says so on stderr. From it:
+//
+//   - a session the state marks HELD or DELETED prints `held` / `deleted`: `--run` returns before
+//     routing it at all, so any routing answer printed for it would be one `--run` never makes;
+//   - the decision is over `V` as `--run` holds it — the stored `V` UNION what this read derived;
+//   - its binding ([RepoRules.place]'s answer depends on it) and its repo, through the ONE resolver
+//     [Agent.sessionRepo] over a scratch copy, so the KEPT repo wins exactly as in `--run` — the case
+//     that matters: a worktree removed since `--run` placed the session no longer derives a repo, and
+//     re-deriving it here printed the default where `--run` keeps the routed instance.
+//
+// `dir` is the directory this read found (a transcript's first `cwd`, a listed `directory`); like
+// `--run`, it is used only when the state recorded none.
 func (a *Agent) decisionText(root string, v []string, dir string) string {
-	var ss *SessionState
+	var view SessionState
 	if a.State != nil {
-		ss = a.State.Sessions[root]
-	}
-	rules := RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable}
-	var repo Repo
-	if ss != nil {
-		rules.Bound = ss.Instance
-	}
-	if len(v) == 0 {
-		switch {
-		case ss != nil && ss.Repo != nil:
-			repo = *ss.Repo
-		case dir != "":
-			repo, _ = deriveRepo(dir)
-		case ss != nil:
-			repo, _ = deriveRepo(ss.Dir)
+		if ss := a.State.Sessions[root]; ss != nil {
+			switch {
+			case ss.Held:
+				return "held"
+			case ss.Deleted != "":
+				return "deleted"
+			}
+			// A scratch copy: [Agent.sessionRepo] records a settled answer in what it is handed, and
+			// the state a dry run loaded must stay exactly as it was read.
+			view = SessionState{Instance: ss.Instance, V: ss.V, Dir: ss.Dir, Repo: ss.Repo}
 		}
 	}
-	dec := Decide(v, repo, a.Routing, rules)
+	view.V = union(view.V, v)
+	if view.Dir == "" {
+		view.Dir = dir
+	}
+	dec := Decide(view.V, a.sessionRepo(&view), a.Routing,
+		RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: view.Instance})
 	switch {
 	case dec.Held:
 		return "held"
