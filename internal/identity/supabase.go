@@ -65,8 +65,9 @@ type SupabaseConfig struct {
 	// Authority is the materialized control plane the subject is resolved against.
 	// Required.
 	Authority ModelSource
-	// Keys is the cached JWKS. Required, and the ONLY source of a verification key:
-	// this build verifies no shared-secret algorithm, from any source.
+	// Keys is the cached JWKS — fetched from a URL or read from a file, through one parser.
+	// Required, and the ONLY source of a verification key: this build verifies no
+	// shared-secret algorithm, from any source.
 	Keys *KeySet
 	// Issuer must equal the token's `iss` exactly. Required — for Supabase this is
 	// `https://<project-ref>.supabase.co/auth/v1`.
@@ -345,6 +346,9 @@ func (s *SupabaseJWT) RefreshKeys(ctx context.Context) error { return s.keys.Ref
 func (s *SupabaseJWT) RunKeyRefresh(ctx context.Context, logf func(string)) error {
 	return s.keys.Run(ctx, logf)
 }
+
+// KeysFromFile reports whether the key set is read from a local file. See `KeySet.FromFile`.
+func (s *SupabaseJWT) KeysFromFile() bool { return s.keys.FromFile() }
 
 // GroupsClaim is the groups claim this backend federates on, or "" when the mode is off.
 func (s *SupabaseJWT) GroupsClaim() string { return s.groupsClaim }

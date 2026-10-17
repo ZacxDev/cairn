@@ -13,13 +13,16 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
 
-// KeySet is a locally cached JWKS: the identity provider's public keys, fetched on a
-// schedule and read with no network call at all.
+// KeySet is a locally cached JWKS: the identity provider's public keys, fetched from a URL
+// (or read from a local file — `JWKSOptions.File`) on a schedule, and read with no network
+// call at all.
 //
 // 🔴 THE HOT PATH CONTACTS NOTHING, AND THAT IS THE PLAN'S §E PROMISE RATHER THAN AN
 // OPTIMISATION: *"an IdP outage must not stop reads for already-issued sessions."*
@@ -49,7 +52,11 @@ import (
 // leak, and it is why `Refresh` is also exported: a deployment that rotates on a
 // schedule can call it.
 type KeySet struct {
+	// url and file are the key set's SOURCE, and exactly one is non-empty — `NewKeySet`
+	// refuses both and neither. See `JWKSOptions.File` for what the file source changes and
+	// what it does not.
 	url        string
+	file       string
 	client     *http.Client
 	interval   time.Duration
 	now        func() time.Time
@@ -73,6 +80,11 @@ type KeySet struct {
 	lastErr   error
 	fetches   uint64
 	failures  uint64
+	// started numbers every `Refresh` as it BEGINS; committed is the number of the newest
+	// attempt that SUCCEEDED and installed its keys — a failure never advances it. See
+	// `Refresh`'s ordering guard.
+	started   uint64
+	committed uint64
 }
 
 // jwkKey is one parsed key, with the algorithm it may be used for.
@@ -87,8 +99,29 @@ type jwkKey struct {
 
 // JWKSOptions configures a KeySet.
 type JWKSOptions struct {
-	// URL is the JWKS endpoint. Required, and must be `https` unless it is loopback.
+	// URL is the JWKS endpoint, and must be `https` unless it is loopback. Exactly one of
+	// URL and File is required.
 	URL string
+	// File is a local JWKS document, read in place of a fetch. Exactly one of URL and File
+	// is required; both is `ErrJWKSTwoSources`.
+	//
+	// 🔴 IT REMOVES THE ISSUER FROM THE STARTUP PATH, AND THAT IS ITS WHOLE PURPOSE. With a
+	// URL the first `Refresh` is a network call, and `cmd/cairn-server` refuses to start
+	// when it fails — so an issuer that is down, or a DNS answer that is wrong, keeps a pod
+	// that holds a perfectly good copy of the public keys from coming up at all. A file the
+	// operator ships beside the pod (a mounted configuration object, a baked path) has no
+	// such dependency: the read is local, and nothing on this source ever opens a socket.
+	//
+	// ⚠ WHAT IT DOES NOT CHANGE. The document goes through the SAME `parseJWKS` a fetch
+	// does — one parser, so every key rule (a duplicate `kid` refuses the whole document,
+	// `oct` is dropped, RSA below `MinRSABits` is dropped, an EC point is checked on the
+	// curve) holds for a file exactly as for a URL — the same `maxJWKSBytes` cap, the same
+	// last-known-good rule on a failed re-read, and the same `Run` schedule. A rotated file
+	// is therefore picked up on the next `Refresh`: the timer, or a caller (the pod's
+	// SIGHUP). And the file must be an ABSOLUTE path: a relative one resolves against the
+	// process's working directory, which a container's entrypoint chooses and an operator
+	// does not read.
+	File string
 	// Client is the HTTP client used for the fetch. nil means a client with the
 	// timeouts below.
 	Client *http.Client
@@ -150,6 +183,15 @@ const maxJWKSBytes = 256 << 10
 var (
 	// ErrJWKSURL refuses a JWKS endpoint that is not one.
 	ErrJWKSURL = errors.New("identity: the JWKS URL is unusable")
+	// ErrJWKSFile refuses a JWKS file path that is not one.
+	ErrJWKSFile = errors.New("identity: the JWKS file path is unusable")
+	// ErrJWKSTwoSources refuses a key set given BOTH a URL and a file.
+	//
+	// 🔴 BOTH SET IS A REFUSAL, NOT A PRECEDENCE RULE — the same ruling `secretFrom` makes
+	// for the proxy secret, for the same reason. Two sources for one key set means "which
+	// keys verify this token" depends on a precedence nobody reads, and a rotation that
+	// updated the source that LOSES appears to work while the pod keeps serving the other.
+	ErrJWKSTwoSources = errors.New("identity: the key set names both a JWKS URL and a JWKS file — one key set, one source")
 	// ErrJWKSEmpty refuses a JWKS document that parses and yields no usable key.
 	ErrJWKSEmpty = errors.New("identity: the JWKS document carries no usable key")
 	// ErrJWKSUnmaterialized is what `key` answers before the first successful fetch.
@@ -166,7 +208,14 @@ var (
 // healthy. Materializing is the caller's first `Refresh`, so a startup failure is the
 // caller's to shout about.
 func NewKeySet(opts JWKSOptions) (*KeySet, error) {
-	if err := checkJWKSURL(opts.URL); err != nil {
+	if opts.URL != "" && opts.File != "" {
+		return nil, ErrJWKSTwoSources
+	}
+	if opts.File != "" {
+		if err := checkJWKSFile(opts.File); err != nil {
+			return nil, err
+		}
+	} else if err := checkJWKSURL(opts.URL); err != nil {
 		return nil, err
 	}
 	client := opts.Client
@@ -179,6 +228,7 @@ func NewKeySet(opts JWKSOptions) (*KeySet, error) {
 	}
 	return &KeySet{
 		url:        opts.URL,
+		file:       opts.File,
 		client:     client,
 		interval:   interval,
 		now:        opts.Now,
@@ -222,6 +272,21 @@ func checkJWKSURL(raw string) error {
 	}
 }
 
+// checkJWKSFile refuses a file path that cannot name one document reliably. It does NOT
+// read the file: like `checkJWKSURL`, construction checks the SHAPE of the source and the
+// first `Refresh` is what materializes it, so `cmd/cairn-server`'s startup refusal has one
+// place to come from whichever source is configured.
+func checkJWKSFile(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("%w: it is empty", ErrJWKSFile)
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("%w: %q is relative, so which file it names depends on the working directory the process was started in. Use an absolute path",
+			ErrJWKSFile, path)
+	}
+	return nil
+}
+
 func isLoopbackHost(host string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
 }
@@ -240,19 +305,53 @@ func isLoopbackHost(host string) bool {
 // committed, timestamped and then served through a root that was readable again. An
 // empty key set committed here would refuse every session until the next successful
 // fetch, and would report itself `fresh` while doing it.
+//
+// 🔴 AN OLDER READ NEVER OVERWRITES A NEWER SUCCESSFUL ONE. Two refreshes can be in flight
+// at once — the `Run` timer and a caller's (the pod's SIGHUP re-read of a file source) — and
+// because the read happens outside the lock, the one that STARTED first can FINISH last.
+// Committing in finish order would let a read taken before an operator removed a `kid`
+// re-install that key after the read that saw the removal. So each attempt is numbered when
+// it begins, and the rule is, exactly:
+//
+//   - a SUCCESS installs its keys, and clears the failure, unless a NEWER-started attempt
+//     has already SUCCEEDED — then it is discarded;
+//   - a FAILURE records itself (`lastErr`, `failing=true`) unless a NEWER-started attempt
+//     has already SUCCEEDED — then it is discarded;
+//   - only a success advances the committed number. A failure must not: a newer read that
+//     FAILED (a 500, a half-written file) has seen no keys at all, so it cannot make an
+//     older read's successful view of an edit stale — and advancing on it discarded exactly
+//     the read that carried a `kid` removal, leaving the revoked key verifying.
+//   - a DISCARDED call changes no key, timestamp or counter, and returns the outcome that IS
+//     committed — the current `lastErr`, nil only when that state is healthy — so every
+//     caller's verdict (the SIGHUP line, `Run`'s backoff and its "succeeded" line, the startup
+//     refusal) describes the state the set is actually in.
+//
+// So when the newest attempt failed and an older one finishing later succeeded, the older
+// one's keys are what serve and the set reports healthy: they are the newest keys anybody
+// read. Pinned by `TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne` and its
+// siblings in `jwksorder_test.go`, which hold the first read at the source on purpose.
 func (k *KeySet) Refresh(ctx context.Context) error {
+	k.mu.Lock()
+	k.started++
+	attempt := k.started
+	k.mu.Unlock()
+
 	// Outside the lock. See `mu`.
 	keys, err := k.fetch(ctx)
 	now := k.clock()
 
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	if attempt < k.committed {
+		return k.lastErr
+	}
 	k.attempted = now
 	if err != nil {
 		k.failures++
 		k.lastErr = err
 		return err
 	}
+	k.committed = attempt
 	k.keys = keys
 	k.fetched = true
 	k.fetchedAt = now
@@ -260,6 +359,12 @@ func (k *KeySet) Refresh(ctx context.Context) error {
 	k.lastErr = nil
 	return nil
 }
+
+// FromFile reports whether this key set's source is a local file rather than a URL. It is
+// what `cmd/cairn-server` decides its SIGHUP re-read on: a file is the source an operator
+// edits in place and expects to reload on a signal, where a URL is the issuer's and a signal
+// would only add a network call to every token-file reload.
+func (k *KeySet) FromFile() bool { return k.file != "" }
 
 func (k *KeySet) clock() time.Time {
 	if k.now != nil {
@@ -269,6 +374,9 @@ func (k *KeySet) clock() time.Time {
 }
 
 func (k *KeySet) fetch(ctx context.Context) (map[string]jwkKey, error) {
+	if k.file != "" {
+		return k.readFile()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("identity: jwks request: %w", err)
@@ -290,6 +398,31 @@ func (k *KeySet) fetch(ctx context.Context) (map[string]jwkKey, error) {
 		return nil, fmt.Errorf("identity: jwks body exceeds %d bytes", k.maxBodyLen)
 	}
 	return parseJWKS(body)
+}
+
+// readFile is the file source's `fetch`: the same cap and the same parser, and no network.
+//
+// ⚠ THE CAP IS APPLIED BY A BOUNDED READ, NOT BY A `Stat` FIRST. A size checked before the
+// read describes a file that may be replaced before it is opened — a mounted configuration
+// object is swapped by a symlink flip — so the bound is on the bytes actually read.
+func (k *KeySet) readFile() (map[string]jwkKey, error) {
+	f, err := os.Open(k.file)
+	if err != nil {
+		return nil, fmt.Errorf("identity: jwks file: %w", err)
+	}
+	defer f.Close()
+	body, err := io.ReadAll(io.LimitReader(f, k.maxBodyLen+1))
+	if err != nil {
+		return nil, fmt.Errorf("identity: jwks file %s: %w", k.file, err)
+	}
+	if int64(len(body)) > k.maxBodyLen {
+		return nil, fmt.Errorf("identity: jwks file %s exceeds %d bytes", k.file, k.maxBodyLen)
+	}
+	keys, err := parseJWKS(body)
+	if err != nil {
+		return nil, fmt.Errorf("identity: jwks file %s: %w", k.file, err)
+	}
+	return keys, nil
 }
 
 // Run refreshes on the schedule until ctx is done, logging every failed attempt through
@@ -647,6 +780,7 @@ func (d jwkDocument) parse() (jwkKey, error) {
 // ⚠ THERE IS DELIBERATELY NO SECOND `keyResolver` IN THIS FILE. A `staticSecret` type
 // (one configured HMAC secret, no key set, no network) and a `resolverPair` that routed
 // HS256 to it lived here while this build still verified Supabase's LEGACY symmetric
-// tokens. Both are deleted: a deployment's keys now come from a published JWKS and from
-// nowhere else, which is what makes `symmetricAlg`'s refusal one rule with one arm
-// rather than a property of how a particular deployment was configured.
+// tokens. Both are deleted: a deployment's keys now come from a JWKS document — fetched from
+// a URL or read from a file, through the one `parseJWKS` — and from nowhere else, which is
+// what makes `symmetricAlg`'s refusal one rule with one arm rather than a property of how a
+// particular deployment was configured.

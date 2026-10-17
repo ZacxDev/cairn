@@ -257,7 +257,8 @@ Other rules worth naming:
 🔴 **THE VERIFIER IS PROVIDER-NEUTRAL, AND THE VARIABLES NOW SAY SO.** `SupabaseJWT` wears a
 vendor's name and is an RFC 7519 verifier over a JWKS document: it requires a non-empty
 issuer and audience, accepts a **closed** asymmetric algorithm set, and takes every
-verification key out of a URL you give it. Nothing in `jws.go` or `supabase.go` branches on
+verification key out of a JWKS document you give it — a URL it fetches, or a local file it
+reads (`CAIRN_OIDC_JWKS_FILE`, below). Nothing in `jws.go` or `supabase.go` branches on
 who the issuer is; the Supabase URLs in this package appear only as examples in doc
 comments. So the seven settings are **`CAIRN_OIDC_*`**, and a tenant points cairn at the IdP
 they already run — Keycloak, Authentik, Dex, Zitadel, Okta, Auth0, or Supabase/GoTrue.
@@ -300,7 +301,8 @@ deprecated spelling — see `written`'s comment, and `oidcrename_test.go`.
 
 | variable | required | what it must be |
 |---|---|---|
-| `CAIRN_OIDC_JWKS_URL` | **yes** | the provider's JWKS document. The ONLY source of a verification key. Unset is `ErrSupabaseNoKeys` |
+| `CAIRN_OIDC_JWKS_URL` | **one of these two** | the provider's JWKS endpoint, fetched on startup and on the refresh timer. With `CAIRN_OIDC_JWKS_FILE`, one of the only two sources of a verification key. Neither set is `ErrSupabaseNoKeys`; both set is `ErrJWKSTwoSources` |
+| `CAIRN_OIDC_JWKS_FILE` | **one of these two** | an ABSOLUTE path to a JWKS document on local disk, read instead of fetched — see *A key set from a file* below. A relative path is `ErrJWKSFile`; a value that reduces to nothing is a refusal (`refuseBlank`), because read as unset beside a URL it would silently put the issuer back on the startup path |
 | `CAIRN_OIDC_ISSUER` | **yes** | matched against `iss` **exactly**, as a string. Unset is `ErrSupabaseNoIssuer` |
 | `CAIRN_OIDC_AUDIENCE` | no | matched against `aud`, which may be a string **or** an array; it must be present in it. Defaults to `authenticated` |
 | `CAIRN_OIDC_PROVIDER` | no | **cairn's own namespace**, not the provider's — see below. Defaults to `supabase` |
@@ -761,6 +763,73 @@ between the two servers, so a Go-only field there moves a gate. **CLOSING CONDIT
 same one `internal/control/README.md` states — a render (a `doctor` section, a status
 route, or a banner field declared in `wire.NORMALIZATIONS`) that a `tests/dualrun/` run
 exits 0 with.
+
+### A key set from a file: the issuer leaves the startup path
+
+🔴 **WITH A URL, THE OUTAGE THE SECTION ABOVE MEASURES IS SURVIVED ONLY AFTER THE FIRST FETCH.**
+`cmd/cairn-server` refuses to start (exit 78) when the startup fetch fails, deliberately — a key
+set that never materialized verifies nobody. So a pod that RESTARTS while its issuer is down, or
+while a DNS answer is wrong, cannot come back, however good the copy of the public keys it held a
+minute ago. `CAIRN_OIDC_JWKS_FILE` closes that: the operator ships the issuer's public JWKS beside
+the pod (a mounted configuration object, a baked path) and the key set is READ, never fetched.
+Nothing on this source opens a socket — `TestAKeySetReadFromAFileNeverTouchesTheNetwork` reports
+the pair, one request on a URL-sourced control and zero on the file — and
+`TestTheBinaryStartsOnAJWKSFileWithTheIssuerUnreachable` brings the real `main` up with the
+issuer under `example.invalid`.
+
+What stays the same, because it is one code path rather than a second one:
+
+- **the parser.** The file goes through the same `parseJWKS` a fetched body does, under the same
+  256 KiB cap, so every rule in *The JWT verifier* holds for it: a duplicate `kid` refuses the whole
+  document, `oct` and sub-2048-bit RSA keys are dropped, an unkeyed token is refused when more than
+  one key could verify it. Those rules are measured once, through the shared parser, in
+  `jwks_test.go`; `TestAJWKSFileIsParsedByTheSharedJWKSParser` is an invariant guard that the
+  file source really reaches it.
+- **the startup refusal.** A file that is missing, not JSON, oversized or yields no usable key is
+  exit 78 naming the path — and here the refusal means more than it does for a URL: nothing will
+  fix a bad file by waiting.
+- **last-known-good.** A later re-read that fails — a file caught mid-write, a mount that went
+  away, a rotation that duplicated a `kid` — keeps serving the previous keys, reports
+  `failing=true`, and does not move `FetchedAt`.
+
+What is new:
+
+- **a re-read on SIGHUP**, beside the token-file reload the same signal already triggers, with its
+  own verdict line (`JWKS file re-read on SIGHUP: serving N key(s) (was M)`, or `… refused (…);
+  still serving the last-known-good N key(s)`). Only for a file source: a URL is the issuer's, and a
+  signal would only add a network call to every token reload. The refresh timer re-reads the file
+  too, so a signal applies an edit NOW and is never the only way it is applied.
+- **refreshes commit in START order, not finish order.** The timer and a SIGHUP can overlap, and
+  the read that began first can finish last. `Refresh` numbers each attempt and discards any result
+  — success or failure — older than the newest attempt that SUCCEEDED, so a read taken before a
+  `kid` was removed cannot put it back. Only a success advances that number: a newer read that
+  FAILED saw no keys, so it cannot make an older read's view of an edit stale. A discarded call
+  returns the outcome that is actually committed, never a bare success, so the SIGHUP verdict and
+  `Run`'s "succeeded" line describe the real state. Pinned by `jwksorder_test.go`; the guard is in
+  the shared `Refresh`, so it holds for a URL source too.
+- **one source, not two.** A URL and a file together is `ErrJWKSTwoSources`, the ruling
+  `secretFrom` makes for the proxy secret: a precedence rule makes a rotation of the losing source
+  look applied.
+
+⚠ **ROTATION IS NOW THE OPERATOR'S STEP.** A URL source picks up a key the issuer adds within one
+refresh; a file source picks up only what somebody writes into the file. Publish the new key into
+the file BEFORE the issuer starts signing with it, and remove the old one only after its last token
+has expired — the same overlap any JWKS rotation needs, done by hand.
+
+🔴 **REVOCATION BY REMOVING A `kid` IS BOUNDED BY THE RE-READ, NOT BY THE EDIT.** Tokens signed
+by a key you delete from the file keep verifying until this process re-reads it: on SIGHUP, or
+at the next refresh (`DefaultJWKSInterval`, 10m). When the file is a mounted configuration
+object, add the orchestrator's own propagation delay before the new bytes are even on disk — on
+Kubernetes, the kubelet's ConfigMap sync period. So the bound is **SIGHUP, or the refresh interval
+plus that sync delay**, and a SIGHUP sent before the sync lands re-reads the OLD file.
+⚠ **Mount the DIRECTORY, never the file through `subPath`.** A `subPath` mount is a bind of the
+file as it was at container start and is never updated, so every re-read — timer or signal — sees
+the original keys forever, and a removed `kid` is never revoked until the pod restarts.
+
+⚠ **`cmd/cairn-ui` READS THE SAME VARIABLE THROUGH THE SAME LEDGER**, so a file source works there
+too, with that surface's own startup policy unchanged: a failed first read is a WARNING that
+withholds the provider button rather than an exit, exactly as a failed first fetch is. It has no
+SIGHUP re-read; its refresh timer is what picks up an edit.
 
 ## Configuration: a partial configuration REFUSES to start
 
