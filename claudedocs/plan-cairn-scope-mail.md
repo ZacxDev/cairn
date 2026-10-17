@@ -18,9 +18,9 @@ and names who measured it.
 quoted (`AGENTS.md`). No message, prompt or transcript text appears anywhere in this document.
 
 **How proposed verbs are spelled.** Without the CLI prefix: "the proposed `memo-send` verb".
-`tests/test_no_scrubbed_identifiers.py:302` refuses any backticked CLI-prefixed verb that no
-client registers, and it is right to: a plan must not read as an instruction to run a command that
-does not exist.
+This was written while `tests/test_no_scrubbed_identifiers.py` refused any backticked
+CLI-prefixed verb that no client registers in every tracked file; it no longer reads
+`claudedocs/`, so the spelling is now a convention rather than a gate.
 
 **Naming, up front (decision 1).** The operator's word for the feature is "scope mail", and this
 document uses it as the DESCRIPTION. The proposed verbs, routes, tables, skill and hook are named

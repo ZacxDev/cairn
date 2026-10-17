@@ -1527,9 +1527,9 @@ script that prints only counts.
       agent credential reads exactly the sessions its narrowing covers (decision 4).
     - **The CLI:** the proposed `transcript` verb (`transcript skeleton|records|tool`) mirrors the
       three routes. *It is PROPOSED, not registered, and is spelled throughout this plan without the
-      `cairn` prefix on purpose: `tests/test_no_scrubbed_identifiers.py` refuses any backticked
-      `cairn <verb>` citation of a verb no shipped client registers, and that guard should keep
-      meaning "this exists".* They talk to
+      `cairn` prefix on purpose: when this was written `tests/test_no_scrubbed_identifiers.py`
+      refused any backticked `cairn <verb>` citation of a verb no shipped client registers in
+      every tracked file. It no longer reads `claudedocs/`.* They talk to
       `cairn-ui`, not the pod, through ONE new variable, `CAIRN_UI_URL`, whose value is set per
       instance in each instance's env file the way `CAIRN_URL` is (`internal/client/transport.go:128-162`;
       no old alias, so the env ledger does not move). They are **Go-only verbs** — declared in `capability_ledger` `go_only`

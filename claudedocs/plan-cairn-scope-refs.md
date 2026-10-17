@@ -16,9 +16,10 @@ Examples are synthetic:
 Operator decisions are PARAPHRASED, never quoted (`AGENTS.md`).
 
 **How proposed verbs are spelled.** They are written without the CLI prefix: "the proposed
-`audit-refs` verb", "the proposed `sources` verb". `tests/test_no_scrubbed_identifiers.py`
-refuses any backticked CLI-prefixed verb that no client registers yet, and it is right to: a plan
-must not read as an instruction to run a command that does not exist.
+`audit-refs` verb", "the proposed `sources` verb". This was written while
+`tests/test_no_scrubbed_identifiers.py` refused any backticked CLI-prefixed verb that no client
+registered in every tracked file; it no longer reads `claudedocs/`, so the spelling is now a
+convention rather than a gate.
 
 **The plugin plan.** `claudedocs/plan-cairn-plugins.md` exists only on the unmerged branch
 `origin/zach/plan-plugins` (PR #208), so it is cited by decision number.
