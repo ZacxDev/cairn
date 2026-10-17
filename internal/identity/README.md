@@ -79,6 +79,14 @@ quotas, rate limits, abuse handling and deletion/export with it.
 `TestAVerifiedTokenForAnUnknownUserIsRefusedRatherThanProvisioned` counts the users before
 and after.
 
+⚠ **ONE OPT-IN EXCEPTION, AND IT PROVISIONS NOTHING EITHER: group federation.** With
+`CAIRN_OIDC_GROUPS_CLAIM` set, a verified token is never looked up as a user at all — it resolves
+to a *federated principal* computed per request from its groups claim and the operator's group
+map, and **nothing is written**. So the rule above still holds in the sense that matters (no read
+route creates an account); what changes is that "unknown subject" stops being the question.
+§ *Group federation* below; `TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing`
+counts the journal's bytes and epoch across a battery of authentications.
+
 ## 🔴 The trusted-header backend is a foot-gun built to refuse to fire
 
 State the failure plainly, because everything else is shaped by it: **if the pod is
@@ -249,7 +257,8 @@ Other rules worth naming:
 🔴 **THE VERIFIER IS PROVIDER-NEUTRAL, AND THE VARIABLES NOW SAY SO.** `SupabaseJWT` wears a
 vendor's name and is an RFC 7519 verifier over a JWKS document: it requires a non-empty
 issuer and audience, accepts a **closed** asymmetric algorithm set, and takes every
-verification key out of a URL you give it. Nothing in `jws.go` or `supabase.go` branches on
+verification key out of a JWKS document you give it — a URL it fetches, or a local file it
+reads (`CAIRN_OIDC_JWKS_FILE`, below). Nothing in `jws.go` or `supabase.go` branches on
 who the issuer is; the Supabase URLs in this package appear only as examples in doc
 comments. So the seven settings are **`CAIRN_OIDC_*`**, and a tenant points cairn at the IdP
 they already run — Keycloak, Authentik, Dex, Zitadel, Okta, Auth0, or Supabase/GoTrue.
@@ -292,13 +301,15 @@ deprecated spelling — see `written`'s comment, and `oidcrename_test.go`.
 
 | variable | required | what it must be |
 |---|---|---|
-| `CAIRN_OIDC_JWKS_URL` | **yes** | the provider's JWKS document. The ONLY source of a verification key. Unset is `ErrSupabaseNoKeys` |
+| `CAIRN_OIDC_JWKS_URL` | **one of these two** | the provider's JWKS endpoint, fetched on startup and on the refresh timer. With `CAIRN_OIDC_JWKS_FILE`, one of the only two sources of a verification key. Neither set is `ErrSupabaseNoKeys`; both set is `ErrJWKSTwoSources` |
+| `CAIRN_OIDC_JWKS_FILE` | **one of these two** | an ABSOLUTE path to a JWKS document on local disk, read instead of fetched — see *A key set from a file* below. A relative path is `ErrJWKSFile`; a value that reduces to nothing is a refusal (`refuseBlank`), because read as unset beside a URL it would silently put the issuer back on the startup path |
 | `CAIRN_OIDC_ISSUER` | **yes** | matched against `iss` **exactly**, as a string. Unset is `ErrSupabaseNoIssuer` |
 | `CAIRN_OIDC_AUDIENCE` | no | matched against `aud`, which may be a string **or** an array; it must be present in it. Defaults to `authenticated` |
 | `CAIRN_OIDC_PROVIDER` | no | **cairn's own namespace**, not the provider's — see below. Defaults to `supabase` |
 | `CAIRN_OIDC_REQUIRE_ROLE` | no | refuses a token whose top-level `role` claim is not this string. Unset means **no role is required** |
 | `CAIRN_OIDC_LEEWAY` | no | a Go duration, clock-skew allowance, in `[0, 2m]`. Unset is **zero** |
 | `CAIRN_OIDC_MAX_AGE` | no | a Go duration; additionally refuses a token whose `iat` is older than it, regardless of `exp`. Unset or `0` means `exp` alone bounds the session |
+| `CAIRN_OIDC_GROUPS_CLAIM` | no | the name of ONE top-level claim holding the caller's groups; turns **group federation** on (§ *Group federation*). Unset is off — today's behaviour. A blank value is refused; a nested path (`a.b`) is refused. A NEW name, with no `CAIRN_SUPABASE_*` spelling. 🔴 **`cmd/cairn-ui` refuses to start with it set** (`ErrGroupFederationOnBrowserSurface`): a federated principal is no journal user, and every browser flow is keyed on one |
 
 🔴 **EVERY ONE OF THOSE IS PART OF A LEDGER, AND TOUCHING ANY ONE OF THEM ARMS THE BACKEND.**
 A half-configured verifier does not come up quietly — it is `os.Exit(78)` in a crash loop
@@ -439,7 +450,8 @@ them is special here, which is the point of the rename.
 anything.** Wiring your IdP does not make cairn multi-tenant-by-SSO. Specifically:
 
 - **a verified token for a subject this control plane holds no user for is REFUSED, never
-  provisioned.** Your IdP vouches for who somebody is; it says nothing about whether this
+  provisioned** (with group federation off — with it on, no user is looked up and nothing is
+  provisioned either; § *Group federation*). Your IdP vouches for who somebody is; it says nothing about whether this
   cairn instance has an account for them. Just-in-time provisioning would make every read
   route a user-creation endpoint for anybody with an account at your IdP.
 - **a federated user with no grants is authenticated and sees nothing.** The token verifies,
@@ -450,11 +462,15 @@ anything.** Wiring your IdP does not make cairn multi-tenant-by-SSO. Specificall
   answers the not-found body, and on the browse surface it renders as **`No scope is visible
   to this credential`** (`internal/ui`'s wording, pinned by its own tests). That is not a
   misconfiguration; it is the default state of a newly provisioned user.
-- **SSO group or role membership is NOT a scope grant.** Nothing in this repository reads a
-  `groups` claim, maps a role onto a project, or derives membership from a token. Project
-  membership and scope shares live in the control journal and are written by
-  `cairn-server`'s operator modes (the top-level `README.md` § *Operator modes* lists them), or
-  through `cairn-ui`'s share flow and team links.
+- **SSO group or role membership is NOT a scope grant — unless the operator opts in, and even
+  then the claim only SELECTS.** By default nothing reads a `groups` claim, maps a role onto a
+  project, or derives membership from a token. Project membership and scope shares live in the
+  control journal and are written by `cairn-server`'s operator modes (the top-level `README.md`
+  § *Operator modes* lists them), or through `cairn-ui`'s share flow and team links. The one
+  exception is **group federation** (`CAIRN_OIDC_GROUPS_CLAIM`, § *Group federation*), a
+  deliberate, opt-in reversal of this bullet whose trust statement is: **the issuer is trusted to
+  assert group membership; the claim only selects among groups the operator mapped.** A token
+  still cannot name a scope, a project or a verb, and a group nobody mapped reaches nothing.
 - **so you still manage grants**, per user, after they exist. The IdP decides who may ask;
   cairn decides what the answer is.
 - **and a configured journal is not optional once a verifier is armed.** An armed verifier
@@ -470,6 +486,243 @@ a token stays valid until its own `exp` whatever your IdP does to the session be
 older than the bound regardless of `exp` — and the authority side (what the principal may
 do) is bounded instead by `control.Cache`'s refresh. Narrowing the token side properly is
 P5/P6's, with a session store.
+
+## Group federation — an opt-in mode in which the issuer asserts groups
+
+🔴 **IT IS AN EXPLICIT REVERSAL OF "NOTHING READS A GROUPS CLAIM", OFF UNLESS CONFIGURED, AND ITS
+TRUST STATEMENT IS ONE SENTENCE: the issuer is trusted to assert group membership; the claim only
+selects among groups the operator mapped.** Set `CAIRN_OIDC_GROUPS_CLAIM` to the claim's name and
+every token this verifier accepts is resolved by `control.ResolveFederated`:
+
+- **who** — a *federated principal*, kind `federated`, id derived from `(provider, sub)` (stable
+  across requests, naming no journal row), displayed `<provider>:<sub>` in the audit line;
+- **what** — the union, over the token's claimed groups, of each live mapping's object at its
+  verbs **capped at `read`** (`control.FederatedVerbCeiling()`; see the read ceiling below). The map is the control journal's `group-mapped` / `group-unmapped` records, written by
+  `cairn-server -map-group` / `-unmap-group` and by nothing else. A mapping names a scope, or a
+  **project** — which covers every scope the project gains later, so a reserved admin group mapped
+  to a project reaches everything present and future without the map being edited;
+- **how it went** — a `control.Federation` report on the authority (`Authorization.Federation()`):
+  status `no-groups` (an empty claim), `groups-unmapped` (groups claimed, none mapped) or
+  `mapped`, plus the claimed groups split into mapped and unmapped. It is data about the caller's
+  OWN claim, so serving it to them is a self-view, not an enumeration of the map.
+
+What bounds it, each structural rather than documented:
+
+1. **The claim selects; it never names a scope, project or verb.** A token can claim a group,
+   and an unmapped group contributes nothing. ⚠ **But two things in a token are the issuer's
+   text, not one: the groups AND `sub`.** In this mode `sub` names the principal — it is the
+   `identity=<provider>:<sub>` of every audit line — and nothing in this control plane vouches
+   for it. So an issuer that lies can claim a group the caller is not in (reaching that group's
+   mapped objects and no others) AND can put any subject's name on those reads in the audit
+   trail. Both are bounded by the read ceiling: it reaches only what its claimed groups map to,
+   and can write nothing under anybody's name.
+2. **Nothing is written on a read.** No user, no membership, no grant: the principal exists for
+   one request. That is why this is not the self-serve signup § *A verified token for an unknown
+   user is a refusal* forbids.
+3. **A malformed claim refuses the token WHOLE, never partially.** Absent, `null`, not an array, a
+   non-string member, a name outside `[a-z0-9-]{1,40}`, or more than 64 distinct names: each is a
+   refusal (the uniform 401 on the wire). An empty array is how an issuer says "no groups"; it
+   authenticates and reaches nothing. Duplicates are folded, not refused.
+4. **One function decides.** `ResolveFederated` expands objects with the same `addObject` `Resolve`
+   uses for a grant, and the matrix test pins federated rows beside the user rows over one model.
+
+🔴 **THE READ CEILING: A FEDERATED PRINCIPAL READS, AND NEVER WRITES.** `-map-group` records
+whatever verbs the operator writes — `write` and `admin` included — and `ResolveFederated`
+caps every mapping at `read` as it folds it in (`control.FederatedVerbCeiling()`). The cap lives
+there, not in `Narrow`, because `Narrow` is a credential's narrowing and every principal passes
+through it. A federated `POST`/`PUT` is therefore answered exactly as any principal holding the
+write verb nowhere is — `403` with `X-Store-Status: legacy-cannot-write`, nothing written — and
+that is an authorization answer after a successful authentication: never a 401, never counted
+toward the lockout. **Why:** every written bullet carries an attribution trailer whose actor
+class (`internal/write`'s `attributionActorClass`, `[a-z0-9][a-z0-9-]{0,31}`) cannot spell a
+federated display `<provider>:<sub>`; measured without the cap, a federated write landed with a
+trailer the grammar reports as malformed, and a re-post of the same text from a second session
+appended a duplicate instead of answering `duplicate`. **CLOSING CONDITION for federated
+writes:** an actor class (and the matching strip, pinned against the oracle) that can express a
+federated principal, plus a write test showing a federated bullet with a PARSEABLE trailer and
+an idempotent re-post — then, and only then, the ceiling may be raised.
+
+🔴 **THE ISSUER MUST EMIT GROUP NAMES IN `[a-z0-9-]{1,40}`, AT MOST 64 OF THEM.** An
+off-the-shelf groups claim — mixed case (`Engineering`), a path (`/team/x`), an email address
+— is not in that alphabet, and one such name refuses the WHOLE token, which is a 401 COUNTED
+toward the client lockout: every caller behind the issuer's egress address shares that bucket.
+Configure a mapper or transform at the issuer so the claim carries names in the alphabet.
+
+🔴 **THE ISSUER MUST ALWAYS SEND THE CLAIM.** A missing groups claim refuses the token; an
+empty array is the only way to say "this caller has no groups". The two are kept apart on
+purpose: a misnamed `CAIRN_OIDC_GROUPS_CLAIM`, or an issuer that stopped emitting it, would
+otherwise authenticate every caller and show them nothing — a pod that looks healthy and
+answers nothing — where a refusal is loud.
+
+### What a 401 means in federation mode, and what the lockout counts
+
+**Every verified token resolves to a principal**, so no 401 is an authorization answer. The
+only 401s left are:
+
+- a token-verification failure — signature, key, algorithm, a malformed token, or a
+  claim-time check (`exp`, `nbf`, `iat`/max age, `iss`, `aud`, an empty `sub`);
+- a `role` mismatch, where `CAIRN_OIDC_REQUIRE_ROLE` is set;
+- a **malformed or missing groups claim** — **counted** toward the client lockout: an issuer
+  that signs for self-registered users hands out genuine tokens with any claim shape for
+  free, so it is guessing surface the limiter exists for;
+- the client lockout itself;
+- the transport refusals that come before authentication (no client address from a trusted
+  peer, a path outside `/api/v1/`, an unhandled method, an unparseable request).
+
+🔴 **AN EMPTY AUTHORITY IS NEVER A 401.** A `no-groups` or `groups-unmapped` caller
+authenticates and gets the visibility answers — `X-Store-Status: scope-absent` on a read,
+the not-found body on a write — exactly as a scope that does not exist.
+
+**The lockout an issuing service must stay under** is `internal/netid`'s, keyed on the client
+IP after trusted-proxy resolution, so every caller behind one egress address shares it:
+`netid.DefaultMaxFailures` (5) failures inside `netid.DefaultFailureWindow` (60 s) lock the
+address out for `netid.DefaultLockout` (900 s); each is overridable (`CAIRN_MAX_FAILURES`,
+`CAIRN_FAILURE_WINDOW_S`, `CAIRN_LOCKOUT_S`). A service minting tokens for many members from
+one address should stop after fewer consecutive 401s than `DefaultMaxFailures` and back off
+for at least the window, so a fault on its side cannot lock everyone behind it out.
+
+### The audit line of a federated request
+
+A federated request's line carries, appended after `status=` and in this order, ` sub=`
+and ` jti=` (the verified token's own, `-` when absent) and ` groups=` — the NORMALISED
+claimed groups (validated, deduplicated, sorted) comma-joined, `-` when the caller claimed
+none. `groups=` is written only when the authority came from `ResolveFederated`, so every
+non-federated line — machine token, unauthenticated, a refused token — keeps its shape. The
+values pass through `auditField`, and a group name cannot carry a space, a comma or a newline
+in the first place, so it cannot forge a field or a line
+(`TestAGroupNameCannotForgeAnAuditField`).
+
+🔴 **THE MODE IS ONE PATH FOR EVERY TOKEN FROM THE VERIFIER, NOT A FALLBACK.** With it on, a token
+whose `(provider, sub)` matches a journal user still resolves FEDERATED — the user's memberships
+and grants are not consulted through this verifier. "A known user first, else federate" was
+rejected: one subject would have two authorities that switch the day an operator runs
+`-create-user`, with nothing on the wire saying which answered. `cmd/cairn-server` announces the
+mode at startup and WARNS with the count of journal users under the same provider namespace
+(a warning, not a refusal: a refusal would make the pod's availability depend on a journal row,
+and could only ever be a claim about the journal at startup). Pinned by
+`TestFederatedModeIsOnePathAndDoesNotConsultAJournalUser`, whose mode-off arm is the positive
+control.
+
+⚠ **WHAT IT DOES NOT DO, YET.** No federated writes (the read ceiling above, with its closing
+condition). No self-view route: the `Federation` report is carried on the authority and
+read by nothing on the wire — there is no `whoami` route today. Each of those is a separate
+change. And `-group-provider` must equal `CAIRN_OIDC_PROVIDER`, which nothing can check —
+the same two-halves-of-one-key caveat as `-create-user -provider`.
+## 🔴 What a 401 means, and what the client lockout counts
+
+**A 401 from the API pod means only that the request did not authenticate, or that the
+client is locked out.** It is never an authorization answer: once a principal has
+authenticated, an empty or narrow authority is answered with the visibility answers —
+`X-Store-Status: scope-absent` on a read, the not-found body on a write, refused equals
+absent — and never with a 401. (The one non-404 authorization answer is the `403
+legacy-cannot-write` a bare legacy token gets on a write route.) Every 401 is the same
+code, body and header set; which reason it was is in the audit line's `status=` only
+(`server/README.md` lists the vocabulary). Besides a refused credential and the lockout,
+the 401 set also covers transport refusals that come before authentication: no client
+address from a trusted peer (`no-client-ip`), a path outside `/api/v1/`, an unhandled
+method, and an unparseable request.
+
+**In user mode** (no group federation armed), a verified token for a subject this control
+plane holds no user for, and one whose `role` is not `CAIRN_OIDC_REQUIRE_ROLE`, are **401
+and COUNTED**. They are authentication refusals — no principal exists for them — not
+policy. **In group-federation mode** (a separate, opt-in change), every verified token
+resolves to a principal, so the only 401s left are token-verification failures (including
+the claim-time checks below), a `role` mismatch where `CAIRN_OIDC_REQUIRE_ROLE` is set, a
+malformed groups claim (**counted**), the lockout, and the transport refusals above.
+
+### The lockout, read from `internal/netid/limiter.go`
+
+| parameter | value | constant / setting |
+|---|---|---|
+| failures that start a lockout | **5** | `netid.DefaultMaxFailures`, overridden by `CAIRN_MAX_FAILURES` (`netid.EnvMaxFailures`) |
+| window they must fall in (sliding) | **60 s** | `netid.DefaultFailureWindow`, `CAIRN_FAILURE_WINDOW_S` (`netid.EnvFailureWindow`) |
+| lockout duration | **900 s** (15 min) | `netid.DefaultLockout`, `CAIRN_LOCKOUT_S` (`netid.EnvLockout`) |
+| the key | the **client IP** after trusted-proxy resolution (`netid.ResolveClient`): the client-IP header from an allowlisted peer, else the TCP peer | — |
+
+- The failure that reaches the count is itself answered `lockout-triggered`; every request
+  from that key during the lockout is answered `locked-out` **before its credential is
+  read**, so even a valid credential is refused. Both are the same indistinguishable 401.
+- **A success does not forgive a streak** (`RateLimiter.RecordSuccess` is a no-op): only
+  the window ageing a failure out reduces the count. A `locked-out` answer is not itself
+  counted, and the count starts empty when a lockout ends.
+- **For a service calling on many users' behalf from one address:** every caller behind
+  that address shares the bucket. Stop calling after a small number of consecutive 401s —
+  fewer than `DefaultMaxFailures`, e.g. two — and back off for at least the window, so that
+  a fault on your side (a bad signing key, a wrong `aud`) cannot spend the bucket and lock
+  everybody behind the address out for `DefaultLockout`.
+
+### The one refusal that is NOT counted: a claim-time check on a verified token
+
+A signed token whose **signature verified** under a key in the configured set, and which a
+**claim-time** check inside `verifyToken` then refused, is **not counted**. It is answered
+with the same uniform 401 and audited `status=claims-refused`.
+
+| refusal | counted toward the lockout |
+|---|---|
+| signature verified, then `exp` (past or absent), `nbf`, `iat` (future, or older than `CAIRN_OIDC_MAX_AGE`), `iss`, `aud`, an empty `sub`, or a payload that is not a JSON claim set | **no** — `claims-refused` |
+| signature verified, `role` is not `CAIRN_OIDC_REQUIRE_ROLE` | **yes** |
+| signature verified, subject unknown to this control plane | **yes** |
+| signature verified, malformed groups claim (group federation, a separate change) | **yes** |
+| a signature that does not verify (including a rotated key under a reused `kid`) | yes |
+| a `kid` the verifier holds no key for | yes |
+| a refused algorithm (`none`, any `HS*`, anything not RS256/ES256) | yes |
+| a malformed token, a `crit` header, a non-JWT `typ` | yes |
+| a wrong machine token, an unknown credential of any other kind | yes |
+| a claim-time refusal sent **beside** a proxy identity or secret header | yes — see below |
+
+**What this covers, and what it does not.** It covers faults that make every genuine token
+fail at once: a **clock skew** between this pod and the issuer, and an **issuer or audience
+misconfiguration** (an `iss` or `aud` mismatch). Counting those locked every caller behind
+one egress address out for `DefaultLockout`, stretching the fault past its fix. ⚠ **It does
+NOT cover a key rotation**: a token signed by a key the verifier does not hold fails the
+signature, never reaches the claim checks, and is counted. ⚠ **It deliberately does NOT
+cover a role mismatch, an unknown subject or a malformed groups claim**: those are decided
+after `verifyToken`, and against an issuer that signs for self-registered users anybody can
+obtain a genuine token naming a subject, role or group set this pod does not accept — so
+those refusals are the guessing surface the limiter exists for.
+
+**Why the uncounted arm searches for nothing.** Reaching it requires a genuine token over a
+trusted key; what it varies is time or the issuer's own `iss`/`aud`, which are not secrets.
+
+🔴 **THE DECISION IS MADE FROM A FLAG, NEVER FROM AN ERROR'S TEXT.** `verifyToken` sets
+`verified` in exactly one place — beside `verifySignature`'s success — and
+`VerifiedClaimsRefusal` has one constructor, called only from
+`SupabaseJWT.AuthenticateToken` when `verifyToken` returned verified AND an error.
+`internal/api` asks `errors.As` for that type. Its `Error()` is the wrapped refusal's
+sentence unchanged, and `Unwrap` keeps `errors.Is(err, control.ErrNoCredential{})` true.
+
+🔴 **AND THE CHAIN LETS IT STAND ONLY WHEN NOTHING ELSE WAS PRESENTED.** Without that, one
+genuine expired token sent as the bearer would carry an uncounted stream of guesses at a
+proxy secret or identity header on the same request. So `Chain` returns a
+`VerifiedClaimsRefusal` only when every other backend either reads the same bearer
+(`MachineToken`, `SupabaseJWT`) or marked its refusal **absent**. Only the trusted-header
+backend marks itself absent (neither its identity header nor its secret header was sent),
+and that mark is the load-bearing half: without it a pod with a proxy backend armed would
+count every claim-time refusal. Its rung order and sentences are untouched. The cookie
+backend does **not** mark itself — no chain whose refusal `internal/api` reads carries one
+— so a chain with a cookie backend never lets the verified refusal stand (fail-closed,
+pinned by a test).
+
+**Mixed streams:** a `claims-refused` request records no failure, so four bad signatures, any
+number of claim-time refusals, then one bad signature is a lockout on that fifth bad
+signature. Tests: `internal/api/lockout_claims_test.go` (the seam, with bad signatures,
+role mismatches and unknown subjects as counted arms in the same harness) and
+`internal/identity/verifiedrefusal_test.go` (which refusals carry the mark, and the chain).
+
+⚠ **`cmd/cairn-ui` is not changed and does not need to be.** Its browser surface counts
+failures only on the credential sign-in form (a machine token, never a JWT) and its OAuth
+callback deliberately does not count; its listeners (`internal/clientapi`,
+`internal/worker`, `internal/presence`) accept machine tokens only.
+
+### The audit line's `sub=` and `jti=`
+
+A request whose bearer token's signature verified — authenticated, or `claims-refused` —
+gets two fields **appended after `status=`**: `sub=` and `jti=` from the signed token (`-`
+when absent; a non-string `jti` reads as absent rather than refusing the token, since it was
+ignored before). Every other line is byte-identical to before, which is what keeps
+`tests/dualrun/`'s line-for-line comparison with the oracle unmoved. Values pass through
+`auditField` (a space becomes `_`, a control character `?`), so a value cannot forge a field
+or a line.
 
 ## The IdP outage, measured by killing the dependency
 
@@ -510,6 +763,73 @@ between the two servers, so a Go-only field there moves a gate. **CLOSING CONDIT
 same one `internal/control/README.md` states — a render (a `doctor` section, a status
 route, or a banner field declared in `wire.NORMALIZATIONS`) that a `tests/dualrun/` run
 exits 0 with.
+
+### A key set from a file: the issuer leaves the startup path
+
+🔴 **WITH A URL, THE OUTAGE THE SECTION ABOVE MEASURES IS SURVIVED ONLY AFTER THE FIRST FETCH.**
+`cmd/cairn-server` refuses to start (exit 78) when the startup fetch fails, deliberately — a key
+set that never materialized verifies nobody. So a pod that RESTARTS while its issuer is down, or
+while a DNS answer is wrong, cannot come back, however good the copy of the public keys it held a
+minute ago. `CAIRN_OIDC_JWKS_FILE` closes that: the operator ships the issuer's public JWKS beside
+the pod (a mounted configuration object, a baked path) and the key set is READ, never fetched.
+Nothing on this source opens a socket — `TestAKeySetReadFromAFileNeverTouchesTheNetwork` reports
+the pair, one request on a URL-sourced control and zero on the file — and
+`TestTheBinaryStartsOnAJWKSFileWithTheIssuerUnreachable` brings the real `main` up with the
+issuer under `example.invalid`.
+
+What stays the same, because it is one code path rather than a second one:
+
+- **the parser.** The file goes through the same `parseJWKS` a fetched body does, under the same
+  256 KiB cap, so every rule in *The JWT verifier* holds for it: a duplicate `kid` refuses the whole
+  document, `oct` and sub-2048-bit RSA keys are dropped, an unkeyed token is refused when more than
+  one key could verify it. Those rules are measured once, through the shared parser, in
+  `jwks_test.go`; `TestAJWKSFileIsParsedByTheSharedJWKSParser` is an invariant guard that the
+  file source really reaches it.
+- **the startup refusal.** A file that is missing, not JSON, oversized or yields no usable key is
+  exit 78 naming the path — and here the refusal means more than it does for a URL: nothing will
+  fix a bad file by waiting.
+- **last-known-good.** A later re-read that fails — a file caught mid-write, a mount that went
+  away, a rotation that duplicated a `kid` — keeps serving the previous keys, reports
+  `failing=true`, and does not move `FetchedAt`.
+
+What is new:
+
+- **a re-read on SIGHUP**, beside the token-file reload the same signal already triggers, with its
+  own verdict line (`JWKS file re-read on SIGHUP: serving N key(s) (was M)`, or `… refused (…);
+  still serving the last-known-good N key(s)`). Only for a file source: a URL is the issuer's, and a
+  signal would only add a network call to every token reload. The refresh timer re-reads the file
+  too, so a signal applies an edit NOW and is never the only way it is applied.
+- **refreshes commit in START order, not finish order.** The timer and a SIGHUP can overlap, and
+  the read that began first can finish last. `Refresh` numbers each attempt and discards any result
+  — success or failure — older than the newest attempt that SUCCEEDED, so a read taken before a
+  `kid` was removed cannot put it back. Only a success advances that number: a newer read that
+  FAILED saw no keys, so it cannot make an older read's view of an edit stale. A discarded call
+  returns the outcome that is actually committed, never a bare success, so the SIGHUP verdict and
+  `Run`'s "succeeded" line describe the real state. Pinned by `jwksorder_test.go`; the guard is in
+  the shared `Refresh`, so it holds for a URL source too.
+- **one source, not two.** A URL and a file together is `ErrJWKSTwoSources`, the ruling
+  `secretFrom` makes for the proxy secret: a precedence rule makes a rotation of the losing source
+  look applied.
+
+⚠ **ROTATION IS NOW THE OPERATOR'S STEP.** A URL source picks up a key the issuer adds within one
+refresh; a file source picks up only what somebody writes into the file. Publish the new key into
+the file BEFORE the issuer starts signing with it, and remove the old one only after its last token
+has expired — the same overlap any JWKS rotation needs, done by hand.
+
+🔴 **REVOCATION BY REMOVING A `kid` IS BOUNDED BY THE RE-READ, NOT BY THE EDIT.** Tokens signed
+by a key you delete from the file keep verifying until this process re-reads it: on SIGHUP, or
+at the next refresh (`DefaultJWKSInterval`, 10m). When the file is a mounted configuration
+object, add the orchestrator's own propagation delay before the new bytes are even on disk — on
+Kubernetes, the kubelet's ConfigMap sync period. So the bound is **SIGHUP, or the refresh interval
+plus that sync delay**, and a SIGHUP sent before the sync lands re-reads the OLD file.
+⚠ **Mount the DIRECTORY, never the file through `subPath`.** A `subPath` mount is a bind of the
+file as it was at container start and is never updated, so every re-read — timer or signal — sees
+the original keys forever, and a removed `kid` is never revoked until the pod restarts.
+
+⚠ **`cmd/cairn-ui` READS THE SAME VARIABLE THROUGH THE SAME LEDGER**, so a file source works there
+too, with that surface's own startup policy unchanged: a failed first read is a WARNING that
+withholds the provider button rather than an exit, exactly as a failed first fetch is. It has no
+SIGHUP re-read; its refresh timer is what picks up an edit.
 
 ## Configuration: a partial configuration REFUSES to start
 

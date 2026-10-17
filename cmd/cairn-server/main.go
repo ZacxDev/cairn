@@ -93,7 +93,8 @@ const (
 	// six flags in `main` — `store`, `host`, `port`, `token-file`, `routes`, `arc-journal` — plus
 	// `-create-user`'s seven, `-issue-credential`'s seven, `-revoke-credential`'s two,
 	// `-set-member`'s four, `-rename-user`'s three, `-create-scope`'s three and
-	// `-remove-member`'s one — it reuses `-set-member`'s two ids — (counts pinned against the
+	// `-remove-member`'s one — it reuses `-set-member`'s two ids — and `-map-group`'s six, which
+	// `-unmap-group` shares (counts pinned against the
 	// code by `TestTheRegisteredFlagCountInProseMatchesTheCode`), and no exit-code flag among
 	// them.
 	// The no-exit-code-flag sweep was measured at `e11c3a7` by reading every file under
@@ -245,6 +246,7 @@ func main() {
 	rename := registerRenameUserFlags()
 	createScope := registerCreateScopeFlags()
 	removeMember := registerRemoveMemberFlags(setMember)
+	groupMap := registerGroupMapFlags()
 	flag.Parse()
 
 	// 🔴 TWO MODES AT ONCE IS A REFUSAL, NOT A PRECEDENCE. Checking `-routes` first and
@@ -271,6 +273,8 @@ func main() {
 		{"-rename-user", *rename.enabled},
 		{"-create-scope", *createScope.enabled},
 		{"-remove-member", *removeMember.enabled},
+		{"-map-group", *groupMap.mapGroup},
+		{"-unmap-group", *groupMap.unmapGroup},
 	}
 	var asked []string
 	for _, m := range modes {
@@ -334,6 +338,10 @@ func main() {
 		// No `*store`, for `-set-member`'s reason: it addresses a project and a user by id and
 		// chooses no scope display name.
 		os.Exit(runRemoveMember(envalias.Environ(), removeMember, os.Stdout, os.Stderr))
+	}
+	if *groupMap.mapGroup || *groupMap.unmapGroup {
+		// No `*store`: a mapping addresses an object by id and chooses no scope name.
+		os.Exit(runGroupMap(envalias.Environ(), *groupMap.unmapGroup, groupMap, os.Stdout, os.Stderr))
 	}
 	if *revoke.enabled {
 		// No `*store`: a revocation names a credential by id and touches no scope.
@@ -511,6 +519,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: identity: "+err.Error()))
 		os.Exit(exitConfig)
 	}
+	if supabase != nil && supabase.GroupsClaim() != "" {
+		announceGroupFederation(supabase, sessions, warn)
+	}
 	if supabase != nil {
 		// 🔴 THE FIRST FETCH IS AT STARTUP AND ITS FAILURE IS FATAL, WHERE EVERY LATER
 		// ONE IS NOT. The asymmetry is the same one `control.Cache` draws between a cold
@@ -523,11 +534,20 @@ func main() {
 		// ⚠ THE DEADLINE IS THE FETCH'S OWN. `NewKeySet` gives its client a timeout, so
 		// an unreachable provider fails here in seconds rather than hanging a pod that
 		// would otherwise have started.
+		//
+		// 🔴 AND THE SAME REFUSAL COVERS A KEY SET READ FROM `$CAIRN_OIDC_JWKS_FILE`, WHERE
+		// IT MEANS SOMETHING STRONGER. A file that is missing, oversized or yields no usable
+		// key is a misconfiguration rather than an outage — nothing will fix it by waiting —
+		// and this is the one place either source materializes, so neither gets a second,
+		// laxer startup path.
 		if err := supabase.RefreshKeys(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
-				"subsystem-store-api: identity: the Supabase key set could not be fetched at startup (%s), so no session could be verified and every sign-in would be refused. Refusing to start",
+				"subsystem-store-api: identity: the OIDC key set could not be loaded at startup (%s), so no session could be verified and every sign-in would be refused. Refusing to start",
 				err.Error())))
 			os.Exit(exitConfig)
+		}
+		if supabase.KeysFromFile() {
+			installKeyReload(supabase)
 		}
 		go func() {
 			logf := func(line string) { fmt.Fprintln(os.Stderr, reloadSafe("subsystem-store-api: "+line)) }
@@ -573,7 +593,9 @@ func main() {
 	// re-materializes as part of publishing the new table, and a second registration
 	// would refresh twice for one signal — `control.RefreshTriggers` documents that two
 	// `signal.Notify` channels BOTH receive it, so this would be an extra refresh, not
-	// a missed one. One trigger, one place.
+	// a missed one. The rule is ONE SIGHUP CONSUMER PER SUBSYSTEM, not one per program:
+	// the token table's is `installReload`, and a file-sourced JWKS key set's is
+	// `installKeyReload` — see `installReload`'s comment for how the two coexist.
 	//
 	// 🔴 AND IT IS GATED FROM OUTSIDE THIS PROCESS, BECAUSE NOTHING INSIDE IT CAN BE.
 	// `TestTheBinarysOwnTimerIsWhatClosesTheDivergence` runs this binary, creates a
@@ -639,11 +661,21 @@ func main() {
 // reload path with its own parser is the shape where the migration guards silently stop
 // applying to the only file anybody edits after day one.
 //
-// ⚠ IT IS THE ONLY SIGHUP CONSUMER IN THIS PROGRAM, AND THAT IS A RULE RATHER THAN A
-// COINCIDENCE — see the authority timer above, which states it. A second
-// `signal.Notify` channel was added here for the control-journal cache and then removed:
-// it bought at most one refresh interval on a command a human runs by hand, and it put a
-// second answer beside the one the timer already gives.
+// ⚠ IT IS THE TOKEN TABLE'S ONLY SIGHUP CONSUMER, AND THE RULE IS ONE CONSUMER PER
+// SUBSYSTEM — see the authority timer above, which states it. A second `signal.Notify`
+// channel was added here for the control-journal cache and then removed: that cache is
+// re-materialized by this reload already, so the channel bought at most one refresh
+// interval on a command a human runs by hand, and put a second answer beside the one the
+// timer already gives.
+//
+// ⚠ THE PROGRAM HAS ONE OTHER SIGHUP CONSUMER, FOR A DIFFERENT SUBSYSTEM: `installKeyReload`,
+// installed only when the OIDC key set is read from a FILE. `signal.Notify` FANS OUT — every
+// registered channel receives each signal — so one `kill -HUP` drives both, each on its own
+// goroutine. Their ORDER IS NOT DEFINED and does not need to be: neither reads the other's
+// state (the token table and the key set share nothing), each prints its own verdict line,
+// and neither verdict is about the other. A URL-sourced key set installs no consumer, so for
+// it SIGHUP remains a token reload and nothing else
+// (`TestSIGHUPFetchesNothingForAURLSourcedKeySet`).
 func installReload(srv *api.Server, tokenFile string, env map[string]string) {
 	// BUFFERED, BECAUSE `signal.Notify` DROPS ON A FULL CHANNEL rather than blocking the
 	// signal delivery. One slot is the right size for a reload: a second HUP arriving
@@ -702,6 +734,39 @@ func installReload(srv *api.Server, tokenFile string, env map[string]string) {
 	}()
 }
 
+// installKeyReload re-reads a FILE-sourced key set on SIGHUP, beside the token reload that
+// `installReload` performs on the same signal.
+//
+// 🔴 A REFUSED RE-READ CHANGES NOTHING, AND THE LINE SAYS WHAT IS STILL SERVING. `Refresh`
+// keeps the last-known-good set on any failure — a file caught mid-write, a mount that went
+// away, a document with a duplicated `kid` — so a rotation that broke the file does not take
+// every session down with it; the operator is told the count that is still live and that the
+// file is what to fix. The timer in `RunKeyRefresh` re-reads the file too, so a signal is a
+// way to apply an edit NOW, never the only way it is applied.
+//
+// ⚠ ITS OWN WORDS, NOT `reloadLoaded`/`reloadRefused`. Those two prefixes are the token
+// reload's verdict, which an operator — and `TestARefusedReloadDoesNotClaimNothingChanged` —
+// reads after `kill -HUP`; a key-set line carrying them would answer a question about the
+// token table.
+func installKeyReload(backend *identity.SupabaseJWT) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP)
+	go func() {
+		for range signals {
+			before := backend.KeyStatus()
+			if err := backend.RefreshKeys(context.Background()); err != nil {
+				fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+					"subsystem-store-api: identity: JWKS file re-read on SIGHUP refused (%s); still serving the last-known-good %d key(s). Fix the file and send SIGHUP again, or wait for the next refresh",
+					err.Error(), before.Keys)))
+				continue
+			}
+			fmt.Fprintln(os.Stderr, reloadSafe(fmt.Sprintf(
+				"subsystem-store-api: identity: JWKS file re-read on SIGHUP: serving %d key(s) (was %d)",
+				backend.KeyStatus().Keys, before.Keys)))
+		}
+	}()
+}
+
 func tokenIDs(records []authz.TokenRecord) string {
 	parts := make([]string, 0, len(records))
 	for _, record := range records {
@@ -737,6 +802,35 @@ func joinPrefixes[T fmt.Stringer](items []T) string {
 // Control characters become `?`; SPACES ARE LEFT ALONE, because a refusal is prose
 // rather than a whitespace-delimited field record and folding its spaces would make
 // every reload line unreadable.
+// announceGroupFederation says, at startup, that group federation is on — and how many
+// journal users it makes unreachable through the verifier.
+//
+// 🔴 A WARNING, NOT A REFUSAL, AND THE CHOICE IS ABOUT WHAT A REFUSAL WOULD COUPLE. With the
+// mode on, every token from the verifier resolves federated and a journal user under the same
+// provider namespace is never consulted (`identity.SupabaseJWT.AuthenticateToken`). Refusing
+// to start while such a user exists would make the pod's AVAILABILITY depend on a journal row
+// — one `-create-user` with the wrong `-provider` and the next restart is a crash loop — and
+// it could only ever be a claim about the journal at startup, since a user created afterwards
+// is read on the next refresh with no restart. So the count is said loudly, once, and the
+// README names the rule; a deployment that wants both kinds of caller gives them two
+// provider namespaces, which needs two verifiers and is not a configuration this build has.
+func announceGroupFederation(s *identity.SupabaseJWT, sessions identity.ModelSource, warn func(string)) {
+	warn(fmt.Sprintf(
+		"subsystem-store-api: identity: GROUP FEDERATION IS ON — every verified token is resolved "+
+			"from its %q claim and the journal's group map (provider %q), and NOTHING is written "+
+			"on a read. The issuer is trusted to assert group membership; a group reaches only what "+
+			"-map-group mapped it to", s.GroupsClaim(), s.Provider()))
+	if sessions == nil {
+		return
+	}
+	if n := sessions.Model().UsersUnderProvider(s.Provider()); n > 0 {
+		warn(fmt.Sprintf(
+			"subsystem-store-api: identity: WARNING — the journal holds %d user(s) under provider %q, and "+
+				"NONE of them is reachable through this verifier while group federation is on: a token "+
+				"for one resolves to its claimed groups, not to that user's memberships and grants", n, s.Provider()))
+	}
+}
+
 func reloadSafe(line string) string {
 	var b strings.Builder
 	for _, r := range line {

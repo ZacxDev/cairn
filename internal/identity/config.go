@@ -36,10 +36,16 @@ const (
 	// provider* carries the operator-facing contract, and the identifiers move in their own
 	// change so this one stays readable.
 	//
-	// ⚠ IT IS THE ONLY WAY TO GIVE THIS BACKEND A KEY. The two variables that named the
-	// LEGACY symmetric secret are deleted, not deprecated: this build verifies no
-	// shared-secret algorithm. Setting one of them now REFUSES — see `retiredEnv`.
+	// ⚠ IT IS ONE OF EXACTLY TWO WAYS TO GIVE THIS BACKEND A KEY, AND THE OTHER IS
+	// `EnvSupabaseJWKSFile`; setting both is a refusal (`ErrJWKSTwoSources`). The two
+	// variables that named the LEGACY symmetric secret are deleted, not deprecated: this
+	// build verifies no shared-secret algorithm. Setting one of them now REFUSES — see
+	// `retiredEnv`.
 	EnvSupabaseJWKSURL = "CAIRN_OIDC_JWKS_URL"
+	// EnvSupabaseJWKSFile is a local JWKS document, read instead of fetched — so the
+	// issuer is not on the startup path at all. A NEW name with no deprecated spelling, so
+	// it has no `envalias` pair. See `JWKSOptions.File`.
+	EnvSupabaseJWKSFile = "CAIRN_OIDC_JWKS_FILE"
 	// EnvSupabaseIssuer is the required `iss`.
 	EnvSupabaseIssuer = "CAIRN_OIDC_ISSUER"
 	// EnvSupabaseAudience is the required `aud`. Defaults to DefaultSupabaseAudience.
@@ -76,6 +82,11 @@ const (
 	// one variable is cheaper than deleting a working bound, and `EnvSupabaseLeeway` is
 	// the sibling it now reads exactly like.
 	EnvSupabaseMaxAge = "CAIRN_OIDC_MAX_AGE"
+	// EnvSupabaseGroupsClaim names the verified token's GROUPS CLAIM and turns on group
+	// federation (`control.ResolveFederated`). Unset is OFF — today's behaviour, byte for
+	// byte. 🔴 It is a NEW name with no deprecated `CAIRN_SUPABASE_*` spelling: nothing
+	// before it read a groups claim, so there is no manifest to keep working.
+	EnvSupabaseGroupsClaim = "CAIRN_OIDC_GROUPS_CLAIM"
 
 	// EnvProxyFronted is the explicit declaration. See `TrustedHeaderConfig.ProxyFronted`.
 	EnvProxyFronted = "CAIRN_TRUSTED_HEADER_PROXY_FRONTED"
@@ -360,8 +371,19 @@ var supabaseEnv = ledger{
 		{
 			name:      EnvSupabaseJWKSURL,
 			policy:    refusedByConstructor,
-			unset:     "there is no key set, so no token could ever verify",
+			unset:     "there is no key set unless " + EnvSupabaseJWKSFile + " names one, so with neither no token could ever verify",
 			refusedBy: ErrSupabaseNoKeys,
+		},
+		{
+			// `refuseBlank`, NOT `refusedByConstructor` beside its sibling, and the
+			// asymmetry is deliberate. A blank URL read as unset reaches a named rung
+			// (`ErrSupabaseNoKeys`) whatever else is set. A blank FILE read as unset does
+			// not: beside a URL it is silently dropped, and the pod comes up fetching from
+			// the issuer at startup — the very dependency the operator wrote this line to
+			// remove — with nothing saying so.
+			name:   EnvSupabaseJWKSFile,
+			policy: refuseBlank,
+			unset:  "the key set is fetched from " + EnvSupabaseJWKSURL + " instead, so the issuer is back on the startup path",
 		},
 		{
 			name:      EnvSupabaseIssuer,
@@ -399,6 +421,14 @@ var supabaseEnv = ledger{
 			name:   EnvSupabaseMaxAge,
 			policy: refuseBlank,
 			unset:  "`iat` is unbounded — a session minted hours ago still authenticates",
+		},
+		{
+			// 🔴 `refuseBlank`, BECAUSE A BLANK HERE IS AN OPERATOR WHO MEANT TO TURN A MODE ON.
+			// Read as unset, the pod would come up resolving every token against journal users
+			// instead — a different authority from the one the operator configured, silently.
+			name:   EnvSupabaseGroupsClaim,
+			policy: refuseBlank,
+			unset:  "no groups claim is read — a verified token reaches only a user this control plane holds",
 		},
 	},
 }
@@ -501,7 +531,7 @@ func ledgers() []ledger { return []ledger{supabaseEnv, proxyEnv} }
 // cannot arm a backend, which is the distinction that keeps it from being a second
 // spelling of a live setting.
 const retiredSymmetricSecret = "the legacy symmetric (HS256) JWT secret, which this build no longer verifies with at all. Use " +
-	EnvSupabaseJWKSURL + " — the issuer's published asymmetric signing keys"
+	EnvSupabaseJWKSURL + " (or " + EnvSupabaseJWKSFile + ") — the issuer's published asymmetric signing keys"
 
 var retiredEnv = map[string]string{
 	"CAIRN_SUPABASE_JWT_SECRET":      retiredSymmetricSecret,
@@ -980,12 +1010,27 @@ func SupabaseBackendFromEnvironment(env map[string]string, authority ModelSource
 	if !armed {
 		return nil, false, nil
 	}
+	// 🔴 GROUP FEDERATION IS AN API-POD MODE AND THE BROWSER SURFACE REFUSES IT. A federated
+	// principal is no journal user, and every browser flow — a session, the share flow, team
+	// links — is keyed on one (`control.KindUser`). Building the backend here would sign a
+	// browser in as a principal none of those flows can serve, so the setting is a startup
+	// refusal on this path rather than a mode that half-works.
+	if values[EnvSupabaseGroupsClaim] != "" {
+		return nil, false, ErrGroupFederationOnBrowserSurface
+	}
 	backend, err := supabaseFromEnv(values, authority)
 	if err != nil {
 		return nil, false, err
 	}
 	return backend, true, nil
 }
+
+// ErrGroupFederationOnBrowserSurface refuses `CAIRN_OIDC_GROUPS_CLAIM` where a browser signs
+// in. See `SupabaseBackendFromEnvironment`.
+var ErrGroupFederationOnBrowserSurface = errors.New(
+	"identity: " + EnvSupabaseGroupsClaim + " is set, and group federation is a mode of the API pod only — " +
+		"a federated principal is not a journal user, so no browser session, share or team link could serve it. " +
+		"Unset it for this program")
 
 // Issuer is the `iss` this backend requires.
 //
@@ -1196,10 +1241,14 @@ func secretFrom(inlineName, direct, fileName, path string) ([]byte, error) {
 func supabaseFromEnv(values map[string]string, authority ModelSource) (*SupabaseJWT, error) {
 	r := &reader{values: values}
 
+	// Both sources are read BEFORE either is acted on, and `NewKeySet` is the one place
+	// that decides what two, one or neither means — `ErrJWKSTwoSources` is its refusal, not
+	// a precedence chosen here.
 	var keys *KeySet
-	if url := r.get(EnvSupabaseJWKSURL); url != "" {
+	url, file := r.get(EnvSupabaseJWKSURL), r.get(EnvSupabaseJWKSFile)
+	if url != "" || file != "" {
 		var err error
-		keys, err = NewKeySet(JWKSOptions{URL: url})
+		keys, err = NewKeySet(JWKSOptions{URL: url, File: file})
 		if err != nil {
 			return nil, err
 		}
@@ -1221,6 +1270,7 @@ func supabaseFromEnv(values map[string]string, authority ModelSource) (*Supabase
 		RequireRole: r.get(EnvSupabaseRequireRole),
 		Leeway:      r.duration(EnvSupabaseLeeway),
 		MaxAge:      r.duration(EnvSupabaseMaxAge),
+		GroupsClaim: r.get(EnvSupabaseGroupsClaim),
 	}
 	if r.err != nil {
 		return nil, r.err

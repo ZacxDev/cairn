@@ -73,17 +73,105 @@ var expectedMatrix = map[ID]map[ID]string{
 // two clients failing identically compare equal. A resolver that returned the empty
 // authority for everybody would satisfy any test that only checks refusals.
 //
-// So the count is pinned from BOTH sides. 32 of 60 cells allow: not 0, which would
-// mean the resolver grants nothing, and not 60, which would mean it grants
+// So the count is pinned from BOTH sides. 38 of 144 cells allow: not 0, which would
+// mean the resolver grants nothing, and not 144, which would mean it grants
 // everything. Any change to the fixture moves this number and forces whoever made it
 // to say what they expected.
+//
+// ⚠ THE DELTA FROM 32/60, STATED SO IT IS AN EXPECTATION RATHER THAN A RE-PIN: group
+// federation added SEVEN federated rows (`expectedFederatedMatrix`) over the same four
+// scopes — 84 cells — and exactly 6 of them allow: F1 1, F2 2, F3 2, F7 1, and F4/F5/F6
+// none. (It was 7 before the read ceiling: F3's beacon-secrets read `read,write` through
+// `ops`, whose mapping still RECORDS read+write and now resolves to read. That cell is the
+// ceiling's witness; `writers` is mapped read+write too and reaches atlas-runbook at read.) The five user rows are unchanged at 32 of 60, and they are walked on the model
+// that ALSO holds the group map, so a group mapping that leaked into `Resolve` would move
+// a user cell rather than hide in a separate test.
 const (
-	expectedAllowCells = 32
-	expectedTotalCells = 5 * 4 * 3
+	expectedAllowCells = 32 + 6
+	expectedTotalCells = 5*4*3 + 7*4*3
 )
 
+// The group map the federated rows resolve against. Provider `issuer` is the verifier's
+// namespace; `elsewhere` is a second issuer whose mapping must never reach an `issuer`
+// token, so its row is the provider check's only witness.
+const (
+	fedProvider = "issuer"
+	fedOther    = "elsewhere"
+)
+
+// federatedWorldEvents is `worldEvents` plus a group map. Each mapping is chosen so one
+// mechanism is separately observable:
+//
+//	readers    → atlas-notes read        a single mapping
+//	writers    → atlas-runbook rw        a UNION across two claimed groups (F2), capped to read
+//	beacon-all → PROJECT beacon read     a project object, expanded at resolve time (F3)
+//	ops        → beacon-secrets rw       the READ CEILING's witness: recorded rw, resolves read (F3)
+//	retired    → atlas-runbook read      mapped, then UNMAPPED — the tombstone's witness (F5)
+//	readers@elsewhere → atlas-runbook    another issuer's mapping of the same group name
+func federatedWorldEvents() []Event {
+	return append(worldEvents(),
+		Event{Kind: EventGroupMapped, At: at(40), Provider: fedProvider, Group: "readers",
+			ObjectKind: ObjectScope, ObjectID: sAtlasNotes, Verbs: NewVerbSet(VerbRead)},
+		Event{Kind: EventGroupMapped, At: at(41), Provider: fedProvider, Group: "writers",
+			ObjectKind: ObjectScope, ObjectID: sAtlasRunbook, Verbs: NewVerbSet(VerbRead, VerbWrite)},
+		Event{Kind: EventGroupMapped, At: at(42), Provider: fedProvider, Group: "beacon-all",
+			ObjectKind: ObjectProject, ObjectID: pBeacon, Verbs: NewVerbSet(VerbRead)},
+		Event{Kind: EventGroupMapped, At: at(43), Provider: fedProvider, Group: "ops",
+			ObjectKind: ObjectScope, ObjectID: sBeaconSecrets, Verbs: NewVerbSet(VerbRead, VerbWrite)},
+		Event{Kind: EventGroupMapped, At: at(44), Provider: fedProvider, Group: "retired",
+			ObjectKind: ObjectScope, ObjectID: sAtlasRunbook, Verbs: NewVerbSet(VerbRead)},
+		Event{Kind: EventGroupUnmapped, At: at(45), Provider: fedProvider, Group: "retired",
+			ObjectKind: ObjectScope, ObjectID: sAtlasRunbook},
+		Event{Kind: EventGroupMapped, At: at(46), Provider: fedOther, Group: "readers",
+			ObjectKind: ObjectScope, ObjectID: sAtlasRunbook, Verbs: NewVerbSet(VerbRead)},
+	)
+}
+
+// federatedCase is one federated principal: what its token claims, and what it must get.
+type federatedCase struct {
+	name    string
+	claimed []string
+	status  FederationStatus
+	// mapped/unmapped are the expected partition of the claim, comma-joined and sorted.
+	mapped, unmapped string
+	cells            map[ID]string
+}
+
+// expectedFederatedMatrix is the federated half of the ledger — every row, every scope.
+var expectedFederatedMatrix = []federatedCase{
+	// F1 — claimed+mapped. `readers` at THIS issuer reaches atlas-notes and nothing else;
+	// the same group name at `elsewhere` reaches atlas-runbook and must not reach here.
+	{"F1-one-mapped-group", []string{"readers"}, FederationMapped, "readers", "",
+		map[ID]string{sAtlasNotes: "read", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
+	// F2 — the UNION across two claimed groups; the first group in sorted order (`readers`)
+	// alone leaves atlas-runbook empty. `writers` is mapped read+write and reads "read".
+	{"F2-union-across-groups", []string{"writers", "readers"}, FederationMapped, "readers,writers", "",
+		map[ID]string{sAtlasNotes: "read", sAtlasRunbook: "read", sBeaconNotes: "", sBeaconSecrets: ""}},
+	// F3 — a project object (beacon-all) and a scope mapping (ops) recorded read+write. The
+	// READ CEILING's witness: without it beacon-secrets reads "read,write".
+	{"F3-project-object-and-capped-scope", []string{"ops", "beacon-all"}, FederationMapped, "beacon-all,ops", "",
+		map[ID]string{sAtlasNotes: "", sAtlasRunbook: "", sBeaconNotes: "read", sBeaconSecrets: "read"}},
+	// F4 — claimed+UNMAPPED: authenticates, reaches nothing, and says why.
+	{"F4-only-unmapped-groups", []string{"ghost"}, FederationGroupsUnmapped, "", "ghost",
+		map[ID]string{sAtlasNotes: "", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
+	// F5 — a group whose mapping was UNMAPPED. Its row is the tombstone's only witness:
+	// without `group-unmapped` applying, atlas-runbook reads "read".
+	{"F5-unmapped-after-mapping", []string{"retired"}, FederationGroupsUnmapped, "", "retired",
+		map[ID]string{sAtlasNotes: "", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
+	// F6 — a token that claims NO group.
+	{"F6-no-groups", []string{}, FederationNoGroups, "", "",
+		map[ID]string{sAtlasNotes: "", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
+	// F7 — a mixed claim: the mapped group counts, the unmapped one contributes nothing and
+	// is reported as unmapped.
+	{"F7-mapped-and-unmapped", []string{"ghost", "readers"}, FederationMapped, "readers", "ghost",
+		map[ID]string{sAtlasNotes: "read", sAtlasRunbook: "", sBeaconNotes: "", sBeaconSecrets: ""}},
+}
+
 func TestTheAuthorizationMatrixIsExactlyThis(t *testing.T) {
-	m := world(t)
+	m, err := Replay(federatedWorldEvents())
+	if err != nil {
+		t.Fatalf("building the federated fixture world: %v", err)
+	}
 
 	// The ledger must cover the world. Checked BEFORE the cells, because a table
 	// that silently stopped covering a principal would otherwise pass every cell
@@ -109,6 +197,49 @@ func TestTheAuthorizationMatrixIsExactlyThis(t *testing.T) {
 				wantAllow := strings.Contains(","+want+",", ","+string(v)+",")
 				if gotAllow := a.Allows(scopeID, v); gotAllow != wantAllow {
 					t.Errorf("Resolve(%s).Allows(%s, %s) = %v, want %v", principalID, scopeID, v, gotAllow, wantAllow)
+				}
+				if wantAllow {
+					allowed++
+				}
+			}
+		}
+	}
+
+	// The FEDERATED rows, over the same model and the same four scopes.
+	for _, fc := range expectedFederatedMatrix {
+		p, a, err := ResolveFederated(m, fedProvider, "subject-"+fc.name, fc.claimed)
+		if err != nil {
+			t.Fatalf("%s: ResolveFederated refused a valid claim: %v", fc.name, err)
+		}
+		if p.Kind != KindFederated || p.Display != fedProvider+":subject-"+fc.name {
+			t.Errorf("%s: principal is %+v, want a federated principal displayed as provider:subject", fc.name, p)
+		}
+		report, ok := a.Federation()
+		if !ok {
+			t.Fatalf("%s: the authority carries no federation report", fc.name)
+		}
+		if report.Status != fc.status ||
+			strings.Join(report.Mapped, ",") != fc.mapped || strings.Join(report.Unmapped, ",") != fc.unmapped {
+			t.Errorf("%s: report is status=%s mapped=[%s] unmapped=[%s], want status=%s mapped=[%s] unmapped=[%s]",
+				fc.name, report.Status, strings.Join(report.Mapped, ","), strings.Join(report.Unmapped, ","),
+				fc.status, fc.mapped, fc.unmapped)
+		}
+		if len(fc.cells) != len(m.Scopes) {
+			t.Fatalf("%s: the row names %d scopes and the model holds %d — the ledger must cover the world", fc.name, len(fc.cells), len(m.Scopes))
+		}
+		for _, scopeID := range sortedLedgerScopes(uAlice) {
+			want, named := fc.cells[scopeID]
+			if !named {
+				t.Fatalf("%s: the row does not name %s", fc.name, scopeID)
+			}
+			if got := verbsOrEmpty(a.VerbsOn(scopeID)); got != want {
+				t.Errorf("ResolveFederated(%s).VerbsOn(%s) = %q, want %q", fc.name, scopeID, got, want)
+			}
+			for _, v := range AllVerbs {
+				total++
+				wantAllow := strings.Contains(","+want+",", ","+string(v)+",")
+				if gotAllow := a.Allows(scopeID, v); gotAllow != wantAllow {
+					t.Errorf("ResolveFederated(%s).Allows(%s, %s) = %v, want %v", fc.name, scopeID, v, gotAllow, wantAllow)
 				}
 				if wantAllow {
 					allowed++

@@ -75,6 +75,9 @@ func (s VerbSet) Union(o VerbSet) VerbSet { return s | o }
 // `NarrowedScopes` and any future per-credential verb narrowing may use.
 func (s VerbSet) Intersect(o VerbSet) VerbSet { return s & o }
 
+// Minus is the verbs in s that are not in o — what a cap removes.
+func (s VerbSet) Minus(o VerbSet) VerbSet { return s &^ o }
+
 // Empty answers whether the set permits nothing.
 func (s VerbSet) Empty() bool { return s == 0 }
 

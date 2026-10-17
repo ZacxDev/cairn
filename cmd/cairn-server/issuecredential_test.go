@@ -446,6 +446,8 @@ func TestTheBinaryActuallyDispatchesIssueCredential(t *testing.T) {
 		// No ids of its own: `-remove-member` reads `-set-member`'s, so paired with
 		// `-set-member` the command line carries them once and BOTH modes are still set.
 		"-remove-member": {"-remove-member"},
+		"-map-group":     {"-map-group", "-group", "g", "-group-provider", "p", "-group-object", "scp_x", "-group-verbs", "read"},
+		"-unmap-group":   {"-unmap-group", "-group", "g", "-group-provider", "p", "-group-object", "scp_x"},
 	}
 	// 🔴 AND `modeArgs` IS ITSELF A HAND LIST, SO IT IS CHECKED AGAINST `main`'s LEDGER. The
 	// derivation above made the PAIRS follow the list; nothing made the list follow the
@@ -456,7 +458,10 @@ func TestTheBinaryActuallyDispatchesIssueCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading main.go: %v", err)
 	}
-	ledgered := regexp.MustCompile(`\{"(-[a-z-]+)", \*[A-Za-z]+(?:\.enabled)?\}`).FindAllStringSubmatch(string(mainSrc), -1)
+	// ⚠ ANY FIELD, NOT ONLY `.enabled`: `-map-group` and `-unmap-group` share one flag struct and
+	// are `*groupMap.mapGroup`/`*groupMap.unmapGroup`, which an `.enabled`-only reader skipped —
+	// measured: both modes were in the ledger and in neither side of this comparison.
+	ledgered := regexp.MustCompile(`\{"(-[a-z-]+)", \*[A-Za-z]+(?:\.[A-Za-z]+)?\}`).FindAllStringSubmatch(string(mainSrc), -1)
 	if len(ledgered) < 2 {
 		t.Fatalf("read %d mode-ledger entries out of main.go — the reader is wired to nothing", len(ledgered))
 	}

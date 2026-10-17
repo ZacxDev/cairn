@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ZacxDev/cairn/internal/control"
 	"github.com/ZacxDev/cairn/internal/identity"
@@ -142,6 +143,61 @@ func TestTheServerRefusesAnIdentityNamingNobody(t *testing.T) {
 	}
 	if line := lines[len(lines)-1]; !strings.Contains(line, " auth=fail ") {
 		t.Fatalf("an identity naming nobody must audit as a failed authentication:\n  %s", line)
+	}
+}
+
+// TestTheServerServesAFederatedPrincipalExactlyItsMappedScope is the SEAM between group
+// federation and the server: a federated principal is not a journal subject
+// (`control.KindFederated` fails `Kind.Valid`), and the server's "names somebody" check must
+// still accept it — through `Kind.IsPrincipal` — while the authority stays exactly the map's.
+//
+// RED at the base commit by construction (`control.ResolveFederated` does not exist there).
+// The mutant `identity-valid-refuses-a-federated-principal` reverts the predicate and this
+// test answers 401.
+func TestTheServerServesAFederatedPrincipalExactlyItsMappedScope(t *testing.T) {
+	h := newMatrixHarness(t)
+	var lines []string
+	h.srv.Audit = func(line string) { lines = append(lines, line) }
+
+	served := h.srv.Authority().Model()
+	var target control.Scope
+	for _, sc := range served.Scopes {
+		if sc.DisplayName == "alpha-notes" {
+			target = sc
+		}
+	}
+	if target.ID == "" {
+		t.Fatal("precondition: the fixture store has no alpha-notes scope")
+	}
+	at := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	m, err := control.Replay([]control.Event{
+		{Kind: control.EventUserCreated, At: at, UserID: "usr_owner", Provider: "issuer", Subject: "owner"},
+		{Kind: control.EventProjectCreated, At: at, ProjectID: "prj_p", Name: "p", UserID: "usr_owner"},
+		{Kind: control.EventScopeCreated, At: at, ScopeID: target.ID, DisplayName: target.DisplayName, ProjectID: "prj_p"},
+		{Kind: control.EventGroupMapped, At: at, Provider: "issuer", Group: "readers",
+			ObjectKind: control.ObjectScope, ObjectID: target.ID, Verbs: control.NewVerbSet(control.VerbRead)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, auth, err := control.ResolveFederated(m, "issuer", "someone", []string{"readers"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.srv.UseAuthenticator(sessionBackend{who: identity.Identity{Principal: principal, Auth: auth}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := h.do(t, "GET", "/api/v1/recall/alpha-notes", "", nil, ""); got.status != 200 {
+		t.Fatalf("a federated principal mapped to alpha-notes got %d %q, want 200", got.status, got.body)
+	}
+	if line := lines[len(lines)-1]; !strings.Contains(line, " auth=ok ") || !strings.Contains(line, " identity=issuer:someone ") {
+		t.Fatalf("the audit line does not name the federated principal as authenticated:\n  %s", line)
+	}
+	other := h.do(t, "GET", "/api/v1/recall/beta-notes", "", nil, "")
+	if other.headers.Get("X-Store-Status") != "scope-absent" {
+		t.Fatalf("an UNMAPPED scope answered %d %q (status %q), want scope-absent",
+			other.status, other.body, other.headers.Get("X-Store-Status"))
 	}
 }
 

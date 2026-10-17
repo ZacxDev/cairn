@@ -368,8 +368,9 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="project-as-object-dropped",
         path="internal/control/resolve.go",
-        old="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs)\n\t\t\t}",
-        new="\t\tcase ObjectProject:\n\t\t\tcontinue",
+        # Re-derived when the expansion moved into `addObject` (group federation shares it).
+        old="\tcase ObjectProject:\n\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs)\n\t\t}",
+        new="\tcase ObjectProject:\n\t\treturn",
         killer="TestTheAuthorizationMatrixIsExactlyThis",
         why="granting a whole project and having it confer nothing — the mirror of the "
         "row above, and reached by a completely different principal.",
@@ -2039,6 +2040,113 @@ MUTANTS: tuple[Mutant, ...] = (
         "does not implement. Ignoring the field accepts a token whose issuer believes an "
         "extension was enforced.",
     ),
+    # ---- the lockout narrowing: which refusals are a GUESS -----------------------
+    Mutant(
+        name="a-verified-claims-refusal-is-counted-toward-the-lockout",
+        path="internal/api/server.go",
+        old="if errors.As(err, &verified) {",
+        new="if false && errors.As(err, &verified) {",
+        killer="TestASignedTokenFailingAClaimCheckDoesNotLockTheClientOut",
+        extra_killers=("TestClaimsRefusalsNeitherAddToNorForgiveTheFailureCount",),
+        why="the defect this narrowing exists for, restored: a clock skew between the pod "
+        "and the issuer, or an `iss`/`aud` misconfiguration, makes every genuine token fail "
+        "a claim-time check at once, and five of those from one egress address lock every "
+        "caller behind it out for the whole lockout window. (A key rotation is NOT this "
+        "case: an unknown kid fails the signature and is counted.)",
+    ),
+    Mutant(
+        name="every-authentication-refusal-is-exempt-from-the-lockout",
+        path="internal/api/server.go",
+        old="\t\trq.refuse(rq.countFailure())\n\t\treturn false\n\t}\n\tif !who.Valid() {",
+        new="\t\trq.refuse(\"unauthorized\")\n\t\treturn false\n\t}\n\tif !who.Valid() {",
+        killer="TestBadCredentialsStillLockTheClientOut",
+        why="the over-wide fix: stop counting at the authenticate call site altogether. "
+        "Every test of the claims arm stays green, and a credential-stuffing run is "
+        "unlimited.",
+    ),
+    Mutant(
+        name="an-unknown-kid-reads-as-a-verified-signature",
+        path="internal/identity/jws.go",
+        old="\tverifyKey, err := opts.Keys.key(header.Kid, alg)\n\tif err != nil {\n\t\treturn Claims{}, false, err",
+        new="\tverifyKey, err := opts.Keys.key(header.Kid, alg)\n\tif err != nil {\n\t\treturn Claims{}, true, err",
+        killer="TestBadCredentialsStillLockTheClientOut",
+        extra_killers=("TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified",),
+        why="the plausible wrong line: `ErrNoKey` reads as a CONFIGURATION fact rather than "
+        "a guess, so marking it verified looks harmless — and lets anybody mint tokens "
+        "naming a kid the verifier lacks, uncounted, forever.",
+    ),
+    Mutant(
+        name="a-bad-signature-reads-as-verified",
+        path="internal/identity/jws.go",
+        old="\tif err := verifySignature(alg, verifyKey, signingInput, signature); err != nil {\n\t\treturn Claims{}, false, err",
+        new="\tif err := verifySignature(alg, verifyKey, signingInput, signature); err != nil {\n\t\treturn Claims{}, true, err",
+        killer="TestBadCredentialsStillLockTheClientOut",
+        extra_killers=("TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified",),
+        why="the flag set one step too early. A forged signature is the guess the "
+        "limiter exists for.",
+    ),
+    Mutant(
+        name="the-chain-ignores-a-second-presented-credential",
+        path="internal/identity/identity.go",
+        old="if verified != nil && !otherPresented {",
+        new="if verified != nil && (!otherPresented || true) {",
+        killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
+        why="one genuine expired token sent as the bearer would then carry an uncounted "
+        "stream of guesses at a proxy identity or secret header on the same request.",
+    ),
+    Mutant(
+        name="the-audit-line-drops-jti",
+        path="internal/api/server.go",
+        old='\t\tline += " jti=" + auditField(orDash(rq.token.ID), 128)\n',
+        new="",
+        killer="TestASignedTokenIsAuditedWithItsSubAndJti",
+        why="`jti` is what joins a request's audit line to the issuer's record of minting "
+        "the token; without it a claims-refused stream cannot be attributed to a mint.",
+    ),
+    Mutant(
+        name="a-role-mismatch-escapes-the-lockout",
+        path="internal/identity/supabase.go",
+        old='\t\treturn Identity{}, refuse(SupabaseBackend, "role claim is not "+s.requireRole)',
+        new='\t\treturn Identity{}, newVerifiedClaimsRefusal(refuse(SupabaseBackend, "role claim is not "+s.requireRole), claims)',
+        killer="TestARoleMismatchOrUnknownSubjectStillLocksTheClientOut",
+        extra_killers=("TestOnlyARefusalAfterAVerifiedSignatureIsMarkedVerified",),
+        why="the tempting widening — the signature verified, so the role refusal 'is not a "
+        "guess' too. Against an issuer that signs for self-registered users anybody can "
+        "hold a genuine token with the wrong role, so this is the guessing surface.",
+    ),
+    Mutant(
+        name="an-unknown-subject-escapes-the-lockout",
+        path="internal/identity/supabase.go",
+        old="\t\treturn Identity{}, refuseUnprovisioned(SupabaseBackend,\n"
+        "\t\t\t\"the token verifies and names a subject this control plane holds no user for\",\n"
+        "\t\t\ts.provider, claims.Subject)\n",
+        new="\t\treturn Identity{}, newVerifiedClaimsRefusal(refuseUnprovisioned(SupabaseBackend,\n"
+        "\t\t\t\"the token verifies and names a subject this control plane holds no user for\",\n"
+        "\t\t\ts.provider, claims.Subject), claims)\n",
+        killer="TestARoleMismatchOrUnknownSubjectStillLocksTheClientOut",
+        why="the same widening on the subject arm: a self-registering issuer mints a genuine "
+        "token for a subject this control plane has never heard of, for anybody.",
+    ),
+    Mutant(
+        name="a-cookie-backend-chain-lets-the-verified-refusal-stand",
+        path="internal/identity/cookiesession.go",
+        old='refuse(CookieSessionBackend, "no session cookie")',
+        new='refuseAbsent(CookieSessionBackend, "no session cookie")',
+        killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
+        why="the absent mark re-added to the cookie backend. No chain whose refusal the API "
+        "pod reads carries one today, so the test pins the fail-closed direction for the day "
+        "one does.",
+    ),
+    Mutant(
+        name="the-trusted-header-never-marks-itself-absent",
+        path="internal/identity/trustedheader.go",
+        old="return Identity{}, refuseAbsent(rf.Backend, rf.Reason)",
+        new="return Identity{}, refuse(rf.Backend, rf.Reason)",
+        killer="TestTheChainLetsAVerifiedRefusalStandOnlyWhenNothingElseWasPresented",
+        why="the load-bearing half of the absent mark: the API pod's chain can carry a "
+        "trusted-header backend, and without the mark its refusal reads as a presented "
+        "credential on every request, so every claim-time refusal is counted again.",
+    ),
     # ---- the cached key set: the outage promise and its honesty -------------------
     Mutant(
         name="an-empty-jwks-document-is-adopted",
@@ -2061,6 +2169,130 @@ MUTANTS: tuple[Mutant, ...] = (
         "has been dead for a week report itself seconds old — a staleness report that is "
         "most wrong exactly when it is most needed. `control.Cache.Refresh` carries the "
         "same rule and the same reasoning.",
+    ),
+    # ---- the JWKS FILE source: one source, read locally, refused at startup -------
+    Mutant(
+        name="a-jwks-url-and-a-jwks-file-are-both-accepted",
+        path="internal/identity/jwks.go",
+        old='\tif opts.URL != "" && opts.File != "" {',
+        new="\tif false {",
+        killer="TestAJWKSURLAndAJWKSFileTogetherAreRefused",
+        extra_killers=("TestAJWKSFileBesideAJWKSURLIsRefusedRatherThanRanked",),
+        why="a precedence rule reads as harmless — the file wins, say — and makes a rotation "
+        "of the losing source look applied while the pod keeps verifying with the other. The "
+        "same ruling `secretFrom` makes for the proxy secret.",
+    ),
+    Mutant(
+        name="a-relative-jwks-file-is-accepted",
+        path="internal/identity/jwks.go",
+        old="\tif !filepath.IsAbs(path) {",
+        # `&&`, not a bare `false`: `filepath` has no other use in the file, and an unused
+        # import is a build failure that would read as a harness error, not a verdict.
+        new="\tif false && !filepath.IsAbs(path) {",
+        killer="TestEveryJWKSFileConstructionRefusalIsReachable",
+        why="a relative path resolves against the working directory a container entrypoint "
+        "chooses, so the same manifest reads a different file — or none — depending on an "
+        "image detail nobody reviews beside the setting.",
+    ),
+    Mutant(
+        name="a-bad-jwks-file-read-is-an-empty-success",
+        path="internal/identity/jwks.go",
+        old='\t\treturn nil, fmt.Errorf("identity: jwks file %s: %w", k.file, err)\n\t}\n\treturn keys, nil',
+        new="\t\treturn map[string]jwkKey{}, nil\n\t}\n\treturn keys, nil",
+        killer="TestABadReReadOfAJWKSFileKeepsTheLastGoodSet",
+        extra_killers=("TestTheBinaryREFUSESABadJWKSFileAtStartup",),
+        why="\"a file mid-write is not an outage, serve what parsed\" is the plausible reading, "
+        "and it commits an EMPTY set that refuses every session while reporting itself fresh "
+        "— and at startup it turns the exit-78 refusal into a pod that comes up verifying "
+        "nobody.",
+    ),
+    Mutant(
+        name="the-file-source-skips-the-startup-refusal",
+        path="cmd/cairn-server/main.go",
+        old="if err := supabase.RefreshKeys(context.Background()); err != nil {",
+        new="if err := supabase.RefreshKeys(context.Background()); err != nil && !supabase.KeysFromFile() {",
+        killer="TestTheBinaryREFUSESABadJWKSFileAtStartup",
+        why="\"the file will be fixed and the timer re-reads it\" is the tempting relaxation, "
+        "and it brings up a pod that verifies nobody while its health check passes — the "
+        "state the startup refusal exists to make loud.",
+    ),
+    Mutant(
+        name="sighup-does-not-re-read-the-jwks-file",
+        path="cmd/cairn-server/main.go",
+        old="\t\tif supabase.KeysFromFile() {\n\t\t\tinstallKeyReload(supabase)",
+        new="\t\tif false {\n\t\t\tinstallKeyReload(supabase)",
+        killer="TestSIGHUPReReadsAJWKSFileAndARefusalKeepsTheLastGoodSet",
+        why="the token reload already answers SIGHUP, so an operator who edits the key file "
+        "and signals sees a LOADED line and believes the keys moved; dropping the second "
+        "handler is invisible to every other test.",
+    ),
+    Mutant(
+        name="an-older-jwks-refresh-overwrites-a-newer-one",
+        path="internal/identity/jwks.go",
+        old="\tif attempt < k.committed {",
+        new="\tif false && attempt < k.committed {",
+        killer="TestAnOlderRefreshFinishingLastDoesNotOverwriteANewerOne",
+        why="committing in FINISH order looks harmless because each read is valid on its own; "
+        "with a timer and a SIGHUP in flight, the read that started before a `kid` was removed "
+        "can finish after the one that saw the removal and put the revoked key back.",
+    ),
+    Mutant(
+        name="a-failed-jwks-refresh-advances-the-committed-generation",
+        path="internal/identity/jwks.go",
+        old="\tk.attempted = now\n\tif err != nil {\n",
+        new="\tk.attempted = now\n\tif err != nil {\n\t\tk.committed = attempt\n",
+        killer="TestANewerFAILEDReadDoesNotDiscardAnOlderSuccessfulOne",
+        why="\"every attempt that finishes moves the clock forward\" reads as the simple rule, "
+        "and it lets a newer read that saw NO keys (a 500, a half-written file) discard the "
+        "older read that carried a `kid` removal, leaving the revoked key verifying.",
+    ),
+    Mutant(
+        name="a-discarded-jwks-refresh-reports-success",
+        path="internal/identity/jwks.go",
+        old="\tif attempt < k.committed {\n\t\treturn k.lastErr\n",
+        new="\tif attempt < k.committed {\n\t\treturn nil\n",
+        killer="TestRunDoesNotReportSuccessForARefreshItsSetDiscarded",
+        why="\"a discarded read did no harm, so it succeeded\" is the tempting return; every "
+        "caller then reports a state the set is not in — `Run` logs a recovery and resets its "
+        "backoff while the set is failing, and the SIGHUP verdict claims an edit applied.",
+    ),
+    Mutant(
+        name="an-older-jwks-failure-overwrites-a-newer-success",
+        path="internal/identity/jwks.go",
+        old="\tif attempt < k.committed {",
+        new="\tif attempt < k.committed && err == nil {",
+        killer="TestAnOlderFAILUREFinishingAfterANewerSuccessIsDiscarded",
+        why="discarding only stale SUCCESSES looks sufficient — a failure installs no keys — "
+        "but it lets a late failure flip a healthy set to failing behind a newer success.",
+    ),
+    Mutant(
+        name="sighup-re-reads-a-url-sourced-key-set",
+        path="cmd/cairn-server/main.go",
+        old="\t\tif supabase.KeysFromFile() {\n\t\t\tinstallKeyReload(supabase)",
+        new="\t\tif true {\n\t\t\tinstallKeyReload(supabase)",
+        killer="TestSIGHUPFetchesNothingForAURLSourcedKeySet",
+        why="\"re-read the keys on every reload\" reads as a harmless generalisation and puts a "
+        "request to the issuer on every token-file reload, so a reload during an issuer outage "
+        "prints a key-set refusal an operator reads as being about their tokens.",
+    ),
+    Mutant(
+        name="the-jwks-sighup-verdict-hardcodes-the-previous-count",
+        path="cmd/cairn-server/main.go",
+        old="\t\t\t\tbackend.KeyStatus().Keys, before.Keys)))",
+        new="\t\t\t\tbackend.KeyStatus().Keys, 1)))",
+        killer="TestSIGHUPReReadsAJWKSFileAndARefusalKeepsTheLastGoodSet",
+        why="a verdict whose `(was N)` does not track the set is a rotation an operator cannot "
+        "check from the line; a one-key fixture let exactly this survive.",
+    ),
+    Mutant(
+        name="the-environment-reader-drops-the-jwks-file",
+        path="internal/identity/config.go",
+        old="url, file := r.get(EnvSupabaseJWKSURL), r.get(EnvSupabaseJWKSFile)",
+        new='url, file := r.get(EnvSupabaseJWKSURL), ""',
+        killer="TestAJWKSFileAloneArmsAWorkingVerifier",
+        why="a variable declared in the ledger and never plumbed to the constructor is the "
+        "inert-setting shape this package keeps refusing: the manifest says file, and the "
+        "pod refuses to start for want of keys it was given.",
     ),
     # ---- the chain and the seam into the server -----------------------------------
     Mutant(
@@ -7063,10 +7295,16 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-new-scope-does-not-reach-a-PROJECT-grantee",
         path="internal/control/resolve.go",
-        old="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {",
-        new="\t\tcase ObjectProject:\n\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n"
+        # Re-derived when the expansion moved into `addObject`: the grant's time is known only at
+        # the GRANT call site, so the freeze is spelled there — a project grant expanded by hand
+        # over the scopes that existed when it was granted, every other object as before.
+        old="\t\ta.addObject(m, g.ObjectKind, g.ObjectID, g.Verbs)\n",
+        new="\t\tif g.ObjectKind == ObjectProject {\n"
+        "\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n"
         "\t\t\t\tif m.Scopes[scopeID].CreatedAt.After(g.GrantedAt) {\n"
-        "\t\t\t\t\tcontinue\n\t\t\t\t}",
+        "\t\t\t\t\tcontinue\n\t\t\t\t}\n"
+        "\t\t\t\ta.add(scopeID, g.Verbs)\n\t\t\t}\n\t\t\tcontinue\n\t\t}\n"
+        "\t\ta.addObject(m, g.ObjectKind, g.ObjectID, g.Verbs)\n",
         killer="TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential",
         why="the audience `-create-scope` names. Freezing a project grant to the scopes that "
         "existed when it was granted is a plausible policy, and it would make this command's "
@@ -7076,8 +7314,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="a-project-grantee-reaches-a-new-scope-with-more-than-its-verbs",
         path="internal/control/resolve.go",
-        old="\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs)",
-        new="\t\t\tfor _, scopeID := range m.ScopesIn(g.ObjectID) {\n\t\t\t\ta.add(scopeID, g.Verbs.Union(NewVerbSet(VerbWrite)))",
+        old="\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs)",
+        new="\t\tfor _, scopeID := range m.ScopesIn(id) {\n\t\t\ta.add(scopeID, verbs.Union(NewVerbSet(VerbWrite)))",
         killer="TestANewScopeReachesItsProjectsMembersAndNoNarrowedCredential",
         why="the grantee arm's SECOND half: a read grant must stay read on the new scope. An "
         "arm asserting only `read=true` passes a resolver that hands every project grantee write.",
@@ -7390,6 +7628,182 @@ MUTANTS: tuple[Mutant, ...] = (
         new="`-remove-member`'s two",
         killer="TestTheRegisteredFlagCountInProseMatchesTheCode",
         why="proves the new mode is IN the flag-count gate.",
+    ),
+    # --- group federation (`control.ResolveFederated`, `CAIRN_OIDC_GROUPS_CLAIM`) ---
+    Mutant(
+        name="federation-counts-only-the-first-mapped-group",
+        path="internal/control/group_map.go",
+        old="\t\t\tmapped = true\n\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling()))\n",
+        new="\t\t\tmapped = true\n\t\t\tif len(report.Mapped) == 0 {\n\t\t\t\ta.addObject(m, gm.ObjectKind, gm.ObjectID, gm.Verbs.Intersect(FederatedVerbCeiling()))\n\t\t\t}\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="'first matching group wins' is how a role lookup is often written; it makes a caller in "
+        "two groups reach only one of them — F2's second group's scope (atlas-runbook, read under "
+        "the ceiling) goes unread.",
+    ),
+    Mutant(
+        name="federation-reports-an-unmapped-group-as-mapped",
+        path="internal/control/group_map.go",
+        old="\t\tmapped := false\n",
+        new="\t\tmapped := true\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="an unmapped group then counts toward `mapped`, so a caller whose groups are all unmapped "
+        "is told `mapped` and the projects-unmapped answer a self-view serves becomes unreachable.",
+    ),
+    Mutant(
+        name="federation-claim-names-are-not-validated",
+        path="internal/control/group_map.go",
+        old="\t\tif err := ValidGroupName(g); err != nil {\n\t\t\treturn nil, fmt.Errorf(\"%w: %v\", ErrGroupsClaim, err)",
+        new="\t\tif err := ValidGroupName(g); false && err != nil {\n\t\t\treturn nil, fmt.Errorf(\"%w: %v\", ErrGroupsClaim, err)",
+        killer="TestAMalformedClaimIsRefusedWhole",
+        extra_killers=("TestAMalformedGroupsClaimRefusesTheWholeToken",),
+        why="'an unmapped name matches nothing anyway' reads as a reason to skip the check — and a "
+        "claim the issuer got wrong is then read partially instead of refused.",
+    ),
+    Mutant(
+        name="federation-ignores-the-provider-namespace",
+        path="internal/control/group_map.go",
+        old="\t\t\tif gm.Provider != provider || gm.Group != g {\n",
+        new="\t\t\tif gm.Group != g {\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="a group name looks global; it is the issuer's vocabulary, and another issuer's `readers` "
+        "would reach this issuer's callers (F1's atlas-runbook).",
+    ),
+    Mutant(
+        name="group-unmapped-is-not-applied",
+        path="internal/control/journal.go",
+        old="\t\tdelete(m.GroupMaps, key)\n",
+        new="\t\t_ = key\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        extra_killers=("TestMapGroupAndUnmapGroupRefuseBeforeWritingAnything",),
+        why="an unmap that replays clean and removes nothing — the group keeps reaching the object "
+        "(F5's atlas-runbook admin).",
+    ),
+    Mutant(
+        name="identity-valid-refuses-a-federated-principal",
+        path="internal/identity/identity.go",
+        old="\treturn i.Principal.Kind.IsPrincipal() && i.Principal.ID",
+        new="\treturn i.Principal.Kind.Valid() && i.Principal.ID",
+        killer="TestTheServerServesAFederatedPrincipalExactlyItsMappedScope",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="`Kind.Valid` reads as 'a real kind', and is the journal's SUBJECT check; using it here "
+        "makes every federated token a uniform 401 — the seam neither half sees alone.",
+    ),
+    Mutant(
+        name="federation-reads-the-claim-with-the-mode-off",
+        path="internal/identity/supabase.go",
+        old="\tif s.groupsClaim != \"\" {\n\t\tgroups, err := claimedGroups(",
+        new="\tif true {\n\t\tgroups, err := claimedGroups(",
+        killer="TestWithTheModeOffAGroupsClaimIsIgnored",
+        why="the compatibility claim: a deployment that never set the variable must resolve journal "
+        "users exactly as before, whatever claims its issuer happens to emit.",
+    ),
+    Mutant(
+        name="federation-read-ceiling-removed",
+        path="internal/control/group_map.go",
+        old="gm.Verbs.Intersect(FederatedVerbCeiling()))\n",
+        new="gm.Verbs)\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        extra_killers=("TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite",),
+        why="'the mapping says write, so give write' reads as honouring the operator — and every "
+        "federated write then lands with an attribution trailer the grammar cannot parse.",
+    ),
+    Mutant(
+        name="federation-ceiling-applies-to-every-principal",
+        path="internal/control/resolve.go",
+        old="func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {\n",
+        new="func (a Authorization) addObject(m Model, kind ObjectKind, id ID, verbs VerbSet) {\n"
+        "\tverbs = verbs.Intersect(FederatedVerbCeiling())\n",
+        killer="TestTheAuthorizationMatrixIsExactlyThis",
+        why="the shared expansion is the tempting single place for the cap; there it also strips "
+        "write from every user reached through a grant (carol, alice, bob's beacon-secrets cells).",
+    ),
+    Mutant(
+        name="map-group-no-read-refusal-removed",
+        path="internal/control/group_map.go",
+        old="\tif kind == EventGroupMapped && req.Verbs.Intersect(FederatedVerbCeiling()).Empty() {\n",
+        new="\tif false && kind == EventGroupMapped && req.Verbs.Intersect(FederatedVerbCeiling()).Empty() {\n",
+        killer="TestAGroupMappingWithoutReadIsRefusedAndWritesNothing",
+        extra_killers=("TestMapGroupRefusesASetTheCeilingCapsToNothing",),
+        why="`-group-verbs write` then exits 0 and records a mapping that confers nothing on any "
+        "request while reading like access in the journal.",
+    ),
+    Mutant(
+        name="map-group-inert-verb-warning-removed",
+        path="cmd/cairn-server/mapgroup.go",
+        old="\tif inert := written.Verbs.Minus(written.Effective); !inert.Empty() {\n",
+        new="\tif inert := written.Verbs.Minus(written.Effective); false && !inert.Empty() {\n",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        why="the operator who typed write is told nothing about it having no effect.",
+    ),
+    Mutant(
+        name="map-group-inert-verbs-computed-against-the-wrong-set",
+        path="cmd/cairn-server/mapgroup.go",
+        old="\tif inert := written.Verbs.Minus(written.Effective); !inert.Empty() {\n",
+        new="\tif inert := written.Verbs.Minus(written.Verbs); !inert.Empty() {\n",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        why="a warning whose set is always empty is present in the source and never fires — the "
+        "SPELLED-guard shape.",
+    ),
+    Mutant(
+        name="map-group-effective-set-is-the-recorded-set",
+        path="internal/control/group_map.go",
+        old="Effective: verbs.Intersect(FederatedVerbCeiling()),",
+        new="Effective: verbs,",
+        killer="TestMapGroupThenUnmapGroupWriteOneRecordEach",
+        extra_killers=("TestMapGroupRefusesASetTheCeilingCapsToNothing",),
+        why="the success line then prints `effective=read,write`, the untruth the field exists to end.",
+    ),
+    Mutant(
+        name="federated-ceiling-widened",
+        path="internal/control/group_map.go",
+        old="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead) }",
+        new="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead, VerbWrite) }",
+        killer="TestTheFederatedCeilingIsReadAndCannotBeRebound",
+        extra_killers=("TestTheAuthorizationMatrixIsExactlyThis",
+                       "TestAFederatedWriteIsRefusedEvenWhereTheMappingGrantsWrite"),
+        why="one verb added to the literal and federated writes land with unparseable trailers again.",
+    ),
+    Mutant(
+        name="federated-ceiling-is-a-shared-package-value",
+        path="internal/control/group_map.go",
+        old="func FederatedVerbCeiling() VerbSet { return NewVerbSet(VerbRead) }",
+        new="var federatedCeiling = NewVerbSet(VerbRead)\n\nfunc FederatedVerbCeiling() VerbSet { return federatedCeiling }",
+        killer="TestTheFederatedCeilingIsReadAndCannotBeRebound",
+        equivalent=True,
+        equivalent_reason="`VerbSet` is a uint8 value: the function returns a copy, so no caller "
+        "can mutate the shared value through what it receives, and the var is unexported so no other "
+        "package can rebind it. No behavioural test can tell the two apart; the property that "
+        "mattered — no EXPORTED, assignable ceiling — is what the function shape removes.",
+        why="listed so a reader finding it SURVIVED reads it as a value-type fact, not a gap.",
+    ),
+    Mutant(
+        name="federation-audit-drops-the-groups-field",
+        path="internal/api/server.go",
+        old="\tif _, federated := rq.auth.Federation(); federated {\n",
+        new="\tif _, federated := rq.auth.Federation(); false && federated {\n",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        why="the field is the only record of WHICH groups granted a federated read; a line without it "
+        "names the caller and not the authority they used.",
+    ),
+    Mutant(
+        name="federation-audit-renders-the-unnormalised-claim",
+        path="internal/identity/groups.go",
+        old="\treturn normalized, nil\n",
+        new="\t_ = normalized\n\treturn groups, nil\n",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="returning what the issuer sent reads as faithful; it records an order and duplicates "
+        "authority was never computed from, so two identical authorities audit differently.",
+    ),
+    Mutant(
+        name="federation-does-not-set-the-token-facts",
+        path="internal/identity/supabase.go",
+        old="\t\t\tToken:  &TokenFacts{Subject: claims.Subject, ID: string(claims.ID)},\n",
+        new="",
+        killer="TestAFederatedRequestIsAuditedWithItsSubJtiAndNormalisedGroups",
+        extra_killers=("TestAFederatedTokenReachesExactlyItsMappedGroupsAndWritesNothing",),
+        why="the user path sets them; a second return that forgets to leaves federated requests — the "
+        "ones an issuing service most needs to join on `jti` — with no `sub=`/`jti=`.",
     ),
 )
 
