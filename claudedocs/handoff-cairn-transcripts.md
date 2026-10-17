@@ -235,7 +235,8 @@ revoked token still presented is a 401 every minute that counts toward the liste
   edge** (zsh glob qualifiers, here-strings, `--scope` spellings, `ls-entries` ignoring `--scope`);
   replaced by the client read ledger (O11). Do not reintroduce command-line parsing. via: change
 - **A docs guard refuses any backticked `cairn <verb>` for an unregistered verb**
-  (`tests/test_no_scrubbed_identifiers.py`) — spell proposed verbs without the prefix. via: command
+  (`tests/test_no_scrubbed_identifiers.py`) outside `claudedocs/` — plans and handoffs here
+  are not read by it. via: command
 - **Real-transcript dry run (counts only):** 204 of 269 Claude sessions would be HELD (`*` in V)
   until the read ledger (S11) exists. via: measurement
 

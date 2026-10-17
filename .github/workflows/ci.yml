@@ -724,29 +724,16 @@ jobs:
               print(f"REFUSING: collected {ran} < floor {FLOOR} — the suite silently narrowed")
               sys.exit(1)
 
-          # 🔴 AND THE DRIFT GUARD, WHICH A PREVIOUS COMMENT HERE SAID WAS IMPOSSIBLE.
-          # It claimed a guard would need "a step reading its own job's output, which is
-          # a different instrument" — this IS that step, and `ran` IS the `m` the formula
-          # takes. The claim was false about the file it was written in; the two lines it
-          # said could not be spent are below.
-          #
-          # ⚠ THE BOUND IS 2x THE FORMULA'S OWN MAXIMUM GAP, NOT THE FORMULA ITSELF, AND
-          # THE LOOSENING IS DELIBERATE. `tests/test_parity_harness.py`'s equivalent guard
-          # IS exact, and the difference is how often each `m` moves: a parity CASE is
-          # added a few times a year, so demanding the literal move with it costs nothing,
-          # while the collected count moves on most PRs — an exact guard here would red
-          # every test-adding PR until somebody edited a number, which is how a gate gets
-          # rubber-stamped. What actually failed historically was GROSS drift (a gap of
-          # 101), not a one-test lag, so that is what this catches.
-          MAX_GAP = 2 * 50
-          if ran - FLOOR > MAX_GAP:
-              print(
-                  f"REFUSING: the floor is {FLOOR} against {ran} collected, a gap of "
-                  f"{ran - FLOOR} — more than {MAX_GAP}, so it has drifted far enough to "
-                  f"hide a real narrowing. Re-derive it: m - min(50, max(1, m/20)) = "
-                  f"{int(ran - min(50, max(1, ran / 20)))}."
-              )
-              sys.exit(1)
+          # ⚠ THE UPPER-GAP "DRIFT GUARD" (`ran - FLOOR > MAX_GAP`, MAX_GAP = 100) IS GONE.
+          # It refused when the suite GREW more than 100 past this literal, so it fired on
+          # tests being ADDED: 14 failed runs between 2026-09-19 and 2026-10-17 (3 of them
+          # since 10-09), every one with a fully green suite and nothing else red in
+          # its `tests` job (`failed=0` in each), and the way out each time was a commit
+          # moving `FLOOR` — several `A -> B` lines above say this guard forced them.
+          # What it defended (a floor left far below the suite, so a
+          # narrowing of up to the gap could hide) is NOT defended now; `ran < FLOOR`
+          # still refuses any narrowing below the literal. Raising the literal stays a
+          # manual choice, per the formula above.
           sys.exit(1 if fail else 0)
           PY
 

@@ -338,6 +338,41 @@ def unregistered_citations(
     return {v: sorted(set(f))[:3] for v, f in cited.items() if v not in registered}
 
 
+#: The one directory the verb-citation check does NOT read: `claudedocs/`, the plans and
+#: handoffs. A plan describes verbs that do not exist YET, by design, so a citation there
+#: is a proposal, not a remedy an operator is told to run.
+#
+# 🔴 WHY THIS EXISTS: 17 of 45 failed `ci` runs in one measured week (19 of the last 78
+# failures) were this test refusing `claudedocs/plan-*.md` (and once,
+# alongside its plan, `claudedocs/handoff-cairn-arcs-sessions.md`) for naming a planned
+# verb — `transcript`, `sources`, `audit-refs`, `context`, `arc`, `arcs`, `sessions` —
+# with every other test green. None was the incident this test was written for (#17: a
+# remedy printed by `lib/subsystem_recall.py` naming a program that is not here), and the
+# workaround plans took was to spell their own proposals without the `cairn` prefix.
+# The check still reads code, README, AGENTS.md, help text and every other tracked
+# path. ⚠ The SPELLING guard above (`_findings`) is NOT narrowed: it still reads
+# `claudedocs/`.
+PLANNING_DOCS_DIR = "claudedocs"
+
+
+def is_planning_doc(rel_path: "str | Path") -> bool:
+    """True for a repo-relative path under `claudedocs/` (any depth), and nothing else."""
+    parts = Path(rel_path).parts
+    return bool(parts) and parts[0] == PLANNING_DOCS_DIR
+
+
+def test_only_claudedocs_is_left_out_of_the_verb_citation_check():
+    """The exclusion's boundary, both sides: a plan or handoff (any depth) is left out;
+    a top-level doc, code, and a path that merely CONTAINS the word are not."""
+    for planned in ("claudedocs/plan-cairn-plugins.md",
+                    "claudedocs/handoff-cairn-arcs-sessions.md",
+                    "claudedocs/archive/old.md"):
+        assert is_planning_doc(planned), planned
+    for operator_facing in ("README.md", "AGENTS.md", "cairn", "lib/subsystem_recall.py",
+                            "internal/claudedocs/x.md", "claudedocs.md", "docs/claudedocs"):
+        assert not is_planning_doc(operator_facing), operator_facing
+
+
 def test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS():
     """🔴 THE HALF A SPELLING GUARD CANNOT COVER.
 
@@ -347,9 +382,11 @@ def test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS():
     program that is not here. So this pins the RELATIONSHIP instead: every
     ``cairn <verb>`` an operator-facing string tells someone to run must be a
     verb a shipped client registers — the Python CLI's, or a DECLARED Go-only one
-    (see `registered_verbs`).
+    (see `registered_verbs`). Planning docs under `claudedocs/` are left out (see
+    `PLANNING_DOCS_DIR`); everything else tracked is read.
     """
     registered = registered_verbs()
+    root = Path(__file__).resolve().parent.parent
 
     # 🔴 EVERY TRACKED FILE, NOT TWO. The first version read `cairn` and
     # `lib/subsystem_recall.py` only, while its docstring claimed "every
@@ -360,12 +397,22 @@ def test_the_malformed_remedy_names_a_verb_THIS_PACKAGE_REGISTERS():
     # relationship over an implementation that inspects one slice is the same
     # defect this module exists to catch, one level up.
     texts: dict[str, str] = {}
+    planning: list[str] = []
     scanned, _skipped = partition_tracked_files()
     for path in scanned:
+        if is_planning_doc(path.relative_to(leakscan.ROOT)):
+            planning.append(str(path))
+            continue
         try:
             texts[str(path)] = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
+
+    # POSITIVE CONTROL on the exclusion: it must actually be excluding the plans, and the
+    # most operator-facing file must still be read.
+    assert planning, "no claudedocs/ file was left out — the exclusion is wired to nothing"
+    assert any(Path(p).resolve() == root / "README.md" for p in texts), (
+        "README.md is not being read")
 
     unknown = unregistered_citations(registered, texts)
     assert not unknown, (
