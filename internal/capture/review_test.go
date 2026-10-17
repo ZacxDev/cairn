@@ -20,11 +20,11 @@ import (
 func TestAScopeRoutedToAnotherInstanceIsHeldOnAOneInstanceHost(t *testing.T) {
 	one := client.Routing{Instances: []client.Instance{{Alias: "personal"}},
 		Routes: map[string]string{"beta-notes": "client"}, RoutesSource: "the test's table"}
-	if d := Decide([]string{"beta-notes"}, one); !d.Held {
+	if d := Decide([]string{"beta-notes"}, Repo{}, one, RepoRules{}); !d.Held {
 		t.Fatalf("an explicitly-routed, unconfigured scope shipped: %+v", d)
 	}
 	// Control: a scope the table says NOTHING about still ships to the sole instance.
-	if d := Decide([]string{"gamma-notes"}, one); d.Held || d.Instance != "personal" {
+	if d := Decide([]string{"gamma-notes"}, Repo{}, one, RepoRules{}); d.Held || d.Instance != "personal" {
 		t.Fatalf("an unnamed scope on a one-instance host: %+v", d)
 	}
 	w := loadWorld(t)
