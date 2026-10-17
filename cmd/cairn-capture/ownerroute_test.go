@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -199,5 +200,143 @@ func TestADryRunAnswersAsTheRunWouldForEachWorkerShape(t *testing.T) {
 		if code != exitOK || !strings.Contains(out.String(), "v=[] "+c.want+"\n") {
 			t.Errorf("%s: exit %d, %q — want %s (%s)", name, code, out.String(), c.want, errb.String())
 		}
+	}
+}
+
+// addInstance configures one more synthetic instance beside the default.
+func (w repoWorld) addInstance(t *testing.T, alias string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(w.cfg, "instances", alias+".env"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (w repoWorld) appendLine(t *testing.T, i int) {
+	t.Helper()
+	f, err := os.OpenFile(w.session(), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(w.line(i)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (w repoWorld) statePath() string {
+	return filepath.Join(w.home, "xdg", "cairn", "capture", "state.json")
+}
+
+// TestABoundSessionRoutedToAThirdInstanceWithNoWorkerShipsNothing is #292's round-3 audit F1, the
+// auditor's three-instance sequence through run(): bound to `client`, the table then routes the repo
+// to `gamma` — configured, no `-worker` this run. Its NEW line must go NOWHERE this run (counted
+// `refused=`), never to `client`, which the table no longer routes it to, and never to the default
+// (whose probe can answer 410 and HOLD it). Once gamma has a worker, it moves there whole.
+func TestABoundSessionRoutedToAThirdInstanceWithNoWorkerShipsNothing(t *testing.T) {
+	personal, cli, gamma := newRunPod(t, true), newRunPod(t, true), newRunPod(t, true)
+	w := repoRoutedWorld(t, `{"beta-notes":"client"}`)
+	w.addInstance(t, "gamma")
+	two := []string{"--run", "-host", "host-a", "-worker", personal.url, "-capture-token-file", w.tokenFile,
+		"-worker", "client=" + cli.url, "-capture-token-file", "client=" + w.tokenFile}
+	pass := func(n int, args []string) string {
+		t.Helper()
+		var errb bytes.Buffer
+		if code := run(args, &bytes.Buffer{}, &errb, w.env); code != exitOK {
+			t.Fatalf("run %d: exit %d\n%s", n, code, errb.String())
+		}
+		return errb.String()
+	}
+	pass(1, two)
+	if recs, _ := cli.arc.ReadStream("s-0001", "main"); len(recs) != 5 {
+		t.Fatalf("CONTROL run 1: %d records on client, want 5", len(recs))
+	}
+	w.route(t, `{"beta-notes":"gamma"}`)
+	w.appendLine(t, 5)
+	log2 := pass(2, two)
+	if recs, _ := cli.arc.ReadStream("s-0001", "main"); len(recs) != 5 {
+		t.Fatalf("run 2: client now holds %d records — the new line shipped to an instance the table no longer "+
+			"routes the repo to:\n%s", len(recs), log2)
+	}
+	if recs, _ := personal.arc.ReadStream("s-0001", "main"); len(recs) != 0 || strings.Contains(log2, "HOLD s-0001") {
+		t.Fatalf("run 2: the default holds %d records, or the session was held:\n%s", len(recs), log2)
+	}
+	if !strings.Contains(log2, "refused s-0001") || !strings.Contains(log2, " refused=1 ") {
+		t.Fatalf("run 2: the deferral is not counted as this run's refusal:\n%s", log2)
+	}
+	three := append(append([]string{}, two...), "-worker", "gamma="+gamma.url, "-capture-token-file", "gamma="+w.tokenFile)
+	pass(3, three)
+	if recs, _ := gamma.arc.ReadStream("s-0001", "main"); len(recs) != 6 {
+		t.Fatalf("run 3, gamma's worker added: %d records on gamma, want the whole session (6)", len(recs))
+	}
+}
+
+// TestADryRunReadsWhereRunBoundTheSession is #292's round-3 audit F2: `--dry-run`, given `--run`'s
+// flags, prints `--run`'s decision for a session `--run` already BOUND — it reads the binding from the
+// state, READ-ONLY. Table → client, the default's worker only: `--run` keeps a client-bound session
+// on client (never re-placed), so the dry run must print `ship:client`, not the unbound answer
+// `ship:personal`. And it writes nothing, the state included.
+func TestADryRunReadsWhereRunBoundTheSession(t *testing.T) {
+	personal, cli := newRunPod(t, true), newRunPod(t, true)
+	w := repoRoutedWorld(t, `{"beta-notes":"client"}`)
+	dry := []string{"--dry-run", "-claude-root", filepath.Join(w.home, ".claude", "projects"), "-worker", personal.url}
+	var out, errb bytes.Buffer
+	if code := run(dry, &out, &errb, w.env); code != exitOK || !strings.Contains(out.String(), "decision=ship:personal") {
+		t.Fatalf("CONTROL, before any --run: exit %d, %q, %q — want the unbound answer", code, out.String(), errb.String())
+	}
+	noStateSaid := strings.Contains(errb.String(), "no state file at")
+	both := []string{"--run", "-host", "host-a", "-worker", personal.url, "-capture-token-file", w.tokenFile,
+		"-worker", "client=" + cli.url, "-capture-token-file", "client=" + w.tokenFile}
+	if code := run(both, &bytes.Buffer{}, &errb, w.env); code != exitOK {
+		t.Fatalf("run: exit %d\n%s", code, errb.String())
+	}
+	before := listFiles(t, w.home)
+	stateBefore, err := os.ReadFile(w.statePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Stat(w.statePath())
+	out.Reset()
+	errb.Reset()
+	if code := run(dry, &out, &errb, w.env); code != exitOK || !strings.Contains(out.String(), "v=[] decision=ship:client\n") {
+		t.Fatalf("a dry run with the default's worker only, for a session --run bound to client: exit %d, %q (%s) — "+
+			"want ship:client, what --run does", code, out.String(), errb.String())
+	}
+	stateAfter, _ := os.ReadFile(w.statePath())
+	again, _ := os.Stat(w.statePath())
+	if !bytes.Equal(stateBefore, stateAfter) || !os.SameFile(info, again) || !again.ModTime().Equal(info.ModTime()) ||
+		!slices.Equal(before, listFiles(t, w.home)) {
+		t.Fatal("the dry run wrote: the state changed, or a file appeared under HOME")
+	}
+	// And --run, given the same worker flags, does what the dry run said: the session stays on client.
+	runOnlyDefault := []string{"--run", "-host", "host-a", "-worker", personal.url, "-capture-token-file", w.tokenFile}
+	w.appendLine(t, 5)
+	errb.Reset()
+	if code := run(runOnlyDefault, &bytes.Buffer{}, &errb, w.env); code != exitOK {
+		t.Fatalf("run: exit %d\n%s", code, errb.String())
+	}
+	if recs, _ := personal.arc.ReadStream("s-0001", "main"); len(recs) != 0 {
+		t.Fatalf("--run with the default's worker only moved the session to the default (%d records)", len(recs))
+	}
+	if !noStateSaid {
+		t.Fatal("the dry run before any --run did not say on stderr that there was no state file")
+	}
+}
+
+// TestADryRunRefusesAStateItCannotRead: a state file that is not one JSON state exits 1 — the dry
+// run does not print decisions about bindings nobody can see — and is left exactly as it was.
+func TestADryRunRefusesAStateItCannotRead(t *testing.T) {
+	w := repoRoutedWorld(t, `{"beta-notes":"client"}`)
+	if err := os.MkdirAll(filepath.Dir(w.statePath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(w.statePath(), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	code := run([]string{"--dry-run", "-claude-root", filepath.Join(w.home, ".claude", "projects")}, &out, &errb, w.env)
+	got, _ := os.ReadFile(w.statePath())
+	if code != exitError || out.Len() != 0 || string(got) != "{not json" {
+		t.Fatalf("a malformed state: exit %d, stdout %q, state now %q — want 1, nothing printed, untouched (%s)",
+			code, out.String(), got, errb.String())
 	}
 }

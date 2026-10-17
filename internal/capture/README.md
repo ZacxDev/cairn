@@ -62,17 +62,27 @@ session is placed by its repo, first match wins (`decideByRepo`):
    ⚠ An alias that IS configured but that this run has no `-worker` for (rule 1 or rule 2) receives
    no NEW session: a session bound nowhere yet goes to 3 — binding it there had it refused on every
    run, or left in `withdrawal-pending` for good, at exit 0
-   (`TestATableRoutedRepoWithNoWorkerShipsToTheDefault`). 🔴 A session ALREADY BOUND anywhere keeps
-   its binding on such a run and is refused and retried there, never re-placed: one the arm moved
-   to that alias was withdrawn from the default, which keeps a withdrawal as a deletion, so a move
-   back answered 410 and HELD it for good (`TestAMovedSessionIsNotReplacedWhenALaterRunLacksItsWorker`).
+   (`TestATableRoutedRepoWithNoWorkerShipsToTheDefault`). 🔴 A session ALREADY BOUND is never
+   re-placed on such a run: one the arm moved to that alias was withdrawn from the default, which
+   keeps a withdrawal as a deletion, so a move back answered 410 and HELD it for good
+   (`TestAMovedSessionIsNotReplacedWhenALaterRunLacksItsWorker`). What happens instead depends on
+   where it is bound: bound to that alias itself, it stays bound and its uploads are refused and
+   retried there; bound to the default, it keeps shipping to the default, where a new session in
+   the same repo goes too; 🔴 bound to some OTHER instance, nothing of it is sent this run — counted
+   `refused=`, exit 0, asked again next run — because keeping the binding shipped its new records to
+   an instance the table no longer routes its repo to (only reachable with three or more instances;
+   `TestABoundSessionRoutedToAThirdInstanceWithNoWorkerShipsNothing`).
 2. **`-route-origin-owner OWNER=ALIAS`** (repeatable, `--run` and `--dry-run`) → ALIAS, when the
    repo's `origin` URL's owner segment is OWNER — `git@host:owner/repo`, `https://host/owner/repo`,
    `ssh://[user@]host[:port]/owner/repo`, `.git` optional; compared case-insensitively, no host
    compared. ALIAS must be a configured instance, and under `--run` one with a `-worker`, or the
    binary exits 2. `--dry-run` validates no endpoint: it treats the aliases its own `-worker` flags
-   name as the uploadable set, so given `--run`'s flags it prints `--run`'s decisions; with no
-   `-worker` at all it treats every configured instance as uploadable.
+   name as the uploadable set, and reads where `--run` BOUND each session — and the repo it kept —
+   from `--run`'s state file (`-state`), READ-ONLY: no lock, no save. So given `--run`'s flags and
+   state it prints `--run`'s decision (`TestADryRunReadsWhereRunBoundTheSession`), `deferred` for a
+   session `--run` would send nothing of this run. With no state file it says so on stderr and
+   treats every session as bound nowhere yet; with no `-worker` at all it treats every configured
+   instance as uploadable.
 3. **The default instance**, as before — also for a session with no recorded directory, a directory
    that is gone or is not a git repo, or a repo with no `origin`.
 
@@ -203,13 +213,14 @@ means something else).
 
 | exit | means |
 |---|---|
-| 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run; a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` |
+| 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run, as is a session DEFERRED because its repo now routes to an instance with no `-worker` (§ *A session that recorded no scope*); a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` |
 | 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session for a reason that recurs on every run with nothing changed on either side (`capture.Recurs`): an **unresumable position** or **another uploader** (table below) — or **`-opencode-discover` was refused**: `opencode debug scrap` failed (a missing binary, a non-zero exit, or an answer that is not a list of projects with absolute worktrees and sandboxes — never read as "no projects"). That refuses only the DISCOVERED projects: Claude Code and every explicit `-opencode-project` directory are still captured, and a `refused opencode discovery` line says so at the start. One last stderr line per cause names the count and that cause's remedy |
 | 1 | the state cannot be read or saved, a session tree cannot be listed, or an instance refused the capture token (401/403); wins over 3 |
 | 2 | usage, and `--self-test`'s "could not vouch" |
 
-`--dry-run` reads no state and talks to no instance, so no session refusal here can arise in it; a
-refused `-opencode-discover` is the one 3 it shares — reported the same way, after everything else
+`--dry-run` talks to no instance and writes nothing — it READS the state file, when there is one,
+for where each session is bound; one that cannot be read or is malformed exits 1, as for `--run`. No
+session refusal here can arise in it; a refused `-opencode-discover` is the one 3 it shares — reported the same way, after everything else
 it could read was printed.
 
 | cause | the line to look for | exit | remedy |

@@ -41,9 +41,11 @@
 // table names that scope; else to ALIAS when that repo's `origin` owner is OWNER; else to the
 // default instance (`capture.Decide`). ALIAS must be a configured instance — and, under --run, one
 // with a `-worker` — or it is a usage error (exit 2). Neither the table nor the flag places a NEW
-// session on an instance this run has no `-worker` for; it goes to the default instead, while a
-// session already bound there stays bound and is retried. A session that recorded a scope is placed
-// by its scopes alone, as before.
+// session on an instance this run has no `-worker` for; it goes to the default instead. A session
+// already bound is never re-placed on such a run: bound to that instance it stays and is retried,
+// bound to the default it stays there, bound to any other instance nothing of it is sent this run
+// (`capture.RepoRules`). A session that recorded a scope is placed by its scopes alone, as before.
+// `--dry-run` reads `--run`'s state, read-only, for where each session is bound.
 package main
 
 import (
@@ -90,7 +92,7 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		dryRun     = fs.Bool("dry-run", false, "print per-session counts, V and the routing decision; write nothing")
 		runOnce    = fs.Bool("run", false, "one capture pass: read, redact, route, upload, save the watermarks, exit")
 		host       = fs.String("host", "", "--run: this host's label, the one its capture token was minted for (-worker-host)")
-		statePath  = fs.String("state", "", "--run: the 0600 state file (default $XDG_STATE_HOME/cairn/capture/state.json)")
+		statePath  = fs.String("state", "", "--run: the 0600 state file (default $XDG_STATE_HOME/cairn/capture/state.json); --dry-run reads it, never writes it")
 		hostKey    = fs.String("host-key", "", "--run: the 0600 per-host redaction tag key (default $XDG_STATE_HOME/cairn/capture/host.key)")
 		maxRequest = fs.Int("max-request-bytes", capture.DefaultMaxRequest, "--run: the largest request body; a larger record is sent as frames")
 		workers    multi
@@ -178,9 +180,15 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
 		return exitUsage
 	}
+	state, err := dryState(*statePath, stateHome, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
+		return exitError
+	}
 	runner := capture.ExecRunner{Bin: *ocBin}
 	dirs, discRefused := opencodeDirs(*ocDisc, ocDirs, runner, stderr)
 	agent := &capture.Agent{
+		State:        state,
 		ClaudeRoot:   *claudeRoot,
 		OpencodeDirs: dirs,
 		Runner:       runner,
@@ -373,8 +381,25 @@ func uploadable(eps map[string]capture.Endpoint) map[string]bool {
 	return out
 }
 
+// dryState is `--run`'s state for `--dry-run` to read where each session is BOUND — READ-ONLY:
+// [capture.LoadState] opens it `O_RDONLY`, no lock is taken (the lock file is created on open), and
+// nothing here or in [capture.Agent.DryRun] saves it. An absent file is every session unbound, said
+// on stderr so the operator knows the decisions assume it; an unreadable or malformed one refuses, as
+// `--run` would, rather than printing decisions about a state nobody can see.
+func dryState(path, stateHome string, stderr io.Writer) (*capture.State, error) {
+	if path == "" {
+		path = filepath.Join(stateHome, "cairn", "capture", "state.json")
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(stderr, "cairn-capture: no state file at %s: every session is treated as bound nowhere yet\n", path)
+		return nil, nil
+	}
+	return capture.LoadState(path)
+}
+
 // dryUploadable is the same set for `--dry-run`, which validates no endpoint: the aliases its
-// `-worker` flags name, so a dry run given `--run`'s flags prints `--run`'s decisions. With no
+// `-worker` flags name, so a dry run given `--run`'s flags — and its state ([dryState]) — prints
+// `--run`'s decisions. With no
 // `-worker` at all it restricts nothing — `--run` refuses that case outright, so there is no `--run`
 // answer to match, and a dry run then prints what the routing would do with every instance reachable.
 func dryUploadable(workers []string) map[string]bool {

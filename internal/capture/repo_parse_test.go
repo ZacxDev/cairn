@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ZacxDev/cairn/internal/client"
 )
 
 // Unit tests of the pieces the repo arm is built from. Unlike `repo_route_test.go` these name
@@ -205,6 +207,33 @@ func TestTheRepoArmPlacesNoSessionOnAnInstanceThisRunCannotUploadTo(t *testing.T
 	} {
 		if d := Decide(nil, c.repo, repoRouting, c.rules); d.Held || d.Instance != c.want {
 			t.Errorf("%s: %+v, want %s", c.name, d, c.want)
+		}
+	}
+}
+
+// TestABoundSessionIsNeverShippedToAnInstanceItsRepoNoLongerRoutesTo (#292's audit, round 3, F1), on
+// Decide: with three instances, a session bound to `client` whose repo the table now sends to
+// `gamma` — configured, no worker this run — is DEFERRED: neither kept on client nor moved to the
+// default. Bound to gamma itself, or to the default, or new, it is not deferred.
+func TestABoundSessionIsNeverShippedToAnInstanceItsRepoNoLongerRoutesTo(t *testing.T) {
+	three := client.Routing{
+		Instances:    []client.Instance{{Alias: "personal"}, {Alias: "client"}, {Alias: "gamma"}},
+		Routes:       map[string]string{"beta-notes": "gamma"},
+		RoutesSource: "the test's table",
+	}
+	noGamma := map[string]bool{"personal": true, "client": true}
+	for _, c := range []struct {
+		name, bound, want string
+		deferred          bool
+	}{
+		{"bound to another non-default instance", "client", "", true},
+		{"bound to the routed instance itself", "gamma", "gamma", false},
+		{"bound to the default", "personal", "personal", false},
+		{"new", "", "personal", false},
+	} {
+		d := Decide(nil, Repo{Scope: "beta-notes"}, three, RepoRules{Uploadable: noGamma, Bound: c.bound})
+		if d.Held || d.Deferred != c.deferred || d.Instance != c.want {
+			t.Errorf("%s: %+v, want instance %q deferred=%v", c.name, d, c.want, c.deferred)
 		}
 	}
 }
