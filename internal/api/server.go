@@ -243,6 +243,7 @@ func New(storeRoot string, tokens []authz.TokenRecord, trustedProxies []netip.Pr
 		"arcs":     {arity: 2, handler: s.arcsList},
 		"arc":      {arity: 3, handler: s.arcShow},
 		"sources":  {arity: 2, handler: s.sourcesShow},
+		"whoami":   {arity: 1, handler: s.whoami},
 	}
 	s.writeRoutes = map[writeKey]writeRoute{
 		{"POST", "entry"}: {arity: 4, tail: []string{"bullets"}, handler: s.appendBullet},

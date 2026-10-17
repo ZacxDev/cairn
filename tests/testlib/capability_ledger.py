@@ -291,6 +291,22 @@ LEDGER: tuple[Capability, ...] = (
                     "not extended",
     ),
     Capability(
+        name="whoami",
+        effect=READS,
+        cli=None,
+        route=("GET", "/api/v1/whoami"),
+        no_cli_because="its consumer is an issuing service that already holds the caller's token "
+                       "and reads the JSON body directly; no client verb is proposed. A verb would "
+                       "be a separate change and would move this row",
+        note="the caller's OWN authority as JSON: its principal, the federation status and the "
+             "split of the groups ITS token claimed, and the scope names it may read. A self-view, "
+             "never an enumeration of the group map or of other principals",
+        go_only=True,
+        go_only_why="on the arcs/sources precedent: it reports the control plane's federation "
+                    "report and read set, which the Python oracle does not have, so the oracle "
+                    "is not extended",
+    ),
+    Capability(
         name="audit-refs",
         effect=READS,
         cli="audit-refs",

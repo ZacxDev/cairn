@@ -120,6 +120,9 @@ PUT  /api/v1/arc/{home}/{slug}             register/update an arc; needs `-arc-j
 GET  /api/v1/sources/{scope}               the scope's declared code sources, read from
                                            $CAIRN_SOURCE_JOURNAL (env only, OUTSIDE the
                                            store root, never written by the pod) — GO POD ONLY
+GET  /api/v1/whoami                        the caller's OWN authority, as JSON: principal,
+                                           federation status, the split of ITS claimed
+                                           groups, the scope names it reads — GO POD ONLY
 POST /api/v1/entry/{scope}/{ref}/bullets   append ONE attributed bullet
 PUT  /api/v1/entry/{scope}/{ref}           whole-file replace, `If-Match` REQUIRED
                                            …or CREATE, with `If-None-Match: *`

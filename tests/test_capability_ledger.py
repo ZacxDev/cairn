@@ -549,6 +549,7 @@ class TestTheGoOnlyDeclaration:
         assert go_only_route_names() == frozenset({
             "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
             "GET arc", "HEAD arc", "PUT arc", "GET sources", "HEAD sources",
+            "GET whoami", "HEAD whoami",
         })
 
     def test_RED_a_go_only_row_with_no_reason_is_refused(self):
@@ -576,6 +577,7 @@ class TestTheGoOnlyDeclaration:
             "GET synthetic-go-only", "HEAD synthetic-go-only",
             "GET sessions", "HEAD sessions", "GET arcs", "HEAD arcs",
             "GET arc", "HEAD arc", "PUT arc", "GET sources", "HEAD sources",
+            "GET whoami", "HEAD whoami",
         }
         # …and a go_only route is NOT one the oracle-side gate expects `server.py` to
         # have.

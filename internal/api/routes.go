@@ -74,7 +74,12 @@ type writeKey struct {
 // scope's declared code sources, from a journal the browser surface writes and this pod only READS.
 // Its derived `HEAD` is the ledger's one rule, kept (the plan's Q16). The dual-run gate discovers
 // routes from the oracle, so it is BLIND to this head — a named gap, not a fifth ledger.
-var readHeads = []string{"recall", "search", "snapshot", "sessions", "arcs", "arc", "sources"}
+//
+// ⚠ `whoami` IS GO-ONLY ON THE SAME PRECEDENT: the caller's own authority as JSON, built from
+// the federation report and the read set (`whoami.go`). The oracle has no control plane and no
+// group federation to report, so extending it would serve a view of nothing. Same four places,
+// and the dual-run gate is blind to it for the same reason as `sources`.
+var readHeads = []string{"recall", "search", "snapshot", "sessions", "arcs", "arc", "sources", "whoami"}
 
 var writeKeys = []writeKey{
 	{"POST", "entry"},

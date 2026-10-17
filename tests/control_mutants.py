@@ -7805,6 +7805,59 @@ MUTANTS: tuple[Mutant, ...] = (
         why="the user path sets them; a second return that forgets to leaves federated requests — the "
         "ones an issuing service most needs to join on `jti` — with no `sub=`/`jti=`.",
     ),
+    # THE WHOAMI SELF-VIEW (`internal/api/whoami.go`). Each row is a shortcut a reader of the
+    # contract could plausibly take; the killers pin literal bodies, so none is derived from
+    # the code under test.
+    Mutant(
+        name="whoami-status-hardcoded-to-mapped",
+        path="internal/api/whoami.go",
+        old="\t\tview.Status = string(fed.Status)\n",
+        new="\t\tview.Status = string(control.FederationMapped)\n",
+        killer="TestWhoamiAnswersEachFederationStatusAsTheContract",
+        why="a consumer that only ever tested a mapped member would never notice; every caller who "
+        "reaches nothing would then be told to go on reading instead of `no-groups`/`groups-unmapped`.",
+    ),
+    Mutant(
+        name="whoami-mapped-and-unmapped-swapped",
+        path="internal/api/whoami.go",
+        old="\t\tview.Groups.Mapped = sortedNonNil(fed.Mapped)\n"
+        "\t\tview.Groups.Unmapped = sortedNonNil(fed.Unmapped)\n",
+        new="\t\tview.Groups.Mapped = sortedNonNil(fed.Unmapped)\n"
+        "\t\tview.Groups.Unmapped = sortedNonNil(fed.Mapped)\n",
+        killer="TestWhoamiAnswersEachFederationStatusAsTheContract",
+        extra_killers=("TestWhoamiListsExactlyTheReadSetAsNames",),
+        why="two adjacent lines of one shape; swapped, the consumer tells a member their mapped "
+        "groups are the ones that confer nothing.",
+    ),
+    Mutant(
+        name="whoami-lists-the-write-set",
+        path="internal/api/whoami.go",
+        old="\tfor _, scope := range auth.NamedScopes(control.VerbRead) {\n",
+        new="\tfor _, scope := range auth.NamedScopes(control.VerbWrite) {\n",
+        killer="TestWhoamiListsExactlyTheReadSetAsNames",
+        why="'what may this caller reach' read as 'what may it write'; under the federated read "
+        "ceiling that lists nothing, and for a token row it would diverge the day a grant confers "
+        "read without write. A view must be the set the reads are narrowed with.",
+    ),
+    Mutant(
+        name="whoami-reports-any-caller-as-federated",
+        path="internal/api/whoami.go",
+        old="\tif fed, federated := auth.Federation(); federated {\n",
+        new="\tif fed, federated := auth.Federation(); federated || true {\n",
+        killer="TestWhoamiGivesANonFederatedCallerItsOwnView",
+        why="dropping the 'did federation produce this authority' test because 'the report is "
+        "empty for the others anyway' — it is the zero value, and a machine token is then "
+        "answered with an empty status the contract does not define.",
+    ),
+    Mutant(
+        name="whoami-serialises-an-empty-list-as-null",
+        path="internal/api/whoami.go",
+        old="\t\tScopes:    []string{},\n",
+        new="\t\tScopes:    nil,\n",
+        killer="TestWhoamiAnswersEachFederationStatusAsTheContract",
+        why="`var out []string` is the idiomatic zero; `encoding/json` writes it as `null`, and a "
+        "consumer that iterates `scopes` then reads a caller who reaches nothing as a malformed answer.",
+    ),
 )
 
 

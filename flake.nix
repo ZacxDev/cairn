@@ -2059,16 +2059,19 @@
           # against the oracle's tables and this one against the `go_only` rows of
           # `tests/conformance/requests.json` AND of the capability ledger. The first,
           # `sessions/<scope>`, is the arcs/sessions S2 slice; `arcs`/`arc` are S3's;
-          # `sources/<scope>` is S2 of the scope-refs plan.
+          # `sources/<scope>` is S2 of the scope-refs plan; `whoami` is the caller's own
+          # self-view.
           cat > want-go-only.txt <<'EOF'
           GET arc
           GET arcs
           GET sessions
           GET sources
+          GET whoami
           HEAD arc
           HEAD arcs
           HEAD sessions
           HEAD sources
+          HEAD whoami
           PUT arc
           EOF
           sed -i 's/^ *//; /^$/d' want.txt want-go-only.txt
