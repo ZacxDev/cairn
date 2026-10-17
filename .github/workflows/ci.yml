@@ -1172,7 +1172,8 @@ jobs:
       #
       # ⚠ THE SELF-TEST RUNS FIRST AND IS NOT OPTIONAL. Every assertion is a grep or an exit-code
       # compare, which a harness wired to nothing passes; `--self-test` rebuilds from sabotaged copies
-      # of the source (visibility disabled in each arc answer, the check unable to find) and refuses
+      # of the source (visibility disabled in each arc answer, the schema-2 opt-in ignored, the check
+      # unable to find) and refuses
       # unless each one turns its named assertion RED. The script itself refuses (exit 2) when fewer
       # assertions ran than it declares, and the floor below re-counts its PASS lines rather than
       # reading its exit code.
@@ -1181,15 +1182,16 @@ jobs:
         run: |
           set -o pipefail
           tests/arcs/e2e.sh --self-test | tee /tmp/arcs-e2e-self.txt
-          grep -qx 'SUMMARY e2e-self-test: sabotaged=3 caught=3' /tmp/arcs-e2e-self.txt
+          grep -qx 'SUMMARY e2e-self-test: sabotaged=4 caught=4' /tmp/arcs-e2e-self.txt
           tests/arcs/e2e.sh > /tmp/arcs-e2e.txt 2>&1 || { cat /tmp/arcs-e2e.txt; exit 1; }
           cat /tmp/arcs-e2e.txt
           passes=$(grep -c '^PASS ' /tmp/arcs-e2e.txt || true)
           fails=$(grep -c '^FAIL ' /tmp/arcs-e2e.txt || true)
           echo "arcs e2e: passes=$passes fails=$fails"
-          # 32 assertions, measured when the script landed; `EXPECTED` in the script moves with it.
-          if [ "$passes" -lt 32 ] || [ "$fails" -ne 0 ]; then
-            echo "REFUSING: $passes PASS / $fails FAIL lines, and 32 / 0 were measured"
+          # 36 assertions since arc schema 2 added its four (32 when the script landed); `EXPECTED` in
+          # the script moves with it.
+          if [ "$passes" -lt 36 ] || [ "$fails" -ne 0 ]; then
+            echo "REFUSING: $passes PASS / $fails FAIL lines, and 36 / 0 were measured"
             exit 1
           fi
 

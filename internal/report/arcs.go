@@ -20,9 +20,10 @@ import (
 // witnesses are the literal bodies in `arcs_test.go`; the conformance goldens for these routes are
 // recorded from `cmd/cairn-server` and are CHANGE DETECTORS.
 //
-// 🔴 VISIBILITY IS ONE RULE, APPLIED HERE AND NOWHERE ELSE (operator decision Q1): AN ARC EXISTS
-// FOR A CALLER IFF ITS HOME SCOPE IS IN `visible` — the SAME `store.ScopeSet` `recall` and
-// `sessions` narrow with, passed in and never re-derived. Every OTHER scope an arc names
+// 🔴 VISIBILITY IS ONE RULE, `arcs.Registration.VisibleTo`, AND NOTHING HERE RE-STATES IT
+// (operator decision Q1, widened by schema 2): AN ARC EXISTS FOR A CALLER IFF ITS HOME SCOPE IS IN
+// `visible` — OR THE ARC OPTED IN AND ONE OF ITS DECLARED SCOPES IS — over the SAME
+// `store.ScopeSet` `recall` and `sessions` narrow with, passed in and never re-derived. Every OTHER scope an arc names
 // (declared, inferred, a member's) is listed only when it is also in `visible`, and a hidden one
 // is OMITTED, NOT COUNTED. So an arc homed in a scope the caller cannot read answers exactly what
 // an arc nobody registered answers, and names neither its home nor its slug.
@@ -60,6 +61,11 @@ const (
 	ArcsProvenanceLine   = "provenance: declared = the registration names this scope · inferred: a member session wrote here; the arc did not declare this scope"
 	ArcsRegistrationLine = "registration: arcs are pushed by the operator tooling at each handoff and are its own word — an arc nobody registered is not listed, and each is only as fresh as its last push"
 	ArcsDamagedLine      = "⚠ the registration journal holds record(s) that could not be read; an arc registered only by such a record is NOT shown"
+	// 🔴 THE TWO VISIBILITY LINES ABOVE ARE TRUE FOR EVERY ARC THAT DID NOT OPT IN, AND THESE ARE
+	// PRINTED EXACTLY WHEN ONE THAT DID IS IN THE ANSWER — so a schema-1 answer keeps its bytes and
+	// an answer that contradicts the line above it says so in the same body.
+	ArcsOptInLine = "visibility exception: an arc marked `declared-visible` OPTED IN and is listed to readers of ANY scope it declares, whether or not they can read its home"
+	ArcOptInLine  = "visibility exception (visible_to_declared: true): this arc OPTED IN — it is ALSO shown to readers of any scope it declares, whether or not they can read its home"
 )
 
 // RegistrationsUnconfiguredBody is shared by both answers — and by the browser surface, which
@@ -96,13 +102,18 @@ type ArcLine struct {
 	DeclaredVisible []string
 	MemberSessions  []string
 	RegisteredAt    string
+	// OptIn and Aliases are schema 2's two listing-level facts: the opt-in (so a reader can tell
+	// WHY an arc homed elsewhere is listed) and the names it may be asked for by.
+	OptIn   bool
+	Aliases []string
 }
 
 // Arcs derives the `arcs/<scope>` answer. `snap` is nil when the pod has no journal configured.
 //
 // 🔴 `visible` IS PASSED, NEVER RE-DERIVED — `Sessions`' rule. The scope's existence is the index's
 // answer (refused == absent), the inference reads only the files that index names
-// (`touch.Writes`), and an arc is a candidate only if `visible.Allows(home)`.
+// (`touch.Writes`), and an arc is a candidate only if `reg.VisibleTo(visible)` — its home is
+// readable, or it opted in and one of its declared scopes is.
 func Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) (ArcsReport, error) {
 	if snap == nil {
 		return ArcsReport{Status: StatusRegistrationsUnconfigured, Scope: store.NormalizeRef(scope)}, nil
@@ -126,11 +137,15 @@ func Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) 
 	}
 	inListed := map[string]bool{}
 	for _, reg := range snap.Sorted() {
-		if !visible.Allows(reg.Home) {
+		if !reg.VisibleTo(visible) {
 			continue
 		}
 		line := ArcLine{Home: reg.Home, Slug: reg.Slug, Status: reg.Status, ClosingKind: reg.ClosingKind,
-			Members: len(reg.Members), Declared: reg.Declares(res.Scope), RegisteredAt: reg.RegisteredAt}
+			Members: len(reg.Members), Declared: reg.Declares(res.Scope), RegisteredAt: reg.RegisteredAt,
+			OptIn: reg.VisibleToDeclared}
+		if reg.Summary != nil {
+			line.Aliases = reg.Summary.Aliases
+		}
 		for _, d := range reg.DeclaredScopes {
 			if visible.Allows(d) {
 				line.DeclaredVisible = append(line.DeclaredVisible, d)
@@ -227,6 +242,9 @@ func (r ArcsReport) RenderText() string {
 		if r.Damaged {
 			b.WriteString("  " + ArcsDamagedLine + "\n")
 		}
+		if r.AnyOptIn() {
+			b.WriteString("  " + ArcsOptInLine + "\n")
+		}
 	}
 	b.WriteString("\n")
 	if sentence := r.StatusSentence(); sentence != "" {
@@ -235,10 +253,33 @@ func (r ArcsReport) RenderText() string {
 	}
 	b.WriteString(r.ListHeading())
 	for _, a := range r.Arcs {
-		fmt.Fprintf(&b, "\n- %s/%s · %s · status %s · closing %s · %s",
-			a.Home, a.Slug, a.Provenance(), StatusWord(a.Status), a.ClosingKind, a.MembersPhrase())
+		fmt.Fprintf(&b, "\n- %s/%s · %s · status %s · closing %s · %s%s",
+			a.Home, a.Slug, a.Provenance(), StatusWord(a.Status), a.ClosingKind, a.MembersPhrase(), a.SchemaTwoSuffix())
 	}
 	return b.String()
+}
+
+// AnyOptIn is true when a listed arc opted in to declared-scope visibility.
+func (r ArcsReport) AnyOptIn() bool {
+	for _, a := range r.Arcs {
+		if a.OptIn {
+			return true
+		}
+	}
+	return false
+}
+
+// SchemaTwoSuffix is "" for an arc using nothing schema 2 added — so its row keeps its bytes —
+// and otherwise ` · declared-visible` and/or ` · aliases a, b`.
+func (a ArcLine) SchemaTwoSuffix() string {
+	out := ""
+	if a.OptIn {
+		out += " · declared-visible"
+	}
+	if len(a.Aliases) > 0 {
+		out += " · aliases " + strings.Join(a.Aliases, ", ")
+	}
+	return out
 }
 
 // StatusSentence is the answer's body for every status that lists NOTHING, and "" for
@@ -282,9 +323,10 @@ type ArcReport struct {
 
 // Arc derives the `arc/<home>/<slug>` answer. `snap` is nil when no journal is configured.
 //
-// 🔴 THE HOME CHECK IS `visible.Allows(home)` AND IT RUNS BEFORE THE LOOKUP'S RESULT IS USED, so a
-// registered arc homed in an unreadable scope reaches the SAME branch, with the same zero-value
-// report, as a key nobody registered. The member inference walks only the scopes the narrowed index
+// 🔴 THE VISIBILITY CHECK IS `reg.VisibleTo(visible)` AND IT RUNS BEFORE THE LOOKUP'S RESULT IS
+// USED, so a registered arc this caller may not see (homed in an unreadable scope, and not opted in
+// through a scope it can read) reaches the SAME branch, with the same zero-value report, as a key
+// nobody registered. The member inference walks only the scopes the narrowed index
 // holds, so a member's write in a hidden scope is never named.
 func Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapshot) (ArcReport, error) {
 	if snap == nil {
@@ -292,7 +334,7 @@ func Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapsh
 	}
 	key, err := arcs.NormalizeKey(home, slug)
 	reg, found := snap.Latest[key]
-	if err != nil || !found || !visible.Allows(key.Home) {
+	if err != nil || !found || !reg.VisibleTo(visible) {
 		return ArcReport{Status: StatusArcUnregistered}, nil
 	}
 	index, err := store.LoadStore(storeRoot, "scanned", visible)
@@ -427,6 +469,9 @@ func (r ArcReport) RenderText() string {
 	b.WriteString("  " + SessionsAttributionLine + "\n")
 	b.WriteString("  " + ArcVisibilityLine + "\n")
 	b.WriteString("  " + ArcsRegistrationLine + "\n")
+	if r.Status == StatusArcFound && r.Reg.VisibleToDeclared {
+		b.WriteString("  " + ArcOptInLine + "\n")
+	}
 	if r.Status == StatusArcFound && r.Damaged {
 		b.WriteString("  " + ArcsDamagedLine + "\n")
 	}
@@ -457,7 +502,52 @@ func (r ArcReport) RenderText() string {
 	for _, m := range members {
 		b.WriteString("\n- " + r.MemberLine(m))
 	}
+	if lines := r.SummaryLines(); len(lines) > 0 {
+		b.WriteString("\n\n" + strings.Join(lines, "\n"))
+	}
 	return b.String()
+}
+
+// SummaryLines is the schema-2 summary as every surface prints it, or nil when the arc has none —
+// so a schema-1 arc's body is byte-identical to what it was before schema 2 existed.
+//
+// 🔴 THE FIRST LINE SAYS WHOSE WORD IT IS AND AS OF WHEN, BEFORE ANY CLAIM. Every line below it is
+// the registering tool's account, read at one commit; a reader citing it cites that commit and its
+// date, never "the arc says".
+func (r ArcReport) SummaryLines() []string {
+	s := r.Reg.Summary
+	if s == nil {
+		return nil
+	}
+	lines := []string{fmt.Sprintf("summary: the registering tool's own word, read from %s at commit %s (committed %s)",
+		s.Source.RepoPath, s.Source.Commit, s.Source.CommittedAt)}
+	if s.ClosingCondition != "" {
+		lines = append(lines, "closing condition (stated): "+s.ClosingCondition)
+	}
+	// 🔴 ITEMS ARE PRINTED VERBATIM, IN ORDER — THE PRODUCER OWNS ANY NUMBERING OR BULLET. A tool
+	// that sends `3. drain` (its own rank, gaps included) would otherwise read `1. 3. drain`. Each
+	// item is indented under its heading, which adds nothing to the text and keeps an item from
+	// starting a line at column 0, where the pod's own lines start.
+	lines = append(lines, fmt.Sprintf("state now: %d", len(s.StateNow)))
+	for _, item := range s.StateNow {
+		lines = append(lines, SummaryItemIndent+item)
+	}
+	lines = append(lines, fmt.Sprintf("next steps (ranked): %d", len(s.NextSteps)))
+	for _, item := range s.NextSteps {
+		lines = append(lines, SummaryItemIndent+item)
+	}
+	lines = append(lines, "task refs: "+orNone(s.TaskRefs), "aliases: "+orNone(s.Aliases))
+	return lines
+}
+
+// SummaryItemIndent prefixes every `state now` and `next steps` item line, and nothing else.
+const SummaryItemIndent = "  "
+
+func orNone(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	return strings.Join(items, ", ")
 }
 
 func measured(ok bool) string {

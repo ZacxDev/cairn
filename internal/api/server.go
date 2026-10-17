@@ -1546,8 +1546,15 @@ func (s *Server) registerArc(rq *request, parts []string, body []byte) error {
 		return err
 	}
 	rq.audit(200, outcome.Status)
-	rq.respond(200, []byte(fmt.Sprintf("%s: %s/%s · members=%d · unjoinable=%d\n",
-		outcome.Status, outcome.Record.Home, outcome.Record.Slug, len(outcome.Record.Members), unjoinable)),
+	// 🔴 ONE LINE PER SUMMARY ADJUSTMENT AFTER THE OUTCOME LINE, AND NOTHING WHEN THERE IS NONE — so
+	// a registration whose summary was stored as sent answers byte-identically to schema 1's, and a
+	// tool learns every item the pod clipped, sanitized, redacted or dropped (`arcs.Adjustment.Line`).
+	answer := fmt.Sprintf("%s: %s/%s · members=%d · unjoinable=%d\n",
+		outcome.Status, outcome.Record.Home, outcome.Record.Slug, len(outcome.Record.Members), unjoinable)
+	for _, a := range reg.SummaryAdjustments() {
+		answer += a.Line() + "\n"
+	}
+	rq.respond(200, []byte(answer),
 		"text/plain; charset=utf-8",
 		map[string]string{"X-Store-Status": outcome.Status})
 	return nil

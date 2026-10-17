@@ -71,6 +71,9 @@ const (
 // The fixed lines. Pinned as WHOLE strings by `arcscheck_test.go`.
 const (
 	ArcsCheckVisibilityLine = "visibility: only arcs whose HOME scope is readable to you are checked · a declared scope you cannot read is neither checked nor counted"
+	// ArcsCheckOptInLine is printed exactly when a checked arc opted in to declared-scope
+	// visibility — `ArcsOptInLine`'s rule, so a schema-1 answer keeps its bytes.
+	ArcsCheckOptInLine      = "visibility exception: an arc that OPTED IN is also checked when any scope it declares is readable to you; its home is then judged only if you can read it"
 	ArcsCheckFindingsLine   = "findings (exit 9): a home or declared scope readable to you that does not exist in the store · journal record(s) that could not be read"
 	ArcsCheckNotFindingLine = "not findings: a member session with no attributed write (members come from commits and transcripts, not entry trailers) and a writing session in no arc (arcs are registered only from now on) — both are coverage, below"
 )
@@ -105,6 +108,8 @@ type ArcsCheckReport struct {
 	AllScopes bool
 	// Checked counts the arcs examined, split by status (unknown never counted as open, Q4).
 	Checked, Open, Closed, Unknown int
+	// OptIn is true when a checked arc opted in to declared-scope visibility (`ArcsCheckOptInLine`).
+	OptIn bool
 	// Members counts member sessions over the checked arcs (one per arc membership); Wrote is how
 	// many of them wrote an attributed bullet in a scope readable to the caller.
 	Members, MembersWrote int
@@ -121,7 +126,8 @@ type ArcsCheckReport struct {
 // ArcsCheck derives the check. `snap` is nil when the pod has no journal configured.
 //
 // 🔴 `visible` IS PASSED, NEVER RE-DERIVED — the rule every arc answer follows. An arc is checked
-// only if `visible.Allows(home)`; a scope's existence is the narrowed index's answer; and a
+// only if `reg.VisibleTo(visible)` (its home is readable, or it opted in and a declared scope is);
+// a scope's existence is the narrowed index's answer; and a
 // declared scope is examined only if `visible.Allows` it.
 func ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, snap *arcs.Snapshot) (ArcsCheckReport, error) {
 	rep := ArcsCheckReport{Scope: store.NormalizeRef(scope), AllScopes: allScopes}
@@ -157,7 +163,7 @@ func ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, 
 	}
 	inAnyArc := map[string]bool{}
 	for _, reg := range snap.Sorted() {
-		if !visible.Allows(reg.Home) {
+		if !reg.VisibleTo(visible) {
 			continue
 		}
 		for _, m := range reg.Members {
@@ -167,6 +173,7 @@ func ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, 
 			continue
 		}
 		rep.Checked++
+		rep.OptIn = rep.OptIn || reg.VisibleToDeclared
 		switch reg.Status {
 		case arcs.StatusOpen:
 			rep.Open++
@@ -181,7 +188,11 @@ func ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, 
 				rep.MembersWrote++
 			}
 		}
-		if !exists[reg.Home] {
+		// 🔴 ONLY A HOME THIS CALLER CAN READ IS JUDGED. An arc can be visible through an opted-in
+		// declared scope with its home unreadable (`arcs.Registration.VisibleTo`), and the narrowed
+		// index holds no unreadable scope — so without this guard every such arc would be reported
+		// `home-scope-absent`, a false finding that also claims a grant the caller does not hold.
+		if visible.Allows(reg.Home) && !exists[reg.Home] {
 			rep.Findings = append(rep.Findings, ArcFinding{Kind: FindingHomeScopeAbsent, Home: reg.Home, Slug: reg.Slug, Scope: reg.Home})
 		}
 		for _, d := range reg.DeclaredScopes {
@@ -239,6 +250,9 @@ func (r ArcsCheckReport) RenderText() string {
 	b.WriteString("  " + SessionsReadsLine + "\n")
 	b.WriteString("  " + SessionsAttributionLine + "\n")
 	b.WriteString("  " + ArcsCheckVisibilityLine + "\n")
+	if r.OptIn {
+		b.WriteString("  " + ArcsCheckOptInLine + "\n")
+	}
 	b.WriteString("  " + ArcsCheckFindingsLine + "\n")
 	b.WriteString("  " + ArcsCheckNotFindingLine + "\n")
 	if r.Status == StatusRegistrationsUnconfigured {

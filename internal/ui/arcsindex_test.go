@@ -541,3 +541,15 @@ func TestTheArcTabHrefsEscapeAPlantedHostileSlug(t *testing.T) {
 		t.Errorf("the tab href does not round-trip: %v", q)
 	}
 }
+
+// TestTheEmptyArcsSentenceCoversOptedInArcs pins the empty-list sentence as a WHOLE string: since
+// arc schema 2 an arc is visible through its home OR through an opted-in declared scope, and the
+// "nothing visible" sentence must not claim the home is the only way in.
+func TestTheEmptyArcsSentenceCoversOptedInArcs(t *testing.T) {
+	if got := arcsIndexEmpty(0, false); got != "No registered arc is visible to you — none is homed in a scope you can read, and none that opted in declares one." {
+		t.Fatalf("empty sentence: %q", got)
+	}
+	if got := arcsIndexEmpty(3, false); got != "No arc you can see is live — none is open or was updated in the last 14 days." {
+		t.Fatalf("control: the not-live sentence is unchanged: %q", got)
+	}
+}

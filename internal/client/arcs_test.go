@@ -164,3 +164,97 @@ func TestTheArcVerbsTakeTheirFlagsAndNothingElse(t *testing.T) {
 		}
 	}
 }
+
+// prePodOf answers a schema-2 payload EXACTLY as a pod built before schema 2 does — its strict
+// decoder's 400 naming the first unknown key, the line measured against such a build — and hands
+// every other request to `next`, the real pod. It is the old pod for the one request shape the two
+// builds disagree on.
+func prePodOf(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			body, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+			// The old decoder names the FIRST unknown key in document order.
+			first, at := "", len(body)
+			for _, key := range []string{"summary", "visible_to_declared"} {
+				if i := strings.Index(string(body), `"`+key+`"`); i >= 0 && i < at {
+					first, at = key, i
+				}
+			}
+			if first != "" {
+				w.Header().Set("X-Store-Status", "bad-request")
+				w.WriteHeader(400)
+				io.WriteString(w, oldPodRefusalPrefix+`"`+first+`")`+"\n")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// oldPodRefusalPrefix + `"<key>")` is the old pod's line, measured against such a build for both keys.
+const oldPodRefusalPrefix = `bad request: body must be one JSON object of the registration schema (json: unknown field `
+
+const oldPodRefusal = oldPodRefusalPrefix + `"summary")`
+
+const schemaTwoPayload = `{"schema":2,"status":"open","members":[{"session":"s-0007","role":"originated"}],` +
+	`"summary":{"state_now":["moved"],"next_steps":[],"task_refs":[],"aliases":[],` +
+	`"source":{"repo_path":"docs/h.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}},` +
+	`"visible_to_declared":true}`
+
+// TestAnOldPodsRefusalOfSchemaTwoIsReportedAsARefusal: a pod built before schema 2 refuses the
+// payload, and the client SAYS so — the pod's own line on stderr, the write-refused exit (6), no
+// "registered" line, and nothing stored. It does not downgrade and re-send: that printed success
+// while the summary the caller sent was dropped. The POSITIVE CONTROL is the same payload to a pod
+// that knows schema 2, which registers it and serves the summary.
+func TestAnOldPodsRefusalOfSchemaTwoIsReportedAsARefusal(t *testing.T) {
+	for _, old := range []bool{true, false} {
+		journal := filepath.Join(t.TempDir(), "journal.jsonl")
+		tsrv := arcPod(t, journal)
+		url := tsrv.URL
+		if old {
+			wrapped := httptest.NewServer(prePodOf(tsrv.Config.Handler))
+			t.Cleanup(wrapped.Close)
+			url = wrapped.URL
+		}
+		home := arcClientHost(t, url)
+		payload := filepath.Join(home, "arc.json")
+		if err := os.WriteFile(payload, []byte(schemaTwoPayload), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, out, errOut := runCLI(t, "arc-register", "--scope", "alpha-notes", "--slug", "gadget-rollout", "--from", payload)
+		shown, _ := podBody(t, tsrv.URL, "/api/v1/arc/alpha-notes/gadget-rollout")
+		if old {
+			if code != ExitWriteRefused || !strings.Contains(errOut, oldPodRefusal) || strings.Contains(out, "arc-registered") ||
+				!strings.Contains(shown, "status=arc-unregistered") {
+				t.Fatalf("an old pod's refusal must be reported, exit 6, nothing stored: %d\nstdout:\n%s\nstderr:\n%s\nshown:\n%s", code, out, errOut, shown)
+			}
+			continue
+		}
+		if code != ExitOK || !strings.Contains(out, "arc-registered: alpha-notes/gadget-rollout · members=1") ||
+			!strings.Contains(shown, "\nstate now: 1\n  moved\n") {
+			t.Fatalf("POSITIVE CONTROL: a schema-2 pod registers the payload: %d\n%s\n%s\nshown:\n%s", code, out, errOut, shown)
+		}
+	}
+}
+
+// TestAnOldPodsRefusalOfAnOptInOnlyPayloadIsReportedToo: the opt-in without a summary is refused by
+// an old pod on `visible_to_declared` itself, and the client reports that line (exit 6, nothing
+// stored). The stub answers the key that comes first, as the old decoder does.
+func TestAnOldPodsRefusalOfAnOptInOnlyPayloadIsReportedToo(t *testing.T) {
+	journal := filepath.Join(t.TempDir(), "journal.jsonl")
+	tsrv := arcPod(t, journal)
+	wrapped := httptest.NewServer(prePodOf(tsrv.Config.Handler))
+	t.Cleanup(wrapped.Close)
+	home := arcClientHost(t, wrapped.URL)
+	payload := filepath.Join(home, "arc.json")
+	if err := os.WriteFile(payload, []byte(`{"schema":2,"status":"open","visible_to_declared":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runCLI(t, "arc-register", "--scope", "alpha-notes", "--slug", "gadget-rollout", "--from", payload)
+	shown, _ := podBody(t, tsrv.URL, "/api/v1/arc/alpha-notes/gadget-rollout")
+	if code != ExitWriteRefused || !strings.Contains(errOut, oldPodRefusalPrefix+`"visible_to_declared")`) ||
+		strings.Contains(out, "arc-registered") || !strings.Contains(shown, "status=arc-unregistered") {
+		t.Fatalf("an opt-in-only payload to an old pod must be reported as refused: %d\nstdout:\n%s\nstderr:\n%s\nshown:\n%s", code, out, errOut, shown)
+	}
+}

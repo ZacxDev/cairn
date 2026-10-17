@@ -31,7 +31,7 @@ src="${E2E_SOURCE:-$repo}"
 
 # The number of assertions a full run makes. 🔴 PINNED, so an assertion that silently stopped
 # running (a `return` in the wrong place, a block skipped) is exit 2 rather than a smaller green.
-EXPECTED=32
+EXPECTED=36
 
 if [[ "${1:-}" == "--self-test" ]]; then
   work="$(mktemp -d "${TMPDIR:-/tmp}/cairn-arcs-e2e-selftest-XXXXXX")"
@@ -78,15 +78,21 @@ PY
   # 1. The visibility rule (operator decision Q1) disabled in BOTH arc answers: an arc homed in a
   #    scope the caller cannot read must then leak, and the closing condition's assertion go red.
   sabotage visibility-off internal/report/arcs.go \
-    $'\tif err != nil || !found || !visible.Allows(key.Home) {' \
+    $'\tif err != nil || !found || !reg.VisibleTo(visible) {' \
     $'\tif err != nil || !found {' \
     "outsider-arc-show-equals-never-registered"
   # 1b. The same rule disabled in the LISTING only: an alpha-homed arc whose member wrote in beta
   #     must then be listed (inferred) to a caller who cannot read alpha.
   sabotage listing-visibility-off internal/report/arcs.go \
-    $'\t\tif !visible.Allows(reg.Home) {' \
+    $'\t\tif !reg.VisibleTo(visible) {' \
     $'\t\tif false {' \
     "outsider-sees-beta-arc-not-alpha-homed"
+  # 1c. Schema 2's opt-in IGNORED by the one visibility predicate: the opted-in arc homed in alpha
+  #     must then stay invisible to the beta-only outsider, and its assertion go red.
+  sabotage opt-in-ignored internal/arcs/summary.go \
+    $'\tif !r.VisibleToDeclared {' \
+    $'\tif true {' \
+    "outsider-sees-opted-in-arc-with-its-summary"
   # 2. The check unable to report a finding: every state is "clean", so the 9 must go red.
   sabotage check-never-finds internal/report/arcscheck.go \
     $'\tif len(rep.Findings) > 0 {' \
@@ -301,6 +307,25 @@ assert check-scoped-beta-still-clean eval 'rc_is 0 && has "status=arcs-check-cle
 printf '{"not": "a record"}\n' >>"$journal"
 cairn writer arcs --check --scope beta-notes
 assert check-journal-damaged-exits-9 eval 'rc_is 9 && has "- journal-damaged · the registration journal holds record(s) that could not be read"'
+
+# --- 4b. SCHEMA 2: an arc homed in alpha that OPTS IN to its declared scope beta -------------------
+# Registered last, so no count above moves. The outsider reads beta only: it now sees this arc and
+# its summary, and still never the alpha-homed arc that did not opt in.
+cat >"$work/arc5.json" <<'JSON'
+{"schema": 2, "status": "open", "declared_scopes": ["beta-notes"], "visible_to_declared": true,
+ "summary": {"closing_condition": "the widget queue stays drained", "state_now": ["queue drained once"],
+             "next_steps": ["1. watch it for a day"], "task_refs": ["tracker:T-7"], "aliases": ["Queue Drain"],
+             "source": {"repo_path": "docs/handoff-queue.md", "commit": "0123456789abcdef0123456789abcdef01234567",
+                        "committed_at": "2000-01-04T00:00:00Z"}}}
+JSON
+cairn writer arc-register --scope alpha-notes --slug e2e-opted-in --from "$work/arc5.json"
+assert register-schema-two-opted-in eval 'rc_is 0 && has "arc-registered: alpha-notes/e2e-opted-in · members=0 · unjoinable=0" && [[ -z "$err" ]]'
+cairn outsider arc-show --scope alpha-notes --slug e2e-opted-in
+assert outsider-sees-opted-in-arc-with-its-summary eval 'rc_is 0 && has "status=arc-found home=alpha-notes slug=e2e-opted-in" && has "visibility exception (visible_to_declared: true): this arc OPTED IN" && has "next steps (ranked): 1" && has "  1. watch it for a day" && lacks "1. 1." && has "aliases: queue-drain"'
+cairn outsider arcs --scope beta-notes
+assert outsider-lists-opted-in-arc-not-the-other eval 'rc_is 0 && has "- alpha-notes/e2e-opted-in · declared · status open · closing none · 0 members · declared-visible · aliases queue-drain" && lacks "e2e-rollout"'
+cairn outsider arc-show --scope alpha-notes --slug e2e-rollout
+assert outsider-still-blind-to-the-arc-that-did-not-opt-in eval 'rc_is 0 && [[ "$out" == "$never" ]]'
 
 # --- 5. no new exit code (Q5): the printed tables, whole ------------------------------------------
 cairn writer -exit-codes

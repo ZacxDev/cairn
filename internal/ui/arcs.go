@@ -31,7 +31,8 @@ import (
 // `scopeSetOf(auth.NamedScopes(control.VerbRead))` — `Authorization.VisibleScopes` spelled over the
 // walk `Visible` already makes, the ONE narrowing `StoreSource.Visible` uses. That set is handed to
 // the report functions unchanged, and THEY apply the arc rule (an arc exists for a caller iff its
-// HOME scope is readable, operator decision Q1) — so there is no second visibility check in
+// HOME scope is readable, or it opted in through a readable declared scope — Q1 as
+// `arcs.Registration.VisibleTo` widens it) — so there is no second visibility check in
 // `internal/ui` to drift from the pod's. A browser that re-derived "may this caller see this arc"
 // would be a third surface deciding it, and the plan's whole reason for a single renderer is that a
 // second decision drifts in the direction nobody notices.

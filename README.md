@@ -392,8 +392,9 @@ members an earlier push measured for it, marked carried. Registering needs the *
 the home scope and on every declared scope (a scope you may not write answers like one that does
 not exist); the bare legacy row may read arcs and may not register one.
 
-**Visibility:** an arc exists for you only when its HOME scope is readable to you; its other scopes
-are listed only if readable too, and hidden ones are omitted, not counted. `arcs --scope X` lists an
+**Visibility:** an arc exists for you only when its HOME scope is readable to you — or, for an arc
+that **opted in** (schema 2, below), when any of its declared scopes is; its other scopes are listed
+only if readable too, and hidden ones are omitted, not counted. `arcs --scope X` lists an
 arc as `declared` when it names X, or `inferred` when one of its member sessions wrote an
 attributed bullet in X without the arc declaring it — a join over self-reported trailers, labelled
 as such. All three verbs print the pod's body verbatim (registrations are not in the cache) and use
@@ -417,9 +418,173 @@ member session with no attributed write in any scope you can read, and a writing
 turning either into a finding would hold the check non-zero forever. **Exit `10`**: no `-arc-journal`
 on the pod, a journal it cannot read, a pod that did not answer, or a pod too old to know
 `?check=1` (it answers a listing, which the client refuses to read as a pass). Only arcs whose HOME
-you can read are checked. ⚠ One pod per run: the scope picks the instance, and a multi-instance
+you can read are checked — plus any that opted in through a declared scope you can read (schema 2,
+below), whose home is then judged only if you can read it. ⚠ One pod per run: the scope picks the instance, and a multi-instance
 host is not fanned out. `tests/arcs/e2e.sh` is the end-to-end check over both real binaries
 (`--self-test` proves it goes RED on a sabotaged build).
+
+### Arc schema 2: a summary, and showing an arc to its declared scopes
+
+A `schema: 2` payload may add two OPTIONAL fields; everything else is as above.
+
+- **`summary`** — the registering tool's own account of where the arc stands, so a reader can ask
+  the store "how far along is this" instead of the handoff document's repository:
+  `closing_condition` (string, optional), `state_now` (list), `next_steps` (list, **ranked** — order
+  is kept), `source` (**required**: `repo_path` relative to the repo, `commit` as a full 40- or 64-hex
+  id, `committed_at` RFC 3339), `task_refs` (list, no whitespace) and `aliases` (list, folded like a
+  slug, deduplicated, sorted). `arc-show` prints it after the members, provenance line first
+  (`summary: the registering tool's own word, read from <repo_path> at commit <commit> (committed
+  <committed_at>)`); a listing row gains ` · aliases a, b`. **`state_now` and `next_steps` items
+  are printed VERBATIM, in the order sent**, one per line under `state now: N` / `next steps
+  (ranked): N`, each indented two spaces. The pod adds no number and no bullet: **the producer owns
+  any numbering** (send `3. drain` for a rank with a gap, and it prints `  3. drain`).
+- **`visible_to_declared: true`** — the arc's **opt-in**: it is also shown, on `arc-show`,
+  `arcs`, `arcs --check` and the browser's arcs and session pages, to readers of **any declared
+  scope**, whether or not they can read its home. Its body then carries `visibility exception
+  (visible_to_declared: true): …` and its listing row ` · declared-visible`, so the answer says why
+  it is there. Unset or `false` is exactly the home-only rule.
+
+**What a consumer may rely on in a listing row** (pinned by tests):
+
+- the row is ` · `-separated, and schema 2 adds at most two segments at its END, in this order:
+  ` · declared-visible` (only for an opted-in arc), then ` · aliases a, b` (only when it has
+  aliases). **When present, the aliases segment is always the LAST segment**, so it can be read
+  by splitting on the last ` · `;
+- **an alias is stored in the slug charset** (`[a-z0-9.-]`), folded exactly as a slug is: lower
+  case, and every other character — `/`, a space, ` · `, any non-ASCII letter — becomes `-`, runs
+  collapse, ends are trimmed. So `HTTP/3` is stored as `http-3`, an alias can never contain the
+  ` · ` separator, and one that folds to nothing is refused. Match aliases by folding the query
+  the same way.
+
+**The opt-in is withdrawn by the next push without it.** Every registration REPLACES the summary
+and the opt-in — nothing carries them forward. A schema-2 push without `visible_to_declared` (or
+with it `false`) makes an opted-in arc home-only again, and a **schema-1 push clears both** and is
+stored as schema 1. ⚠ So a host whose tooling still sends schema 1 drops an arc's summary and
+opt-in on its next push; upgrade every host that registers the same arc together.
+
+**What opting in exposes to a reader of a declared scope who cannot read the home** — measured, not
+inferred. On the API (`arc-show`, pinned by `TestWhatAnOptInExposesToADeclaredScopeReader`): the
+**home scope's name and the slug**; the status and closing kind; **`registered_by`** (the
+registrant's display name), `registered_at` and the tool's `reported_at`; the tooling coverage
+counts (commits, unstamped commits, which legs were measured); **every member's session id, role
+and first-seen time**, including **carried** members and their count; the declared scopes that
+reader can read; and **the whole summary**. A listing row adds aliases and ` · declared-visible`;
+`arcs --check` counts the arc and can report one of its readable declared scopes absent. In the
+browser (read from `internal/ui/arcs.go`'s `arcRow` and `internal/ui/arcsindex.go`'s
+`arcsIndexRow`): the scope page lists the arc with its **member session ids as chips**, its
+status, provenance, closing kind and registration time; the arcs page lists it with its status,
+member count and last-updated time; a session page lists it (home, slug, status, role) for a
+member session the reader can open. **Not exposed:** what members wrote in scopes that reader
+cannot read (`wrote in:` names readable scopes only), a declared scope it cannot read, the home's
+`X-Store-Revision` (identical to an absent arc's — pinned), and other people's live-pane badges —
+the presence badge on the arcs page answers only for a session the VIEWER owns
+(`internal/presence/presence.go`'s owner predicate `visible`), so opting in shows nobody else's.
+
+**Who may opt in:** whoever may register the arc at all — the **write** verb on the home and on
+every declared scope, unchanged. That is what makes the opt-in safe to honour: an arc is put in front
+of a scope's readers only by somebody who may write that scope. ⚠ The check runs at registration; a
+registrant whose write is revoked later leaves the arc visible there until the next push.
+
+**A summary never refuses the registration.** The arc's schema-1 data — status, members, declared
+scopes, the opt-in — always lands; a problem in the summary is **adjusted and named**, never refused:
+
+| field | bound | when it is exceeded or broken |
+|---|---|---|
+| `closing_condition` | 1000 bytes | clipped |
+| `state_now`, `next_steps` | 20 items, each ≤ 500 bytes | an item over 500 bytes is clipped; items past the 20th are dropped |
+| `task_refs` | 32 items, each ≤ 200 bytes, no whitespace | clipped; past the 32nd dropped; one containing whitespace (after sanitizing) dropped |
+| `aliases` | 16 items as sent, each ≤ 64 bytes as sent, folded to a non-empty slug | clipped before folding; past the 16th dropped; one folding to nothing dropped |
+| `source` | **required** whenever `summary` is sent | an uncitable source drops the **summary** (the arc still lands) |
+| `source.repo_path` | ≤ 256 bytes; `/`-separated segments of `[A-Za-z0-9._-]` only — so no leading or trailing `/`, no empty segment, no space or backslash — and no segment that is exactly `.` or `..` | summary dropped, `reason=source.repo_path` |
+| `source.commit` | a full lower-case hex commit id, exactly 40 or 64 characters | summary dropped, `reason=source.commit` |
+| `source.committed_at` | ≤ 35 bytes (nanoseconds and a numeric offset fit) and RFC 3339 (Go's `time.RFC3339` parse; fractional seconds accepted) | summary dropped, `reason=source.committed_at` |
+| the whole stored summary | 16 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) | items are dropped from the **end** of the lists — the longer of `state_now`/`next_steps` first (`state_now` on a tie), then `task_refs`, then `aliases` — until it fits |
+
+Every **text field** — `closing_condition` (when sent), every `state_now`, `next_steps`, `task_refs`
+and `aliases` item — goes through four steps, in this order:
+
+1. **sanitized** to one line: an invalid UTF-8 sequence becomes U+FFFD, and every character Go's
+   `unicode.IsControl` reports (tab and newline included), U+2028 and U+2029 becomes a space — the
+   answer is lines, and an embedded newline could print a line that reads as the pod's own;
+2. **dropped** if nothing but whitespace is left;
+3. **redacted**: the text **as sent** is scanned for a **confident secret** — the same rule subset
+   memos refuse on — and on any hit stored as `[redacted: <rule>]` (`[redacted: github-token]`).
+   The scan reads the item up to its cap plus 1 KiB, so a credential straddling the cut is seen
+   whole. **Nothing explains a hit away:** a placeholder in a credential position is redacted by
+   design — `postgresql://app:${PGPASSWORD}@db/app`, `postgresql://app:$PGPASSWORD@db/app` and
+   `https://user:***@host` are stored as `[redacted: url-userinfo-password]`. A hit costs that one
+   item's text and never the registration, which is why no placeholder logic is worth its leaks.
+   Text no confident rule matches as sent is stored as written: `$PATH` in prose, `***bold***`,
+   `Authorization: Bearer <token>`, `x-api-key: <your-key>`. ⚠ That includes a real value a
+   rule's character class cannot see through: the bearer and authorization rules do not match across
+   `$`, `{`, `}` or `*`, so `Bearer $X` + a value or `x-api-key: ***` + a value is stored as written;
+4. **clipped** to its byte cap at a UTF-8 rune boundary, ending in `…` (U+2026, whose 3 bytes count
+   within the cap).
+
+`repo_path`, `commit` and `committed_at` are checked by the shape rules above, not the secret scan.
+Empty lists are allowed, and a summary whose every item was dropped is kept, empty, with its source.
+If the secret scanner cannot be built the summary is dropped (`reason=secret-scan-unavailable`) and
+the next push tries again.
+
+**What still refuses, because it is not summary content:** a payload that is not the schema — an
+unknown key at any depth, or a wrong JSON type (`state_now` as a string, a non-boolean
+`visible_to_declared`) — a schema-1 payload carrying `summary` or `visible_to_declared` (`need
+schema 2`), a credential that may not write the home or a declared scope, and a pod with no arc
+journal. A refusal names the field, never the value.
+
+**The response names every adjustment** — the contract a registering tool parses. After the usual
+outcome line, one line per adjustment, in the order made, and **no extra line when no item was
+clipped, sanitized, redacted or dropped**. ⚠ That is narrower than "stored as sent": aliases are
+always folded and deduplicated (documented above) without a line. (The lines below are drawn from
+several pushes, to show each shape.)
+
+```text
+arc-registered: alpha-notes/gadget-move · members=1 · unjoinable=0
+summary-adjusted: clipped summary.next_steps[0] bytes=503 max=500
+summary-adjusted: redacted summary.next_steps[1] rule=authorization
+summary-adjusted: sanitized summary.next_steps[7] replaced=1
+summary-adjusted: dropped summary.next_steps[8] reason=blank
+summary-adjusted: dropped summary.state_now[20] reason=over-count max=20
+summary-adjusted: dropped summary.state_now[19] reason=over-total max=16384
+summary-adjusted: dropped summary reason=source.commit
+```
+
+Each line is `summary-adjusted: <action> <field> <detail>`:
+
+- `<action>` is one of `clipped`, `redacted`, `sanitized`, `dropped`.
+- `<field>` is the field **as sent**: `summary.<list>[<index in the payload>]`,
+  `summary.closing_condition`, or `summary` for the whole summary.
+- `<detail>` is space-separated `key=value` pairs:
+  - `bytes=<n> max=<cap>` for `clipped`, where `<n>` is the item's length as the pod received it
+    (after JSON decoding — the JSON decoder itself turns an invalid UTF-8 byte into the 3-byte
+    U+FFFD, so for invalid input this exceeds the raw byte count). When sanitizing then changed
+    the length, `sanitized_bytes=<m>` follows: the length that was compared with the cap;
+  - `rule=<rule>` for `redacted`;
+  - `replaced=<n>` for `sanitized`;
+  - `reason=<reason>` (plus `max=<n>` for the two caps) for `dropped`. The reasons are `blank`,
+    `whitespace`, `normalizes-to-nothing`, `redacted` (an alias, after its `redacted` line — a
+    redacted alias is dropped rather than stored as a junk name), `over-count`, `over-total`,
+    `source.repo_path`,
+    `source.commit`, `source.committed_at` and `secret-scan-unavailable`.
+
+An item can carry more than one line (`sanitized`, then `clipped`). The response never echoes a
+changed value. `cairn arc-register` prints this body verbatim on stdout, exit 0.
+
+**Compatibility — what was measured against the previous release** (old = a build without schema 2):
+
+| direction | what happens |
+|---|---|
+| an old client → a new pod | unchanged. Schema-1 registrations are accepted, and both read verbs print the pod's body verbatim, so an old client shows a summary and the opt-in lines as a new one does. Every arc answer about schema-1 arcs is **byte-identical** to the old pod's, headers included |
+| a new client → an old pod | the old pod refuses any schema-2 payload with a 400 (`bad request: body must be one JSON object of the registration schema (json: unknown field "…")`, or `bad request: schema must be 1` for a schema-2 payload using neither field). `arc-register` **reports that refusal as a refusal**: the pod's line on stderr, exit **6**, nothing registered. It does not downgrade and re-send — falling back to schema 1 is the registering tool's decision, made with the refusal in hand |
+| a journal written by a new pod, read by an old one | a record that uses neither new field is written as **schema 1**, byte for byte, so it still reads. A record that uses one is **skipped** by the old pod and counted as damage (`⚠ the registration journal holds record(s) that could not be read`, and an operator-log line); the arc shows its last schema-1 state, or is not shown at all if it never had one. Nothing is deleted: rolling forward again shows it |
+
+⚠ **So roll every binary that reads the arc journal before any tooling sends schema 2** —
+`cairn-server` and `cairn-ui` both do.
+
+⚠ **Not on the browser's arc page yet.** The arc page prints no summary, and it addresses an arc by
+its home scope's id among the scopes you can read, so an opted-in arc whose home you cannot read is
+listed on the arcs and scope pages **without a link** to it. `cairn arc-show` and
+`GET /api/v1/arc/<home>/<slug>` serve both.
 
 ## Scope memos — messages between agent sessions
 

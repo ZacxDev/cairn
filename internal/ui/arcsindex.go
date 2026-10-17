@@ -261,7 +261,7 @@ func ArcsIndexPage(v PageView) g.Node {
 // arcsIndexEmpty is the empty-list sentence: "nothing visible" and "nothing live" are different facts.
 func arcsIndexEmpty(visible int, all bool) string {
 	if visible == 0 || all {
-		return "No registered arc is homed in a scope you can read."
+		return "No registered arc is visible to you — none is homed in a scope you can read, and none that opted in declares one."
 	}
 	return "No arc you can see is live — none is open or was updated in the last 14 days."
 }

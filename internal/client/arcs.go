@@ -241,6 +241,10 @@ func ArcRegister(env Env, opts Options) (int, error) {
 	path := "/api/v1/arc/" + quoteAll(home) + "/" + quoteAll(opts.Slug)
 	headers, body, err := SendWrite(cfg, "PUT", path, payload, opts.Timeout, nil)
 	if err != nil {
+		// 🔴 A REFUSAL IS REPORTED AS ITSELF, INCLUDING A PRE-SCHEMA-2 POD'S. This client does not
+		// downgrade a payload and retry: a quiet re-send printed success while the part the caller
+		// sent it for was not stored. Falling back to schema 1 is the registering TOOL's decision,
+		// made with the refusal in hand.
 		return 0, err
 	}
 	env.recordRead(alias, home)
