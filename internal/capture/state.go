@@ -115,6 +115,12 @@ type SessionState struct {
 	// pass whose export and ship of the root AND every child completed with nothing refused, held,
 	// pending or left unshipped, and the wall-clock time (epoch ms) that pass's export began. Both
 	// 0 when there is no such pass — and any pass that does not complete clears them.
+	// Dir is the directory the session ran in — a Claude Code transcript's first `cwd`, an opencode
+	// root's listed `directory` — and Repo what git said about it ([deriveRepo]), nil until a settled
+	// answer exists. Both are recorded only for a session whose V is empty, the one case [Decide]
+	// places by repository; Repo holds a scope and an owner, never a remote URL.
+	Dir                string                  `json:"dir,omitempty"`
+	Repo               *Repo                   `json:"repo,omitempty"`
 	OpencodeUpdated    int64                   `json:"oc_updated,omitempty"`
 	OpencodeExportedAt int64                   `json:"oc_exported_at,omitempty"`
 	Evidence           scopeuse.Evidence       `json:"evidence"`

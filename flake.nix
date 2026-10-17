@@ -706,12 +706,24 @@
       # ⚠ NO `opencode` ON ITS PATH, deliberately: it runs `opencode export` by bare name, and the
       # answer has to be the opencode the host's sessions were written by — a pinned copy here
       # could read a different database version than the one in use.
+      #
+      # 🔴 `gitMinimal` ON THE WRAPPER'S PATH, FOR THE CLIENT'S REASON: a session that recorded no
+      # scope is placed by the repo it ran in, derived through `internal/client/reposcope.go`, which
+      # invokes `git` by BARE NAME (two `rev-parse`s and `remote get-url`). A user timer's PATH is
+      # thin; without its own git the agent could not ask, and every such session would wait on
+      # the default instance until one appeared. git, unlike opencode, has no database version to
+      # agree with.
       mkGoCapture = pkgs: (buildGoPinned pkgs) {
         pname = "cairn-capture";
         inherit version;
         src = onlyGo pkgs;
         vendorHash = goVendorHash;
         subPackages = [ "cmd/cairn-capture" ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postInstall = ''
+          wrapProgram $out/bin/cairn-capture \
+            --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.gitMinimal ]}
+        '';
         doCheck = true;
         # `gitMinimal` for the check phase only — see `mkGoServer`.
         nativeCheckInputs = [ pkgs.gitMinimal ];

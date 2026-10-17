@@ -182,10 +182,12 @@ func dedupe(in []string) []string {
 
 // listedRoot is one row of `session list`: the root's id and its `updated` (epoch milliseconds),
 // 0 when the row carries none that parses as a non-negative integer — and 0 never lets an export
-// be skipped ([Agent.exportSettled]).
+// be skipped ([Agent.exportSettled]) — and the `directory` the session ran in, "" when the row
+// carries none (measured on 1.18.29: 162 of 162 rows, over two projects, carried one).
 type listedRoot struct {
-	ID      string
-	Updated int64
+	ID        string
+	Updated   int64
+	Directory string
 }
 
 // listRoots parses `session list --format json`: `[{id, updated, …}]`, asked for at most `limit`
@@ -199,8 +201,9 @@ func listRoots(raw []byte, limit int) ([]listedRoot, error) {
 		return nil, nil
 	}
 	var rows []struct {
-		ID      string          `json:"id"`
-		Updated json.RawMessage `json:"updated"`
+		ID        string          `json:"id"`
+		Updated   json.RawMessage `json:"updated"`
+		Directory json.RawMessage `json:"directory"`
 	}
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return nil, fmt.Errorf("capture: `opencode session list` did not answer a JSON list: %w", err)
@@ -217,7 +220,11 @@ func listRoots(raw []byte, limit int) ([]listedRoot, error) {
 		if err != nil || u < 0 {
 			u = 0
 		}
-		out = append(out, listedRoot{ID: r.ID, Updated: u})
+		// A `directory` that is not a string is no directory — never a refused list: the row's
+		// other fields are read as before, and the session is placed as one with no repo.
+		var dir string
+		_ = json.Unmarshal(r.Directory, &dir)
+		out = append(out, listedRoot{ID: r.ID, Updated: u, Directory: dir})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
