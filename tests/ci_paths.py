@@ -129,14 +129,24 @@ def for_event(env: dict[str, str], git: Git = _git) -> Lanes:
             return full("`before` is not an ancestor of `after` (a force-push)")
         return classify(_diff(before, after, git))
     if event == "pull_request":
-        base, head = env.get("PR_BASE", ""), env.get("PR_HEAD", "")
-        if not base or not head or ZERO_SHA in (base, head):
-            return full("a pull_request event without both a base and a head sha")
-        merge_base = git(["merge-base", base, head]).strip()
-        if not merge_base:
-            return full("the base and head share no merge-base")
-        return classify(_diff(merge_base, head, git))
+        paths, why = pull_request_paths(env, git)
+        return full(why) if paths is None else classify(paths)
     return full(f"unrecognised event {event!r}")
+
+
+def pull_request_paths(env: dict[str, str], git: Git = _git) -> tuple[list[str] | None, str]:
+    """A pull request's changed paths, diffed from its merge-base — or `None` and why not.
+
+    The one place a PR's diff is computed: `for_event` above classifies it, and
+    `tests/testlib/mutant_select.py` scopes the mutation batteries with it.
+    """
+    base, head = env.get("PR_BASE", ""), env.get("PR_HEAD", "")
+    if not base or not head or ZERO_SHA in (base, head):
+        return None, "a pull_request event without both a base and a head sha"
+    merge_base = git(["merge-base", base, head]).strip()
+    if not merge_base:
+        return None, "the base and head share no merge-base"
+    return _diff(merge_base, head, git), f"diffed {merge_base[:12]}..{head[:12]}"
 
 
 def safe_for_event(env: dict[str, str], git: Git = _git) -> Lanes:

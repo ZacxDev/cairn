@@ -41,12 +41,12 @@
 // # WHAT THE REPLACEMENT IS STRONGER AT THAN "A TEST INSTEAD OF A BUILD FAILURE"
 //
 // 🔴 FOR ANYBODY BUILDING THROUGH NIX, AN IMPORT-BAN FAILURE **IS** A BUILD FAILURE,
-// AND THAT IS THE BEST ARGUMENT THE REPLACEMENT HAS. All three Go derivations in
-// `flake.nix` — `mkGoServer`, `mkGoClient`, `mkGoUI` — set `doCheck = true` with
-// `checkPhase` spelled out as `go vet ./...` then `go test ./...`, so these tests run
-// inside the derivation. `packages.default` is `mkGoClient`, so `nix run
-// github:ZacxDev/cairn` runs them; the `nix` CI job builds `cairn-server-go`,
-// `cairn-go` and `cairn-ui` by name, so they run there three times. A third-party
+// AND THAT IS THE BEST ARGUMENT THE REPLACEMENT HAS. Every Go derivation in
+// `flake.nix` — `mkGoServer`, `mkGoClient`, `mkGoUI`, `mkGoCapture` — depends on
+// `mkGoModuleTests`, whose `checkPhase` is spelled out as `go vet ./...` then
+// `go test ./...`, so none of them builds unless these tests pass. `packages.default` is
+// `mkGoClient`, so `nix run github:ZacxDev/cairn` runs them; the `nix` CI job builds
+// `checks.go-module-tests` by name, so they run there once. A third-party
 // import reaching `cmd/cairn`, `cmd/cairn-server` or `cmd/cairn-capture` does not produce a review comment
 // or a red tick beside a green artefact — it produces a derivation that does not
 // build, which is the same consequence `vendorHash = null` had.

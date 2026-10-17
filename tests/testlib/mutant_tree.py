@@ -211,7 +211,10 @@ def load_shard_results(results_dir: Path, battery: str, table: str, expected: Se
     for d in docs:
         i, n_of = d["shard"]
         rows = [r for r in d["selected"] if r not in always]
-        lost = sorted(always - set(d["selected"]))
+        # ⚠ A shard handed NO rows (a pull request's scoped battery selected none for it) makes
+        # no verdict claim, so it carries no positive control and none is demanded of it. Its
+        # rows still enter the cover check below, so a shard that DROPPED rows is still refused.
+        lost = sorted(always - set(d["selected"])) if rows else []
         if lost:
             problems.append(f"shard {i}/{n_of}: does not carry {lost}, which every shard must")
         if i in by_shard:
@@ -219,7 +222,7 @@ def load_shard_results(results_dir: Path, battery: str, table: str, expected: Se
             by_shard[i] = by_shard[i] + rows
         else:
             by_shard[i] = rows
-        if d.get("positive_control") != "green":
+        if rows and d.get("positive_control") != "green":
             problems.append(f"shard {i}/{n_of}: positive control was not GREEN")
     n = max(counts) if counts else 0
     problems += seam_violations([r for r in expected if r not in always], by_shard, n)

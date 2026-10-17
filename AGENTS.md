@@ -303,8 +303,8 @@ The refusal is `internal/depspolicy`: an allowlist failing on GROW *or* SHRINK, 
 import ban over `cmd/cairn`/`cmd/cairn-server`'s graph. 🔴 **THE BAN KEEPS IT OUT OF THE
 POD; THE ALLOWLIST CANNOT** — one entry is satisfied by a tree where `internal/api` imports
 it on every route. A new module moves BOTH; only `internal/{ui,pgstore}` import one.
-🔴 **STILL A BUILD FAILURE THROUGH NIX** (all three Go derivations run these tests in
-`doCheck`) **— but a build refusal cannot be deleted and this one can**; only the `go`
+🔴 **STILL A BUILD FAILURE THROUGH NIX** (every Go derivation builds on these tests via
+`mkGoModuleTests`) **— but a build refusal cannot be deleted and this one can**; only the `go`
 job's `ok` floor notices, and only per PACKAGE. 🔴 **gomponents does NOT neutralise a URL
 scheme**: hrefs go through `safeHref`, `Raw`/`Rawf` are AST-banned.
 📄 `internal/depspolicy`'s package doc (the claim, ONCE); `internal/ui/README.md`.
