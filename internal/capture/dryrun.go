@@ -15,8 +15,9 @@ import (
 	"github.com/ZacxDev/cairn/internal/transcript/scopeuse"
 )
 
-// DryRun reads every session from offset 0 — touching no state, writing nothing — and prints one
-// line per root session: record and blob COUNTS, unit counts by class, redaction counts by rule,
+// DryRun reads every session from offset 0 — writing nothing, and reading `a.State` (when the
+// caller loaded one) only for where `--run` bound each session and the repo it kept — and prints
+// one line per root session: record and blob COUNTS, unit counts by class, redaction counts by rule,
 // the derived `V` and the routing decision.
 //
 // 🔴 IT PRINTS NO STRING VALUE OF ANY RECORD. Session ids come from file names (Claude Code) or
@@ -68,17 +69,49 @@ func (t tally) String() string {
 	return strings.Join(parts, ",")
 }
 
-// decisionText is the routing decision a dry run prints. A session with no recorded scope is
-// placed by the repo in `dir`, asked of git exactly as `--run` asks it ([deriveRepo]); nothing is
-// remembered, so a dry run asks again every time.
-func (a *Agent) decisionText(v []string, dir string) string {
-	var repo Repo
-	if len(v) == 0 {
-		repo, _ = deriveRepo(dir)
+// decisionText is the routing decision a dry run prints for session `root`: the one `--run` would
+// make, given `--run`'s flags and state.
+//
+// 🔴 IT READS WHAT `--run` KEPT FOR THE SESSION, FROM THE STATE, READ-ONLY (#292's audit, round 3,
+// F2; #293's audit). `a.State` is what the caller loaded with [LoadState] — never saved, never
+// locked; nil (no state file) is every session new, and the caller says so on stderr. From it:
+//
+//   - a session the state marks HELD or DELETED prints `held` / `deleted`: `--run` returns before
+//     routing it at all, so any routing answer printed for it would be one `--run` never makes;
+//   - the decision is over `V` as `--run` holds it — the stored `V` UNION what this read derived;
+//   - its binding ([RepoRules.place]'s answer depends on it) and its repo, through the ONE resolver
+//     [Agent.sessionRepo] over a scratch copy, so the KEPT repo wins exactly as in `--run` — the case
+//     that matters: a worktree removed since `--run` placed the session no longer derives a repo, and
+//     re-deriving it here printed the default where `--run` keeps the routed instance.
+//
+// `dir` is the directory this read found (a transcript's first `cwd`, a listed `directory`); like
+// `--run`, it is used only when the state recorded none.
+func (a *Agent) decisionText(root string, v []string, dir string) string {
+	var view SessionState
+	if a.State != nil {
+		if ss := a.State.Sessions[root]; ss != nil {
+			switch {
+			case ss.Held:
+				return "held"
+			case ss.Deleted != "":
+				return "deleted"
+			}
+			// A scratch copy: [Agent.sessionRepo] records a settled answer in what it is handed, and
+			// the state a dry run loaded must stay exactly as it was read.
+			view = SessionState{Instance: ss.Instance, V: ss.V, Dir: ss.Dir, Repo: ss.Repo}
+		}
 	}
-	dec := Decide(v, repo, a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable})
-	if dec.Held {
+	view.V = union(view.V, v)
+	if view.Dir == "" {
+		view.Dir = dir
+	}
+	dec := Decide(view.V, a.sessionRepo(&view), a.Routing,
+		RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: view.Instance})
+	switch {
+	case dec.Held:
 		return "held"
+	case dec.Deferred:
+		return "deferred"
 	}
 	return "ship:" + dec.Instance
 }
@@ -131,7 +164,7 @@ func (a *Agent) dryClaude(w io.Writer, cs claudeSession) {
 		dir = claudeCwd(cs.Streams["main"])
 	}
 	fmt.Fprintf(w, "claude %s streams=%d records=%d blobs=%d refused=%d classes=%s redactions=%s v=[%s] decision=%s\n",
-		cs.Root, len(cs.Streams), records, len(cs.Blobs), refused, classes, hits, strings.Join(v, ","), a.decisionText(v, dir))
+		cs.Root, len(cs.Streams), records, len(cs.Blobs), refused, classes, hits, strings.Join(v, ","), a.decisionText(cs.Root, v, dir))
 }
 
 func (a *Agent) dryOpencode(w io.Writer, lr listedRoot) {
@@ -181,5 +214,5 @@ func (a *Agent) dryOpencode(w io.Writer, lr listedRoot) {
 	a.foldLedger(d, root)
 	v := d.Result().V
 	fmt.Fprintf(w, "opencode %s streams=%d units=%d classes=%s redactions=%s v=[%s] decision=%s\n",
-		root, streams, units, classes, hits, strings.Join(v, ","), a.decisionText(v, lr.Directory))
+		root, streams, units, classes, hits, strings.Join(v, ","), a.decisionText(root, v, lr.Directory))
 }

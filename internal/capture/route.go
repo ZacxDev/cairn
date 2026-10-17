@@ -7,9 +7,13 @@ import (
 
 // Decision is where one session may go on this run.
 type Decision struct {
-	// Instance is the alias to ship to, "" when Held.
+	// Instance is the alias to ship to, "" when Held or Deferred.
 	Instance string
 	Held     bool
+	// Deferred is "send nothing of this session THIS run, and ask again next run": its repo routes
+	// to an instance this run has no `-worker` for, and it is bound to a DIFFERENT non-default one
+	// ([RepoRules.place]). Not final, unlike Held.
+	Deferred bool
 	Reason   string
 }
 
@@ -86,16 +90,27 @@ func (r RepoRules) uploadable(alias string) bool { return r.Uploadable == nil ||
 // arm moved to `client` on an earlier run was WITHDRAWN from the default, and the archive keeps a
 // withdrawal as a deletion; answering "default" on a run that merely lacks client's `-worker` made
 // that a move back, the default's probe answered 410, and the session was HELD — final, so restoring
-// the `-worker` changed nothing. So a bound session keeps its binding (its uploads are then refused
-// and retried, as before the arm), and only a NEW session falls to the default.
+// the `-worker` changed nothing. So nothing here ever MOVES a bound session; the three answers when
+// `alias` has no `-worker`:
+//
+//   - bound to `alias` itself: it stays bound — its uploads are refused and retried, as before the arm;
+//   - new, or bound to the DEFAULT: the default, where a new session goes, so the two agree from one run
+//     to the next;
+//   - 🔴 bound to some OTHER instance: DEFERRED — nothing is sent this run, counted `refused=` and asked
+//     again next run (#292's audit, round 3). Keeping that binding shipped the session's NEW records
+//     to an instance the table no longer routes its repo to, silently (exit 0, `refused=0`); moving
+//     it to the default is the round-2 hold. Only a host with three or more instances reaches it.
 func (r RepoRules) place(alias, reason string) Decision {
-	if r.uploadable(alias) {
+	switch {
+	case r.uploadable(alias):
 		return Decision{Instance: alias, Reason: reason}
-	}
-	if r.Bound != "" {
+	case r.Bound == alias:
 		return Decision{Instance: r.Bound, Reason: reason + ", which has no -worker this run: it stays bound to " + r.Bound}
+	case r.Bound == "" || r.Bound == client.DefaultAlias:
+		return Decision{Instance: client.DefaultAlias, Reason: reason + ", which has no -worker this run: the default instance, owner-only"}
 	}
-	return Decision{Instance: client.DefaultAlias, Reason: reason + ", which has no -worker this run: the default instance, owner-only"}
+	return Decision{Deferred: true, Reason: reason + ", which has no -worker this run, while the session is bound to " + r.Bound +
+		": nothing of it is sent until " + alias + " has a -worker (asked again next run)"}
 }
 
 // decideByRepo places a session that recorded NO scope by the repository it ran in. First match
