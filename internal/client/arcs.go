@@ -231,13 +231,14 @@ func arcViewQuery(opts Options) string {
 	if opts.Outline {
 		q.Set("view", "outline")
 	}
-	if opts.Section != "" {
+	// SET-NESS, NOT NON-EMPTINESS: a flag given `""` is sent as given, so the pod refuses it.
+	if opts.HasSection {
 		if !opts.Outline {
 			q.Set("view", "page")
 		}
 		q.Set("section", opts.Section)
 	}
-	if opts.From != "" {
+	if opts.HasFrom {
 		q.Set("from", opts.From)
 	}
 	if opts.Limit != nil {
@@ -246,7 +247,7 @@ func arcViewQuery(opts Options) string {
 	if opts.MaxBytes != nil {
 		q.Set("max_bytes", strconv.Itoa(*opts.MaxBytes))
 	}
-	if opts.At != "" {
+	if opts.HasAt {
 		q.Set("at", opts.At)
 	}
 	if len(q) == 0 {

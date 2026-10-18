@@ -1476,6 +1476,9 @@ func (s *Server) arcShow(rq *request, parts []string, params url.Values) error {
 // whole arc would read it as page 40.
 var arcPageOnlyParams = []string{"section", "from", "limit", "max_bytes", "at"}
 
+// arcViewParams is every parameter `arcViewFromParams` reads.
+var arcViewParams = append([]string{"view"}, arcPageOnlyParams...)
+
 // arcViewFromParams is `arc/<home>/<slug>`'s query, as a `report.ArcView`. Every refusal here is a
 // function of the parameters alone. Parameters this route does not read are ignored (`recall`'s rule).
 func arcViewFromParams(params url.Values) (report.ArcView, error) {
@@ -1483,6 +1486,14 @@ func arcViewFromParams(params url.Values) (report.ArcView, error) {
 		Mode:     lastOr(params, "view", report.ArcViewFull),
 		Limit:    report.ArcPageDefaultLimit,
 		MaxBytes: report.ArcPageDefaultMaxBytes,
+	}
+	// 🔴 A VIEW PARAMETER GIVEN EMPTY IS REFUSED, never read as absent: `at=` empty would silently
+	// skip the staleness check, `section=` empty would read as "no page", and a client that sent the
+	// flag believes it took effect. Decided from the parameters alone, before the journal is read.
+	for _, name := range arcViewParams {
+		if raw, given := lastValue(params, name); given && raw == "" {
+			return view, badRequest("%s must not be empty", name)
+		}
 	}
 	_, view.Named = lastValue(params, "view")
 	from, err := intParam(params, "from")

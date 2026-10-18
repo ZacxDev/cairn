@@ -315,6 +315,10 @@ func TestArcShowRefusesAMeaninglessViewCombination(t *testing.T) {
 		{[]string{"--limit", "3"}, "limit applies only to view=page, got view=full"},
 		{[]string{"--outline", "--section", "next_steps"}, "section applies only to view=page, got view=outline"},
 		{[]string{"--outline", "--from", "1"}, "from applies only to view=page, got view=outline"},
+		// A flag GIVEN EMPTY is sent as given, and refused — never dropped as if it were absent.
+		{[]string{"--section", ""}, "section must not be empty"},
+		{[]string{"--section", "next_steps", "--from", ""}, "from must not be empty"},
+		{[]string{"--section", "next_steps", "--at", ""}, "at must not be empty"},
 	} {
 		code, _, errOut := runCLI(t, append(append([]string{}, base...), tc.extra...)...)
 		if code != ExitUsage || !strings.Contains(errOut, "the pod refused the view") || !strings.Contains(errOut, tc.says) {

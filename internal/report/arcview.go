@@ -1,6 +1,9 @@
 package report
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"slices"
@@ -46,7 +49,8 @@ var (
 	ArcSections = []string{ArcSectionStateNow, ArcSectionNextSteps, ArcSectionMembers}
 )
 
-// Page bounds. A page stops at whichever of `limit` items or `max_bytes` rendered bytes comes first,
+// Page bounds. A page stops at whichever of `limit` items or `max_bytes` bytes of rendered ITEM LINES
+// comes first — the page's header lines and the pod's freshness paragraph are extra, and not counted —
 // but always carries at least one item when any remain, so an item larger than the byte budget is
 // still readable (a page that returned nothing would never advance).
 //
@@ -66,8 +70,8 @@ type ArcView struct {
 	From     int
 	Limit    int
 	MaxBytes int
-	// At is the summary commit the caller last read the outline at, or "" — a page then says when the
-	// stored summary was read at a different commit.
+	// At is the content token (`ArcReport.ContentToken`) the caller's outline printed, or "" — a page
+	// then says when anything it could serve has changed since.
 	At string
 	// Named is whether the request named a view at all (`view=` present, `full` included). Only then
 	// does the answer carry `X-Arc-View`; a request naming none gets the pre-views headers exactly.
@@ -87,9 +91,10 @@ func viewErr(format string, args ...any) error {
 	return &ArcViewError{Message: fmt.Sprintf(format, args...)}
 }
 
-// atCommit is what `at=` must look like: the stored source commit's own shape (`arcs` accepts 40 or
-// 64 lowercase hex), so a typo is refused instead of reading as "the summary changed".
-var atCommit = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+// atToken is what `at=` must look like: `ContentToken`'s own shape, so a typo is refused instead of
+// reading as "the arc changed". (A summary COMMIT is not accepted: it cannot see a member change or a
+// re-registration at the same commit.)
+var atToken = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // ValidateArcView is every check that depends on the parameters alone, so it answers the same for
 // an arc that exists, one that does not, and one this caller may not see.
@@ -112,8 +117,8 @@ func ValidateArcView(v ArcView) error {
 	if v.MaxBytes < 1 || v.MaxBytes > ArcPageMaxMaxBytes {
 		return viewErr("max_bytes must be an integer from 1 to %d, got %d", ArcPageMaxMaxBytes, v.MaxBytes)
 	}
-	if v.At != "" && !atCommit.MatchString(v.At) {
-		return viewErr("at must be a 40- or 64-character lowercase hex commit, got %q", v.At)
+	if v.At != "" && !atToken.MatchString(v.At) {
+		return viewErr("at must be the outline's 16-character lowercase hex token, got %q", v.At)
 	}
 	return nil
 }
@@ -153,12 +158,35 @@ func (r ArcReport) sectionItems(section string) []string {
 	return nil
 }
 
-// summaryCommit is the stored summary's source commit, or "" when the registration has none.
-func (r ArcReport) summaryCommit() string {
-	if r.Reg.Summary == nil {
-		return ""
+// ContentToken is a short digest of EVERYTHING a page of this arc can serve, as THIS reader sees it:
+// the summary's provenance line (repo path, commit, date) and every item of every pageable section —
+// the members as `MemberLine` renders them, which is already narrowed to the scopes this reader can
+// read. So a re-registration at the same summary commit, an inserted member or a re-ranked step all
+// change it, and it never encodes anything the reader's own answer would not show (two readers with
+// different visibility may get different tokens).
+//
+// ⚠ IT IS DELIBERATELY NOT A FUNCTION OF THE `member writes:` COVERAGE LINE, whose counts move with
+// every bullet written anywhere readable: a token that changed on unrelated writes would tell every
+// pager to start over for nothing.
+//
+// Each field is length-prefixed, so no two different contents can concatenate to the same bytes.
+func (r ArcReport) ContentToken() string {
+	h := sha256.New()
+	put := func(s string) {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(s)))
+		h.Write(n[:])
+		h.Write([]byte(s))
 	}
-	return r.Reg.Summary.Source.Commit
+	put(r.provenanceLine())
+	for _, section := range ArcSections {
+		items := r.sectionItems(section)
+		put(fmt.Sprintf("%s:%d", section, len(items)))
+		for _, item := range items {
+			put(item)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 // ArcNoSummaryLine stands where the summary's provenance line would be, for a registration that
@@ -199,13 +227,11 @@ func (r ArcReport) renderOutline() string {
 		fmt.Fprintf(&b, "%s: %d item%s, %d B\n", section, len(items), plural(len(items)), itemBytes(items))
 	}
 	fmt.Fprintf(&b, "%s: %d\n", ArcSectionMembers, len(r.Reg.Members))
-	at := ""
-	if c := r.summaryCommit(); c != "" {
-		at = "&at=" + c
-	}
-	fmt.Fprintf(&b, "page a section: ?view=page&section=<%s>&from=0%s (limit default %d, at most %d; max_bytes default %d) "+
-		"— or cairn arc-show --section <name> --from 0",
-		strings.Join(ArcSections, "|"), at, ArcPageDefaultLimit, ArcPageMaxLimit, ArcPageDefaultMaxBytes)
+	token := r.ContentToken()
+	fmt.Fprintf(&b, "token: %s\n", token)
+	fmt.Fprintf(&b, "page a section: ?view=page&section=<%s>&from=0&at=%s (limit default %d, at most %d; "+
+		"max_bytes default %d, counting item lines only) — or cairn arc-show --section <name> --from 0 --at %s",
+		strings.Join(ArcSections, "|"), token, ArcPageDefaultLimit, ArcPageMaxLimit, ArcPageDefaultMaxBytes, token)
 	return b.String()
 }
 
@@ -216,8 +242,8 @@ func (r ArcReport) renderPage(v ArcView) string {
 	var b strings.Builder
 	r.writePreamble(&b, " view="+ArcViewPage)
 	b.WriteString(r.provenanceLine() + "\n")
-	if v.At != "" && v.At != r.summaryCommit() {
-		fmt.Fprintf(&b, "summary changed since %s; re-read the outline\n", v.At)
+	if v.At != "" && v.At != r.ContentToken() {
+		fmt.Fprintf(&b, "arc changed since %s; re-read the outline\n", v.At)
 	}
 	if v.Section == ArcSectionMembers {
 		b.WriteString(r.MemberWritesLine() + "\n")

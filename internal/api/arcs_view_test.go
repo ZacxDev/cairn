@@ -284,29 +284,102 @@ func TestAPageIsBoundedByLimitAndBytesAndAlwaysAdvances(t *testing.T) {
 	}
 }
 
-// TestAPageReadAtAnotherCommitSaysTheSummaryChanged: `at=` that is not the stored summary's commit
-// adds one line telling the reader to re-read the outline; the stored commit adds nothing (control).
-func TestAPageReadAtAnotherCommitSaysTheSummaryChanged(t *testing.T) {
-	h := viewHarness(t)
-	other := strings.Repeat("ab", 20)
-	stale := reportPart(t, h.do(t, "GET", viewTarget+"?view=page&section=next_steps&from=2&at="+other, wideToken, nil, "").body)
-	line := "\nsummary changed since " + other + "; re-read the outline\n"
-	if !strings.Contains(stale, line) {
-		t.Fatalf("a page read at another commit must say so:\n%s", stale)
+// outlineAt is the `at=` value the outline's paging hint tells a pager to send — read from the hint
+// itself, so this helper names no format the pod might change.
+func outlineAt(t *testing.T, h *harness, token string) string {
+	t.Helper()
+	body := reportPart(t, h.do(t, "GET", viewTarget+"?view=outline", token, nil, "").body)
+	_, rest, ok := strings.Cut(body, "&from=0&at=")
+	if !ok {
+		t.Fatalf("the outline's paging hint names no at=:\n%s", body)
 	}
-	fresh := reportPart(t, h.do(t, "GET", viewTarget+"?view=page&section=next_steps&from=2&at="+viewCommit, wideToken, nil, "").body)
-	if strings.Contains(fresh, "summary changed since") || !strings.Contains(fresh, "[next_steps#2] ") {
-		t.Fatalf("CONTROL: at the stored commit there is no change line:\n%s", fresh)
+	at, _, _ := strings.Cut(rest, " ")
+	return at
+}
+
+// repush registers the fixture again with `edit` applied to its payload — same summary commit.
+func repush(t *testing.T, h *harness, edit func(string) string) {
+	t.Helper()
+	if put := h.do(t, "PUT", viewTarget, wideToken, nil, edit(viewPayload())); put.status != 200 {
+		t.Fatalf("re-register: %d %q", put.status, put.body)
+	}
+}
+
+const changedLine = "; re-read the outline\n"
+
+// TestAPageReadAfterTheArcChangedSaysSo: a pager carries the outline's `at=` from page to page, and
+// a page says the arc changed whenever ANYTHING a page could serve did — not only the summary commit:
+//   - a member inserted at the same commit, sorting FIRST, so every later member index shifts (the
+//     pager that read members 0-4 would otherwise get s-0005 twice and s-0000 never, silently);
+//   - a top-ranked next step inserted at the same commit;
+//   - a step reworded at the same commit, the count unchanged.
+//
+// CONTROL: an unchanged re-push (same content, a new registration time) keeps the page silent, and so
+// does the arc as first read.
+func TestAPageReadAfterTheArcChangedSaysSo(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		section string
+		edit    func(string) string
+		changed bool
+	}{
+		{"unchanged re-push", "members", func(p string) string { return p }, false},
+		{"member inserted first", "members", func(p string) string {
+			return strings.Replace(p, `"members":[`, `"members":[{"session":"s-0000","role":"wrote"},`, 1)
+		}, true},
+		{"a step reworded, same count", "next_steps", func(p string) string {
+			return strings.Replace(p, viewSteps[0], "1. widget step 00: reworded", 1)
+		}, true},
+		{"top-ranked step inserted", "next_steps", func(p string) string {
+			return strings.Replace(p, `"next_steps":[`, `"next_steps":["0. a new first step",`, 1)
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := viewHarness(t)
+			at := outlineAt(t, h, wideToken)
+			page := func() string {
+				return reportPart(t, h.do(t, "GET", viewTarget+"?view=page&section="+tc.section+"&from=5&at="+at, wideToken, nil, "").body)
+			}
+			if before := page(); strings.Contains(before, changedLine) {
+				t.Fatalf("CONTROL: the arc as first read is unchanged:\n%s", before)
+			}
+			repush(t, h, tc.edit)
+			after := page()
+			if got := strings.Contains(after, "\narc changed since "+at+changedLine); got != tc.changed {
+				t.Fatalf("after %s, changed line present=%v, want %v:\n%s", tc.name, got, tc.changed, after)
+			}
+		})
+	}
+}
+
+// TestTheTokenOfAHiddenArcIsNeverServed is visibility parity on the token path: for the beta-only
+// reader the hidden arc's outline and an `at=` page are the absent answer, byte for byte, and no
+// token appears in either. POSITIVE CONTROL: the home reader's outline carries one.
+// ⚠ AN INVARIANT GUARD, LABELLED AS ONE: green on the commit-based build too — it pins that the token
+// path did not open a side channel, not a defect the token fixed.
+func TestTheTokenOfAHiddenArcIsNeverServed(t *testing.T) {
+	h := viewHarness(t)
+	at := outlineAt(t, h, wideToken)
+	for _, q := range []string{"?view=outline", "?view=page&section=members&at=" + at} {
+		hidden := h.do(t, "GET", viewTarget+q, narrowToken, nil, "")
+		absent := h.do(t, "GET", "/api/v1/arc/alpha-notes/never-filed"+q, narrowToken, nil, "")
+		if hidden.status != 200 || reportPart(t, hidden.body) != reportPart(t, absent.body) || strings.Contains(hidden.body, at) {
+			t.Fatalf("%q: hidden must equal absent and carry no token:\n%s\n--- absent\n%s", q, hidden.body, absent.body)
+		}
 	}
 }
 
 // TestTheOutlineSizesEachSectionAndCarriesNoItem pins the outline's own lines: the summary's short
 // fields inline, one size line per section (bytes = the items' own bytes, computed here from the
-// fixture), the paging hint naming the stored commit — and no item text.
+// fixture), the content token and the paging hint carrying it — and no item text.
 func TestTheOutlineSizesEachSectionAndCarriesNoItem(t *testing.T) {
 	h := viewHarness(t)
 	got := h.do(t, "GET", viewTarget+"?view=outline", wideToken, nil, "")
 	body := reportPart(t, got.body)
+	at := outlineAt(t, h, wideToken)
+	if len(at) != 16 || strings.Trim(at, "0123456789abcdef") != "" {
+		t.Fatalf("the token is 16 lowercase hex characters, got %q", at)
+	}
 	size := func(items []string) int {
 		n := 0
 		for _, s := range items {
@@ -318,8 +391,9 @@ func TestTheOutlineSizesEachSectionAndCarriesNoItem(t *testing.T) {
 		"closing condition (stated): the gadget answers on the new port\n" +
 		"task refs: tracker:T-1\naliases: gadget-move\n\n" +
 		fmt.Sprintf("state_now: 12 items, %d B\nnext_steps: 46 items, %d B\nmembers: 7\n", size(viewState), size(viewSteps)) +
-		"page a section: ?view=page&section=<state_now|next_steps|members>&from=0&at=" + viewCommit +
-		" (limit default 20, at most 200; max_bytes default 8192) — or cairn arc-show --section <name> --from 0\n"
+		"token: " + at + "\n" +
+		"page a section: ?view=page&section=<state_now|next_steps|members>&from=0&at=" + at +
+		" (limit default 20, at most 200; max_bytes default 8192, counting item lines only) — or cairn arc-show --section <name> --from 0 --at " + at + "\n"
 	if !strings.HasSuffix(body, want) || !strings.HasPrefix(body, "cairn-arc: status=arc-found home=alpha-notes slug=gadget-move view=outline\n") {
 		t.Fatalf("outline:\n%s\n--- want suffix\n%s", body, want)
 	}
@@ -369,18 +443,25 @@ func TestEveryViewOfAHiddenArcIsTheAbsentAnswer(t *testing.T) {
 func TestABadViewParameterIs400ForEveryArc(t *testing.T) {
 	h := viewHarness(t)
 	for q, want := range map[string]string{
-		"?view=page&section=next_steps&limit=0":     "limit must be an integer from 1 to 200, got 0",
-		"?view=page&section=next_steps&limit=-1":    "limit must be an integer from 1 to 200, got -1",
-		"?view=page&section=next_steps&limit=201":   "limit must be an integer from 1 to 200, got 201",
-		"?view=page&section=next_steps&limit=x":     "limit must be an integer, got 'x'",
-		"?view=page&section=next_steps&max_bytes=0": "max_bytes must be an integer from 1 to 65536, got 0",
-		"?view=page&section=next_steps&from=-1":     "from must be an integer >= 0, got -1",
-		"?view=page&section=nowhere":                `view=page needs section, one of state_now, next_steps, members, got "nowhere"`,
-		"?view=page":                                `view=page needs section, one of state_now, next_steps, members, got ""`,
-		"?view=sideways":                            `view must be one of full, outline, page, got "sideways"`,
-		"?view=outline&from=3":                      "from applies only to view=page, got view=outline",
-		"?section=next_steps":                       "section applies only to view=page, got view=full",
-		"?view=page&section=next_steps&at=HEAD":     `at must be a 40- or 64-character lowercase hex commit, got "HEAD"`,
+		"?view=page&section=next_steps&limit=0":          "limit must be an integer from 1 to 200, got 0",
+		"?view=page&section=next_steps&limit=-1":         "limit must be an integer from 1 to 200, got -1",
+		"?view=page&section=next_steps&limit=201":        "limit must be an integer from 1 to 200, got 201",
+		"?view=page&section=next_steps&limit=x":          "limit must be an integer, got 'x'",
+		"?view=page&section=next_steps&max_bytes=0":      "max_bytes must be an integer from 1 to 65536, got 0",
+		"?view=page&section=next_steps&from=-1":          "from must be an integer >= 0, got -1",
+		"?view=page&section=nowhere":                     `view=page needs section, one of state_now, next_steps, members, got "nowhere"`,
+		"?view=page":                                     `view=page needs section, one of state_now, next_steps, members, got ""`,
+		"?view=sideways":                                 `view must be one of full, outline, page, got "sideways"`,
+		"?view=outline&from=3":                           "from applies only to view=page, got view=outline",
+		"?section=next_steps":                            "section applies only to view=page, got view=full",
+		"?view=page&section=next_steps&at=HEAD":          `at must be the outline's 16-character lowercase hex token, got "HEAD"`,
+		"?view=page&section=next_steps&at=" + viewCommit: `at must be the outline's 16-character lowercase hex token, got "` + viewCommit + `"`,
+		"?view=":                                   "view must not be empty",
+		"?view=page&section=":                      "section must not be empty",
+		"?view=page&section=next_steps&from=":      "from must not be empty",
+		"?view=page&section=next_steps&limit=":     "limit must not be empty",
+		"?view=page&section=next_steps&max_bytes=": "max_bytes must not be empty",
+		"?view=page&section=next_steps&at=":        "at must not be empty",
 	} {
 		for _, target := range []string{viewTarget, "/api/v1/arc/alpha-notes/never-filed"} {
 			for _, token := range []string{wideToken, narrowToken} {
