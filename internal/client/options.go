@@ -75,6 +75,19 @@ type Options struct {
 	Slug string
 	From string
 
+	// The arc read views (`arc-show`): `--outline`, or a page of one section (`--section`, from
+	// `--from`, bounded by `--limit` and `--max-bytes`, checked against `--at`). On `arc-show`,
+	// `--from` is the page's start index — the same field `arc-register` reads as its payload path,
+	// sent to the pod as the text given. Each `Has…` records that the flag was GIVEN, so a flag given
+	// an empty value is still sent (and refused by the pod) rather than dropped as if absent.
+	Outline    bool
+	Section    string
+	HasSection bool
+	HasFrom    bool
+	At         string
+	HasAt      bool
+	MaxBytes   *int
+
 	// The memo verbs' operands (scope-mail decision 8). `--id` is kept as the TEXT given, with a
 	// `Has…`, so the verb can refuse a malformed id at exit 2 with the value named; `--body` carries
 	// a `Has…` because an EMPTY body given on purpose and no body at all are different requests

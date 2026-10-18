@@ -460,22 +460,7 @@ func (r ArcReport) MemberLine(m arcs.Member) string {
 // nothing about that arc" a property a test can assert by ABSENCE.
 func (r ArcReport) RenderText() string {
 	var b strings.Builder
-	if r.Status == StatusArcFound {
-		fmt.Fprintf(&b, "cairn-arc: status=%s home=%s slug=%s\n", r.Status, r.Reg.Home, r.Reg.Slug)
-	} else {
-		fmt.Fprintf(&b, "cairn-arc: status=%s\n", r.Status)
-	}
-	b.WriteString("  " + SessionsReadsLine + "\n")
-	b.WriteString("  " + SessionsAttributionLine + "\n")
-	b.WriteString("  " + ArcVisibilityLine + "\n")
-	b.WriteString("  " + ArcsRegistrationLine + "\n")
-	if r.Status == StatusArcFound && r.Reg.VisibleToDeclared {
-		b.WriteString("  " + ArcOptInLine + "\n")
-	}
-	if r.Status == StatusArcFound && r.Damaged {
-		b.WriteString("  " + ArcsDamagedLine + "\n")
-	}
-	b.WriteString("\n")
+	r.writePreamble(&b, "")
 	switch r.Status {
 	case StatusRegistrationsUnconfigured:
 		b.WriteString(RegistrationsUnconfiguredBody)
@@ -484,19 +469,7 @@ func (r ArcReport) RenderText() string {
 		b.WriteString(ArcUnregisteredBody)
 		return b.String()
 	}
-	reg := r.Reg
-	fmt.Fprintf(&b, "status: %s\n", StatusWord(reg.Status))
-	if reg.Status == arcs.StatusUnknown {
-		b.WriteString("  " + UnknownStatusGloss + "\n")
-	}
-	fmt.Fprintf(&b, "closing condition: %s\n", reg.ClosingKind)
-	b.WriteString(r.RegisteredLine() + "\n")
-	b.WriteString(r.ToolingCoverageLine() + "\n")
-	if carried := r.CarriedLine(); carried != "" {
-		b.WriteString("  " + carried + "\n")
-	}
-	b.WriteString(r.DeclaredLine() + "\n")
-	b.WriteString(r.MemberWritesLine() + "\n")
+	r.writeHead(&b)
 	// 🔴 THE SUMMARY COMES BEFORE THE MEMBER LIST. The member list is unbounded in practice
 	// (`arcs.MaxMembers` lines) and the summary is what a reader came for, so a reader that keeps
 	// only a byte-budgeted PREFIX of this body must reach "what is next" before it reaches the list.
@@ -510,6 +483,47 @@ func (r ArcReport) RenderText() string {
 		b.WriteString("\n- " + r.MemberLine(m))
 	}
 	return b.String()
+}
+
+// writePreamble is the `cairn-arc:` line, the indented fixed lines under it and the blank line that
+// ends them — the part of the answer every status and every view shares. `viewSuffix` is appended to
+// the first line of an `arc-found` answer only (`""` for the full view, so its bytes are unchanged);
+// an `arc-unregistered` answer never carries one, so it stays identical whatever view was asked for.
+func (r ArcReport) writePreamble(b *strings.Builder, viewSuffix string) {
+	if r.Status == StatusArcFound {
+		fmt.Fprintf(b, "cairn-arc: status=%s home=%s slug=%s%s\n", r.Status, r.Reg.Home, r.Reg.Slug, viewSuffix)
+	} else {
+		fmt.Fprintf(b, "cairn-arc: status=%s\n", r.Status)
+	}
+	b.WriteString("  " + SessionsReadsLine + "\n")
+	b.WriteString("  " + SessionsAttributionLine + "\n")
+	b.WriteString("  " + ArcVisibilityLine + "\n")
+	b.WriteString("  " + ArcsRegistrationLine + "\n")
+	if r.Status == StatusArcFound && r.Reg.VisibleToDeclared {
+		b.WriteString("  " + ArcOptInLine + "\n")
+	}
+	if r.Status == StatusArcFound && r.Damaged {
+		b.WriteString("  " + ArcsDamagedLine + "\n")
+	}
+	b.WriteString("\n")
+}
+
+// writeHead is an `arc-found` answer's per-arc lines, from `status:` to `member writes:` — the part
+// the full view and the outline share.
+func (r ArcReport) writeHead(b *strings.Builder) {
+	reg := r.Reg
+	fmt.Fprintf(b, "status: %s\n", StatusWord(reg.Status))
+	if reg.Status == arcs.StatusUnknown {
+		b.WriteString("  " + UnknownStatusGloss + "\n")
+	}
+	fmt.Fprintf(b, "closing condition: %s\n", reg.ClosingKind)
+	b.WriteString(r.RegisteredLine() + "\n")
+	b.WriteString(r.ToolingCoverageLine() + "\n")
+	if carried := r.CarriedLine(); carried != "" {
+		b.WriteString("  " + carried + "\n")
+	}
+	b.WriteString(r.DeclaredLine() + "\n")
+	b.WriteString(r.MemberWritesLine() + "\n")
 }
 
 // SummaryLines is the schema-2 summary as every surface prints it, or nil when the arc has none —

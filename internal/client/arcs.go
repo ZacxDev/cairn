@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -182,7 +183,15 @@ func arcsCheck(env Env, opts Options, scope string) (int, error) {
 }
 
 // ArcShow is `cairn arc-show --slug S` (home from `--scope`/`--repo`): `GET arc/<home>/<slug>`.
+//
+// The read-view flags become the route's query as given (`arcViewQuery`); the POD validates them, and
+// its 400 is a usage error here (2, its sentence on stderr), never "the store was unreachable".
+//
+// 🔴 A VIEW REQUEST ANSWERED WITHOUT `X-Arc-View` IS A POD THAT PREDATES THE VIEWS. It ignored the
+// query and sent the FULL arc, so the body is printed as sent (a correct answer, only a larger one)
+// and stderr says so — a caller that asked for page 40 must not read the whole arc as page 40.
 func ArcShow(env Env, opts Options) (int, error) {
+	query := arcViewQuery(opts)
 	home := ResolveScope(opts.Scope, opts.Repo, env.Stderr)
 	if home == "" {
 		return ExitUsage, nil
@@ -192,13 +201,59 @@ func ArcShow(env Env, opts Options) (int, error) {
 		return 0, err
 	}
 	headers, body, err := FetchReport(cfg,
-		"/api/v1/arc/"+quoteAll(home)+"/"+quoteAll(opts.Slug), opts.Timeout)
+		"/api/v1/arc/"+quoteAll(home)+"/"+quoteAll(opts.Slug)+query, opts.Timeout)
+	var refused *StoreUnreachable
+	if query != "" && errors.As(err, &refused) && refused.HTTPStatus == http.StatusBadRequest {
+		fmt.Fprintf(env.Stderr, "cairn: arc-show: the pod refused the view — %s\n", refused.Reason)
+		return ExitUsage, nil
+	}
 	if err != nil {
 		return 0, err
 	}
 	// `*`: the declared-scopes line and each member's "wrote in:" list name other scopes.
 	env.recordRead(alias, LedgerAllScopes)
-	return printPodReport(env, label, headers, body), nil
+	code := printPodReport(env, label, headers, body)
+	if query != "" && headers.Get("X-Store-Status") == report.StatusArcFound && headers.Get("X-Arc-View") == "" {
+		fmt.Fprintln(env.Stderr, "🔴 cairn: arc-show: the pod ignored the view and answered the FULL arc "+
+			"(no X-Arc-View header) — it predates arc read views")
+	}
+	return code, nil
+}
+
+// arcViewQuery is `arc-show`'s view flags as the route's query string, "" when none is given.
+//
+// 🔴 THE FLAGS ARE SENT AS GIVEN; NOTHING IS CHECKED HERE. The pod's `arcViewFromParams` is the one
+// validator — of the values AND of the combinations (a page flag beside `--outline`, `--from` with no
+// `--section`) — and its 400 is this verb's usage exit. A second copy of those rules here could only
+// ever be stricter or wronger than the pod.
+func arcViewQuery(opts Options) string {
+	q := url.Values{}
+	if opts.Outline {
+		q.Set("view", "outline")
+	}
+	// SET-NESS, NOT NON-EMPTINESS: a flag given `""` is sent as given, so the pod refuses it.
+	if opts.HasSection {
+		if !opts.Outline {
+			q.Set("view", "page")
+		}
+		q.Set("section", opts.Section)
+	}
+	if opts.HasFrom {
+		q.Set("from", opts.From)
+	}
+	if opts.Limit != nil {
+		q.Set("limit", strconv.Itoa(*opts.Limit))
+	}
+	if opts.MaxBytes != nil {
+		q.Set("max_bytes", strconv.Itoa(*opts.MaxBytes))
+	}
+	if opts.HasAt {
+		q.Set("at", opts.At)
+	}
+	if len(q) == 0 {
+		return ""
+	}
+	return "?" + q.Encode()
 }
 
 // ArcRegister is `cairn arc-register --slug S --from F` (home from `--scope`/`--repo`).

@@ -103,8 +103,11 @@ func Verbs() []Verb {
 		// in the scope to every arc visible on that scope's instance. See `ArcsList`.
 		{Name: "arcs", Ledger: LedgerAll, Help: "which registered arcs touched the scope, declared or inferred; --check: the orphan check (asks the pod)",
 			Flags: []string{"--scope", "--repo", "--check", "--all-scopes"}, Run: ArcsList},
-		{Name: "arc-show", Ledger: LedgerAll, Help: "one registered arc: status, coverage, members (asks the pod)",
-			Flags: []string{"--scope", "--repo", "--slug"}, Run: ArcShow},
+		// The read views are FLAGS on this verb for `--check`'s reason: the same pod, the same head
+		// (`arc/<home>/<slug>?view=…`), no ledger moves. See `ArcShow`.
+		{Name: "arc-show", Ledger: LedgerAll, Help: "one registered arc: status, coverage, members; --outline / --section page it (--max-bytes counts item lines only) (asks the pod)",
+			Flags: []string{"--scope", "--repo", "--slug", "--outline", "--section", "--from", "--limit", "--max-bytes", "--at"},
+			Run:   ArcShow},
 		{Name: "arc-register", Ledger: LedgerResolved, Writes: true,
 			Help:  "register or update an arc from a JSON payload (writes to the pod)",
 			Flags: []string{"--scope", "--repo", "--slug", "--from"}, Run: ArcRegister},
@@ -524,7 +527,7 @@ func Parse(argv []string) (Verb, Options, error) {
 		// token as its value; missing from the switch, it parses and sets nothing. Both leave
 		// a well-formed command line doing the wrong thing at exit 0.
 		needsValue := name != "--no-sync" && name != "--list" && name != "--all-scopes" &&
-			name != "--json" && name != "--check" && name != "--statuses"
+			name != "--json" && name != "--check" && name != "--statuses" && name != "--outline"
 		if !needsValue {
 			if hasValue {
 				return verb, opts, usagef("cairn: %s takes no value", name)
@@ -542,6 +545,8 @@ func Parse(argv []string) (Verb, Options, error) {
 				opts.Check = true
 			case "--statuses":
 				opts.Statuses = true
+			case "--outline":
+				opts.Outline = true
 			}
 			i++
 			continue
@@ -604,7 +609,17 @@ func Parse(argv []string) (Verb, Options, error) {
 		case "--slug":
 			opts.Slug = value
 		case "--from":
-			opts.From = value
+			opts.From, opts.HasFrom = value, true
+		case "--section":
+			opts.Section, opts.HasSection = value, true
+		case "--at":
+			opts.At, opts.HasAt = value, true
+		case "--max-bytes":
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				return verb, opts, usagef("cairn: --max-bytes expects an integer, got %q", value)
+			}
+			opts.MaxBytes = &n
 		// `--timeout` AFTER the verb is `memo-check`'s alone (the hook passes `--timeout 1` there,
 		// decision 7); it sets the same bound the global flag does, refused the same way.
 		case "--timeout":
