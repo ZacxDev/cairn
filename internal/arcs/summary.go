@@ -46,18 +46,32 @@ const SchemaSummary = 2
 // over its byte cap is clipped at a rune boundary and ends in `…`, so a reader can see it was cut and
 // the push's response says which. (Refusing was the first design, and measured against real handoff
 // documents it dropped the whole registration — status and members — over one long bullet.)
-// MaxSummaryBytes bounds the whole independently (20 items at the item cap overshoot it), because
+// MaxSummaryBytes bounds the whole independently (50 items at the item cap overshoot it), because
 // every byte is paid on every later read — nothing is compacted.
+//
+// 🔴 THE ITEM CAPS ARE SIZED FROM MEASURED HANDOFFS, NOT GUESSED — and the first guess (20 items of
+// 500 bytes) was measured WRONG: over ~500 real handoff documents (~5,900 items) it clipped 16% of
+// items and touched 63% of documents, so a reader asking "what is next" got a ranked step cut
+// mid-sentence. Item length there: p50 ~250 bytes, p95 ~880, a ranked next step's p95 ~1,200;
+// per-list count p99 ~22, max 46 ranks (66 state lines). At 1500 bytes and 50 items, 1.6% of items
+// are clipped (8.9% of documents) and 16 items in the whole corpus are dropped over a count.
+// The total moved 16 → 24 KiB with them: at 16 KiB the larger caps would have dropped 4× more
+// open ranked steps over the total than at 24 KiB. Read cost, measured as the MEAN stored summary
+// (what the journal re-reads per record): ~3.4 KB → ~4.1 KB; the WORST record grows 16 → 24 KiB.
+//
+// ⚠ RAISING A COUNT OR THE TOTAL IS NOT ROLLBACK-SAFE, raising the item byte cap is: `validSummary`
+// re-checks the counts and the total on READ (not an item's bytes), so a build with the older,
+// smaller caps SKIPS any record stored over them as damage, and that arc shows its previous record.
 const (
 	MaxClosingConditionBytes = 1000
-	MaxSummaryItems          = 20
-	MaxSummaryItemBytes      = 500
+	MaxSummaryItems          = 50
+	MaxSummaryItemBytes      = 1500
 	MaxRepoPathBytes         = 256
 	MaxTaskRefs              = 32
 	MaxTaskRefBytes          = 200
 	MaxAliases               = 16
 	MaxAliasBytes            = 64
-	MaxSummaryBytes          = 16 * 1024
+	MaxSummaryBytes          = 24 * 1024
 	// MaxCommittedAtBytes is the longest RFC 3339 instant with nanoseconds and a numeric offset
 	// (`2006-01-02T15:04:05.999999999-07:00`). Go's parser accepts a fractional field of ANY length,
 	// so without it `committed_at` alone could carry the summary past MaxSummaryBytes.

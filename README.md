@@ -432,7 +432,8 @@ A `schema: 2` payload may add two OPTIONAL fields; everything else is as above.
   `closing_condition` (string, optional), `state_now` (list), `next_steps` (list, **ranked** — order
   is kept), `source` (**required**: `repo_path` relative to the repo, `commit` as a full 40- or 64-hex
   id, `committed_at` RFC 3339), `task_refs` (list, no whitespace) and `aliases` (list, folded like a
-  slug, deduplicated, sorted). `arc-show` prints it after the members, provenance line first
+  slug, deduplicated, sorted). `arc-show` prints it **before the member list** (after the `member writes:` line, so a
+  reader that keeps only a prefix of the body reaches it first), provenance line first
   (`summary: the registering tool's own word, read from <repo_path> at commit <commit> (committed
   <committed_at>)`); a listing row gains ` · aliases a, b`. **`state_now` and `next_steps` items
   are printed VERBATIM, in the order sent**, one per line under `state now: N` / `next steps
@@ -491,14 +492,46 @@ scopes, the opt-in — always lands; a problem in the summary is **adjusted and 
 | field | bound | when it is exceeded or broken |
 |---|---|---|
 | `closing_condition` | 1000 bytes | clipped |
-| `state_now`, `next_steps` | 20 items, each ≤ 500 bytes | an item over 500 bytes is clipped; items past the 20th are dropped |
+| `state_now`, `next_steps` | 50 items, each ≤ 1500 bytes | an item over 1500 bytes is clipped; items past the 50th are dropped |
 | `task_refs` | 32 items, each ≤ 200 bytes, no whitespace | clipped; past the 32nd dropped; one containing whitespace (after sanitizing) dropped |
 | `aliases` | 16 items as sent, each ≤ 64 bytes as sent, folded to a non-empty slug | clipped before folding; past the 16th dropped; one folding to nothing dropped |
 | `source` | **required** whenever `summary` is sent | an uncitable source drops the **summary** (the arc still lands) |
 | `source.repo_path` | ≤ 256 bytes; `/`-separated segments of `[A-Za-z0-9._-]` only — so no leading or trailing `/`, no empty segment, no space or backslash — and no segment that is exactly `.` or `..` | summary dropped, `reason=source.repo_path` |
 | `source.commit` | a full lower-case hex commit id, exactly 40 or 64 characters | summary dropped, `reason=source.commit` |
 | `source.committed_at` | ≤ 35 bytes (nanoseconds and a numeric offset fit) and RFC 3339 (Go's `time.RFC3339` parse; fractional seconds accepted) | summary dropped, `reason=source.committed_at` |
-| the whole stored summary | 16 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) | items are dropped from the **end** of the lists — the longer of `state_now`/`next_steps` first (`state_now` on a tie), then `task_refs`, then `aliases` — until it fits |
+| the whole stored summary | 24 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) | items are dropped from the **end** of the lists — the longer of `state_now`/`next_steps` first (`state_now` on a tie), then `task_refs`, then `aliases` — until it fits |
+
+⚠ **These bounds were raised from 20 items of 500 bytes and a 16 KiB total**, which clipped about
+one item in six of real handoff documents mid-sentence (the measurement is beside the constants in
+`internal/arcs/summary.go`). What follows for an operator:
+
+- **A stored summary is not re-read by the new bounds.** An arc registered under the old ones keeps
+  its clipped or shortened summary until its tooling pushes it again; re-registering it (the same
+  push that registered it) stores the whole text.
+- **`arc-show` now prints the summary before the member list**, where it used to end the body. A
+  consumer that located the summary by position (for example, everything after the last member
+  line) must find it by its `summary: ` provenance line instead; a schema-1 arc's body is unchanged.
+- **An older build SKIPS a record stored over its bounds — and with it that record's MEMBER LIST,
+  not just its summary.** The read side re-checks the item COUNTS and the TOTAL (not an item's
+  bytes), so a build with the older bounds treats a record with more than 20 items in a list or over
+  16 KiB as damage and folds the arc to its previous record (or to nothing). Three readers see that:
+  - **`arc-show`, `arcs` and the browser** show the previous record's status, summary and members.
+  - **Plugin consent in `cairn-ui`** reads an arc's members to decide which sessions its `off` veto
+    covers. A session that only the skipped record names falls out of the arc, so a plugin the arc
+    vetoed can run on that session while that `cairn-ui` is the older build.
+  - **The next push to an older `cairn-server`** merges against the previous VISIBLE record. A push
+    that does not measure a leg (`readers_measured: false` or `writers_measured: false`) carries
+    that leg's members from the record it can see, so members that only the skipped record held are
+    **dropped from the new record**. They stay gone after rolling forward, until a host that
+    measures that leg pushes the arc again; re-registering from a host that does not measure it
+    does not bring them back.
+- **So roll `cairn-ui` no later than `cairn-server`** (or both together). On the way forward that
+  avoids all of the above: no older reader is left by the time a record over the old bounds exists.
+- **Rolling back past this version is the remaining exposure.** Once any arc has a record with more
+  than 20 items in a list or over 16 KiB, prefer rolling forward to rolling back. If you must roll
+  back, then after rolling forward again have **each host that registers the affected arcs re-push
+  them** — including any host that measures readers — and expect an arc whose members were dropped
+  to stay short until that host does.
 
 Every **text field** — `closing_condition` (when sent), every `state_now`, `next_steps`, `task_refs`
 and `aliases` item — goes through four steps, in this order:
@@ -540,12 +573,12 @@ several pushes, to show each shape.)
 
 ```text
 arc-registered: alpha-notes/gadget-move · members=1 · unjoinable=0
-summary-adjusted: clipped summary.next_steps[0] bytes=503 max=500
+summary-adjusted: clipped summary.next_steps[0] bytes=1503 max=1500
 summary-adjusted: redacted summary.next_steps[1] rule=authorization
 summary-adjusted: sanitized summary.next_steps[7] replaced=1
 summary-adjusted: dropped summary.next_steps[8] reason=blank
-summary-adjusted: dropped summary.state_now[20] reason=over-count max=20
-summary-adjusted: dropped summary.state_now[19] reason=over-total max=16384
+summary-adjusted: dropped summary.state_now[50] reason=over-count max=50
+summary-adjusted: dropped summary.state_now[49] reason=over-total max=24576
 summary-adjusted: dropped summary reason=source.commit
 ```
 

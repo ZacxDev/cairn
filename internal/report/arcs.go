@@ -497,13 +497,17 @@ func (r ArcReport) RenderText() string {
 	}
 	b.WriteString(r.DeclaredLine() + "\n")
 	b.WriteString(r.MemberWritesLine() + "\n")
+	// 🔴 THE SUMMARY COMES BEFORE THE MEMBER LIST. The member list is unbounded in practice
+	// (`arcs.MaxMembers` lines) and the summary is what a reader came for, so a reader that keeps
+	// only a byte-budgeted PREFIX of this body must reach "what is next" before it reaches the list.
+	// A schema-1 arc has no summary, so its body is byte-identical to what it was before.
+	if lines := r.SummaryLines(); len(lines) > 0 {
+		b.WriteString("\n" + strings.Join(lines, "\n") + "\n\n")
+	}
 	members := r.SortedMembers()
 	b.WriteString(r.MembersHeading())
 	for _, m := range members {
 		b.WriteString("\n- " + r.MemberLine(m))
-	}
-	if lines := r.SummaryLines(); len(lines) > 0 {
-		b.WriteString("\n\n" + strings.Join(lines, "\n"))
 	}
 	return b.String()
 }
