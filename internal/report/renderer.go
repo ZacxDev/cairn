@@ -114,20 +114,17 @@ func (rd Reader) Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arc
 // ⚠ `Scope` IS LEFT EMPTY: the answer is about an arc, and on `arc-unregistered` it deliberately
 // names no scope at all.
 //
-// `View` is set only on `arc-found`: an unregistered or unconfigured answer is the same bytes in
-// every view (`RenderView`), so naming a view there would be a claim about a rendering that did not
-// happen — and the one header that differed would tell a hidden arc from an absent one.
+// `View` is set only on `arc-found` AND only when the request named a view (`view.Named`): an
+// unregistered or unconfigured answer is the same bytes in every view (`RenderView`), so naming a view
+// there would be a claim about a rendering that did not happen — and the one header that differed
+// would tell a hidden arc from an absent one; and a request naming no view gets the pre-views headers.
 func (rd Reader) Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapshot, view ArcView) (Rendered, error) {
 	rep, err := Arc(storeRoot, home, slug, visible, snap)
 	if err != nil {
 		return Rendered{}, err
 	}
-	text, err := rep.RenderView(view)
-	if err != nil {
-		return Rendered{}, err
-	}
-	rendered := Rendered{Status: rep.Status, Exit: rep.Exit(), Text: text}
-	if rep.Status == StatusArcFound {
+	rendered := Rendered{Status: rep.Status, Exit: rep.Exit(), Text: rep.RenderView(view)}
+	if rep.Status == StatusArcFound && view.Named {
 		rendered.View = view.Mode
 	}
 	return rendered, nil

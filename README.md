@@ -228,7 +228,7 @@ the Go client.
 | `create --scope S --ref R --file F` | create a new entry (refuses to overwrite) | writes |
 | `sessions --scope X` | which sessions wrote attributed bullets, with coverage | *Go* |
 | `arcs --scope X` | which registered arcs touched a scope, `declared` or `inferred`; `--check` is the orphan check | *Go* |
-| `arc-show --slug S` | one registered arc: status, coverage, members; `--outline`, `--section`/`--from`/`--limit`, `--item` read it in pages | *Go* |
+| `arc-show --slug S` | one registered arc: status, coverage, members; `--outline`, `--section`/`--from`/`--limit` read it in pages | *Go* |
 | `arc-register --slug S --from F` | register or update an arc from a JSON payload | *Go*, writes |
 | `sources --scope X` | which code — repositories and branch — a scope declares it describes | *Go* |
 | `audit-refs --scope X` | check entries' paths, symbols, commits and PRs against the declared sources | *Go* |
@@ -427,13 +427,12 @@ host is not fanned out. `tests/arcs/e2e.sh` is the end-to-end check over both re
 ### Reading a large arc: the outline and pages
 
 A summary can hold 50 ranked steps and 24 KiB, and a member list many rows, so `arc-show` can be
-read in bounded pieces. **With no view parameter (or `view=full`) the answer is byte-for-byte the
-full answer above**; the views are opt-in.
+read in bounded pieces. **With no view parameter the answer — body AND headers — is byte-for-byte
+the answer above** (`view=full` is the same body, plus `X-Arc-View: full`); the views are opt-in.
 
 ```bash
 cairn arc-show --repo . --slug my-topic --outline                         # ?view=outline
 cairn arc-show --repo . --slug my-topic --section next_steps --from 40    # ?view=page&section=next_steps&from=40
-cairn arc-show --repo . --slug my-topic --item 'next_steps#40'            # ?item=next_steps%2340
 ```
 
 - **`view=outline`** — the head lines, the summary's provenance line, its stated closing condition,
@@ -447,17 +446,17 @@ cairn arc-show --repo . --slug my-topic --item 'next_steps#40'            # ?ite
   least one item** while any remain, and ends with `more: from=<next>` or `end` (`from` at or past
   the count: no item, `end`). With `at=<commit>` (the outline's), a page whose stored summary was
   read at a different commit adds `summary changed since <at>; re-read the outline`.
-- **`item=<section>#<index>`** (`#` URL-encoded as `%23`) — a page of exactly that item; an index past
-  the end is a 400.
 - **A malformed parameter is `400 bad-request`** with its sentence (`limit` 0 or 201, an unknown
   `section`, `from=-1`, a page parameter beside `view=outline`, …) — the same answer for an arc you
   can see, one you cannot and one that does not exist. Visibility is unchanged: an arc you may not
   see is `arc-unregistered`, byte-identical to an absent one, in every view.
-- **`X-Arc-View: full|outline|page`** is on every `arc-found` answer and on no other. A pod that
-  predates the views ignores the parameters and answers the full arc without it, so `arc-show` with
-  a view flag says so on stderr (and still prints the body, exit 0). A view the pod refuses is exit
-  **2** with the pod's sentence; a page flag without `--section`/`--item`, or `--outline` beside one,
-  is refused before the network.
+- **`X-Arc-View: full|outline|page`** is sent only on an `arc-found` answer to a request that named
+  a view (`view=` present, `full` included) — never on a plain request, and never on any other
+  status. A pod that predates the views ignores the parameters and answers the full arc without it,
+  so `arc-show` with a view flag says so on stderr (and still prints the body, exit 0). The client
+  sends the flags as given and checks nothing itself: the pod is the one validator, and its 400 —
+  a page flag without `--section`, `--outline` beside a page flag, a value out of range — is exit
+  **2** with the pod's sentence.
 
 ### Arc schema 2: a summary, and showing an arc to its declared scopes
 
@@ -885,7 +884,7 @@ read's output or exit code.
 | `GET /api/v1/snapshot[?scope=]` | gzipped tar of the entry files — the sync payload, with an `ETag` |
 | `GET /api/v1/sessions/{scope}` | which sessions wrote attributed bullets, with coverage — **Go pod only** |
 | `GET /api/v1/arcs/{scope}` | registered arcs that touched the scope; `?check=1` (`&all_scopes=1`) is the orphan check, `X-Store-Exit` on doctor's 0/9/10 — **Go pod only** |
-| `GET /api/v1/arc/{home}/{slug}` | one registered arc — **Go pod only**; `arc-unregistered` when it is not visible to you. Opt-in read views (`?view=outline`, `?view=page&section=&from=&limit=&max_bytes=&at=`, `?item=<section>%23<i>`), named by `X-Arc-View` — § *Reading a large arc* |
+| `GET /api/v1/arc/{home}/{slug}` | one registered arc — **Go pod only**; `arc-unregistered` when it is not visible to you. Opt-in read views (`?view=outline`, `?view=page&section=&from=&limit=&max_bytes=&at=`); a request naming a view gets `X-Arc-View` — § *Reading a large arc* |
 | `PUT /api/v1/arc/{home}/{slug}` | register or update one arc (write verb on every declared scope; `409 registrations-unconfigured` with no `-arc-journal`) — **Go pod only** |
 | `GET /api/v1/sources/{scope}` | the scope's declared code sources, read from `$CAIRN_SOURCE_JOURNAL` — an environment variable with no flag, a file OUTSIDE the store root, read-only to the pod; `sources-unconfigured` when unset — **Go pod only** |
 | `GET /api/v1/whoami` | the caller's OWN authority, as JSON (`X-Store-Status: whoami`): `{"principal", "status", "groups": {"mapped", "unmapped"}, "scopes"}`. `status` is `mapped` / `groups-unmapped` / `no-groups` for a group-federated caller and `not-federated` for any other; `groups` partitions only the groups the caller's OWN token claimed, `scopes` is the scope names it may read, every list sorted and never `null`. A self-view, never an enumeration of the group map; an unauthenticated caller gets the uniform 401 — **Go pod only**, and a pod without it answers `404 no-route` |

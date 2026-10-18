@@ -76,12 +76,11 @@ type Options struct {
 	From string
 
 	// The arc read views (`arc-show`): `--outline`, or a page of one section (`--section`, from
-	// `--from`, bounded by `--limit` and `--max-bytes`, checked against `--at`), or one item
-	// (`--item <section>#<index>`). On `arc-show`, `--from` is the page's start index — the same
+	// `--from`, bounded by `--limit` and `--max-bytes`, checked against `--at`). On `arc-show`,
+	// `--from` is the page's start index — the same
 	// field `arc-register` reads as its payload path, converted by the verb.
 	Outline  bool
 	Section  string
-	Item     string
 	At       string
 	MaxBytes *int
 

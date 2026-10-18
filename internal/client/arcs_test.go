@@ -276,7 +276,7 @@ func registerViewArc(t *testing.T, url string) {
 	}
 }
 
-// TestArcShowsViewFlagsReachThePod: `--outline`, `--section/--from/--limit` and `--item` become the
+// TestArcShowsViewFlagsReachThePod: `--outline` and `--section/--from/--limit` become the
 // route's view query, and the client prints the pod's body for THAT query verbatim (the one renderer).
 func TestArcShowsViewFlagsReachThePod(t *testing.T) {
 	tsrv := arcPod(t, filepath.Join(t.TempDir(), "journal.jsonl"))
@@ -289,7 +289,6 @@ func TestArcShowsViewFlagsReachThePod(t *testing.T) {
 		{[]string{"--outline"}, "?view=outline", "next_steps: 3 items, "},
 		{[]string{"--section", "next_steps", "--from", "1", "--limit", "1"}, "?view=page&section=next_steps&from=1&limit=1",
 			"\n[next_steps#1] flip the gadget\nmore: from=2"},
-		{[]string{"--item", "next_steps#2"}, "?item=next_steps%232", "\n[next_steps#2] close the arc\nend"},
 	} {
 		argv := append([]string{"arc-show", "--scope", "alpha-notes", "--slug", "gadget-rollout"}, tc.argv...)
 		code, out, errOut := runCLI(t, argv...)
@@ -300,17 +299,26 @@ func TestArcShowsViewFlagsReachThePod(t *testing.T) {
 	}
 }
 
-// TestArcShowRefusesAMeaninglessViewCombination: a page flag with no section, or `--outline` beside a
-// page flag, is usage (2) before the network; a value the POD refuses (its 400) is usage too, with the
-// pod's sentence — never exit 3, which would say the store could not be read.
+// TestArcShowRefusesAMeaninglessViewCombination: the client checks NOTHING itself — it sends the flags
+// as given and the pod is the one validator. A page flag with no section, `--outline` beside a page
+// flag, and a value out of range are each the pod's 400, which the client reports as usage (2) with
+// the pod's own sentence — never exit 3, which would say the store could not be read.
 func TestArcShowRefusesAMeaninglessViewCombination(t *testing.T) {
 	tsrv := arcPod(t, filepath.Join(t.TempDir(), "journal.jsonl"))
 	registerViewArc(t, tsrv.URL)
 	base := []string{"arc-show", "--scope", "alpha-notes", "--slug", "gadget-rollout"}
-	for _, extra := range [][]string{{"--from", "1"}, {"--limit", "3"}, {"--outline", "--section", "next_steps"},
-		{"--outline", "--from", "1"}, {"--item", "next_steps#0", "--from", "1"}} {
-		if code, _, _ := runCLI(t, append(append([]string{}, base...), extra...)...); code != ExitUsage {
-			t.Fatalf("%v must be usage (2), got %d", extra, code)
+	for _, tc := range []struct {
+		extra []string
+		says  string
+	}{
+		{[]string{"--from", "1"}, "from applies only to view=page, got view=full"},
+		{[]string{"--limit", "3"}, "limit applies only to view=page, got view=full"},
+		{[]string{"--outline", "--section", "next_steps"}, "section applies only to view=page, got view=outline"},
+		{[]string{"--outline", "--from", "1"}, "from applies only to view=page, got view=outline"},
+	} {
+		code, _, errOut := runCLI(t, append(append([]string{}, base...), tc.extra...)...)
+		if code != ExitUsage || !strings.Contains(errOut, "the pod refused the view") || !strings.Contains(errOut, tc.says) {
+			t.Fatalf("%v must be the pod's 400 as usage (2): %d\n%s", tc.extra, code, errOut)
 		}
 	}
 	code, _, errOut := runCLI(t, append(append([]string{}, base...), "--section", "next_steps", "--limit", "0")...)

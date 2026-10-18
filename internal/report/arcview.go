@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -16,14 +15,16 @@ import (
 // bounded run of ONE section's items, each tagged with its stored index so a reader can cite it and
 // resume after it.
 //
+// 🔴 `X-Arc-View` IS SENT ONLY WHEN THE REQUEST NAMED A VIEW (`view=` present, `full` included), so a
+// request that names none is byte-identical to the pre-views answer in its body AND its headers.
+//
 // 🔴 THE FULL VIEW IS THE DEFAULT AND ITS BYTES DO NOT MOVE. No parameter (or `view=full`) renders
 // `ArcReport.RenderText`, unchanged; the views are additions a caller must ask for.
 //
 // 🔴 EVERY VIEW IS DECIDED AFTER THE VISIBILITY CHECK, NEVER BEFORE IT. `RenderView` renders a view
 // only for an `arc-found` report; every other status — `arc-unregistered` (absent OR hidden) and
 // `registrations-unconfigured` — is answered with `RenderText`'s bytes whatever view was asked for,
-// so a hidden arc is identical to an absent one in every view. A content-dependent refusal (an
-// `item=` past the end) is likewise reachable only for an arc this caller may already see.
+// so a hidden arc is identical to an absent one in every view.
 
 // The view names, as `?view=` spells them and as `X-Arc-View` echoes them.
 const (
@@ -68,15 +69,15 @@ type ArcView struct {
 	// At is the summary commit the caller last read the outline at, or "" — a page then says when the
 	// stored summary was read at a different commit.
 	At string
-	// Item is set when the request named ONE item (`item=<section>#<i>`): a page of exactly that one,
-	// refused when it does not exist.
-	Item bool
+	// Named is whether the request named a view at all (`view=` present, `full` included). Only then
+	// does the answer carry `X-Arc-View`; a request naming none gets the pre-views headers exactly.
+	Named bool
 }
 
 // FullArcView is the view a request that names none gets.
 func FullArcView() ArcView { return ArcView{Mode: ArcViewFull} }
 
-// ArcViewError is a refused view request: the caller's parameters, or an `item=` that names no item.
+// ArcViewError is a refused view request: its parameters, which alone decide it.
 // The pod answers it as a 400 carrying Message.
 type ArcViewError struct{ Message string }
 
@@ -89,20 +90,6 @@ func viewErr(format string, args ...any) error {
 // atCommit is what `at=` must look like: the stored source commit's own shape (`arcs` accepts 40 or
 // 64 lowercase hex), so a typo is refused instead of reading as "the summary changed".
 var atCommit = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
-
-// ParseArcItem splits `<section>#<index>`.
-func ParseArcItem(raw string) (string, int, error) {
-	section, index, ok := strings.Cut(raw, "#")
-	if !ok || !slices.Contains(ArcSections, section) {
-		return "", 0, viewErr("item must be <section>#<index> with section one of %s, got %q",
-			strings.Join(ArcSections, ", "), raw)
-	}
-	i, err := strconv.Atoi(index)
-	if err != nil || i < 0 {
-		return "", 0, viewErr("item index must be an integer >= 0, got %q", raw)
-	}
-	return section, i, nil
-}
 
 // ValidateArcView is every check that depends on the parameters alone, so it answers the same for
 // an arc that exists, one that does not, and one this caller may not see.
@@ -133,12 +120,12 @@ func ValidateArcView(v ArcView) error {
 
 // RenderView renders the requested view. See the file comment for why every status but `arc-found`,
 // and the full view, are `RenderText` itself.
-func (r ArcReport) RenderView(v ArcView) (string, error) {
+func (r ArcReport) RenderView(v ArcView) string {
 	if r.Status != StatusArcFound || v.Mode == ArcViewFull {
-		return r.RenderText(), nil
+		return r.RenderText()
 	}
 	if v.Mode == ArcViewOutline {
-		return r.renderOutline(), nil
+		return r.renderOutline()
 	}
 	return r.renderPage(v)
 }
@@ -224,12 +211,8 @@ func (r ArcReport) renderOutline() string {
 
 // renderPage is a bounded run of one section's items, each tagged `[<section>#<index>]` with its
 // stored index, ending in `more: from=<next>` or `end`.
-func (r ArcReport) renderPage(v ArcView) (string, error) {
+func (r ArcReport) renderPage(v ArcView) string {
 	items := r.sectionItems(v.Section)
-	if v.Item && v.From >= len(items) {
-		return "", viewErr("item %s#%d does not exist: %s has %d item%s",
-			v.Section, v.From, v.Section, len(items), plural(len(items)))
-	}
 	var b strings.Builder
 	r.writePreamble(&b, " view="+ArcViewPage)
 	b.WriteString(r.provenanceLine() + "\n")
@@ -264,5 +247,5 @@ func (r ArcReport) renderPage(v ArcView) (string, error) {
 	} else {
 		b.WriteString("end")
 	}
-	return b.String(), nil
+	return b.String()
 }

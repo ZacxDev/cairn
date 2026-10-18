@@ -2,14 +2,14 @@ package api
 
 import (
 	"fmt"
-	"net/url"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/ZacxDev/cairn/internal/report"
 )
 
-// 🔴 THE ARC READ VIEWS OVER THE SERVED ANSWER: `?view=outline`, `?view=page&section=…`, `?item=`.
+// 🔴 THE ARC READ VIEWS OVER THE SERVED ANSWER: `?view=outline`, `?view=page&section=…`.
 // Every test here talks HTTP and compares strings, so on a pod that predates the views each one is
 // RED ON ITS OWN ASSERTION (the pod ignores the query and answers the full arc), never on a compile
 // error. All names synthetic.
@@ -189,17 +189,35 @@ func TestTheFullViewIsByteIdenticalToThePreViewsAnswer(t *testing.T) {
 	}
 }
 
-// TestEveryArcFoundAnswerNamesItsView: `X-Arc-View` is on every `arc-found` answer — full, outline
-// and page — and names the view rendered; a client that asked for a view and finds no header knows
-// the pod predates the views.
-func TestEveryArcFoundAnswerNamesItsView(t *testing.T) {
+// TestAPlainRequestCarriesNoViewHeader: a request that names no view gets the pre-views HEADERS
+// too, not only the pre-views body — the exact set of `X-` headers the pod sent before the views
+// existed, and no `X-Arc-View`. (Red on a build that sent the header on every `arc-found` answer.)
+func TestAPlainRequestCarriesNoViewHeader(t *testing.T) {
+	h := viewHarness(t)
+	got := h.do(t, "GET", viewTarget, wideToken, nil, "")
+	var names []string
+	for name := range got.headers {
+		if strings.HasPrefix(name, "X-") {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if got.headers.Get("X-Store-Status") != report.StatusArcFound ||
+		strings.Join(names, ",") != "X-Store-Exit,X-Store-Revision,X-Store-Snapshot,X-Store-Status" {
+		t.Fatalf("a plain request must carry exactly the pre-views X- headers, got %v (status %s)",
+			names, got.headers.Get("X-Store-Status"))
+	}
+}
+
+// TestAViewRequestNamesItsView: a request that names a view — `full` included — gets `X-Arc-View`
+// naming the view rendered; a client that asked for a view and finds no header knows the pod predates
+// the views.
+func TestAViewRequestNamesItsView(t *testing.T) {
 	h := viewHarness(t)
 	for q, want := range map[string]string{
-		"":                              "full",
 		"?view=full":                    "full",
 		"?view=outline":                 "outline",
 		"?view=page&section=next_steps": "page",
-		"?item=" + url.QueryEscape("next_steps#3"): "page",
 	} {
 		got := h.do(t, "GET", viewTarget+q, wideToken, nil, "")
 		if got.status != 200 || got.headers.Get("X-Arc-View") != want {
@@ -264,10 +282,6 @@ func TestAPageIsBoundedByLimitAndBytesAndAlwaysAdvances(t *testing.T) {
 		"[members#6] s-0007 · wrote · first seen 2000-01-02T00:00:00Z · wrote in: none readable to you\nend\n") {
 		t.Fatalf("members page, in session-id order:\n%s", members)
 	}
-	one := reportPart(t, h.do(t, "GET", viewTarget+"?item="+url.QueryEscape("next_steps#7"), wideToken, nil, "").body)
-	if !strings.HasSuffix(one, "next_steps: items 7-7 of 46\n[next_steps#7] "+viewSteps[7]+"\nmore: from=8\n") {
-		t.Fatalf("item= is a page of that one item:\n%s", one)
-	}
 }
 
 // TestAPageReadAtAnotherCommitSaysTheSummaryChanged: `at=` that is not the stored summary's commit
@@ -319,15 +333,16 @@ func TestTheOutlineSizesEachSectionAndCarriesNoItem(t *testing.T) {
 // TestEveryViewOfAHiddenArcIsTheAbsentAnswer: for the beta-only reader the alpha-homed arc (not
 // opted in) and a never-registered key answer the SAME status, the SAME body and NO `X-Arc-View`, in
 // every view — so no view can tell hidden from absent. The POSITIVE CONTROL is the home reader, who
-// gets `arc-found` and the view's header in every arm, so "nobody sees anything" cannot pass.
+// gets `arc-found` in every arm and the view header whenever a view was named, so "nobody sees
+// anything" cannot pass.
 func TestEveryViewOfAHiddenArcIsTheAbsentAnswer(t *testing.T) {
 	h := viewHarness(t)
 	for q, view := range map[string]string{
-		"":                                      "full",
+		"":                                      "", // a plain request carries no view header at all
 		"?view=outline":                         "outline",
 		"?view=page&section=next_steps&from=40": "page",
-		"?item=" + url.QueryEscape("members#0"): "page",
-		"?item=" + url.QueryEscape("next_steps#45"): "page",
+		"?view=page&section=members&limit=1":    "page",
+		"?view=full":                            "full",
 	} {
 		seen := h.do(t, "GET", viewTarget+q, wideToken, nil, "")
 		if seen.headers.Get("X-Store-Status") != report.StatusArcFound || seen.headers.Get("X-Arc-View") != view {
@@ -350,25 +365,22 @@ func TestEveryViewOfAHiddenArcIsTheAbsentAnswer(t *testing.T) {
 
 // TestABadViewParameterIs400ForEveryArc: every refusal that depends on the parameters alone is a 400
 // with its own sentence — and the same 400 for a visible arc, a hidden one and an absent one, so a
-// refusal reveals nothing either. `item=` past the end is the one content-dependent refusal and is
-// checked for the visible arc only (a hidden arc is `arc-unregistered` before it is looked at).
+// refusal reveals nothing either.
 func TestABadViewParameterIs400ForEveryArc(t *testing.T) {
 	h := viewHarness(t)
 	for q, want := range map[string]string{
-		"?view=page&section=next_steps&limit=0":                "limit must be an integer from 1 to 200, got 0",
-		"?view=page&section=next_steps&limit=-1":               "limit must be an integer from 1 to 200, got -1",
-		"?view=page&section=next_steps&limit=201":              "limit must be an integer from 1 to 200, got 201",
-		"?view=page&section=next_steps&limit=x":                "limit must be an integer, got 'x'",
-		"?view=page&section=next_steps&max_bytes=0":            "max_bytes must be an integer from 1 to 65536, got 0",
-		"?view=page&section=next_steps&from=-1":                "from must be an integer >= 0, got -1",
-		"?view=page&section=nowhere":                           `view=page needs section, one of state_now, next_steps, members, got "nowhere"`,
-		"?view=page":                                           `view=page needs section, one of state_now, next_steps, members, got ""`,
-		"?view=sideways":                                       `view must be one of full, outline, page, got "sideways"`,
-		"?view=outline&from=3":                                 "from applies only to view=page (or item=), got view=outline",
-		"?section=next_steps":                                  "section applies only to view=page (or item=), got view=full",
-		"?view=page&section=next_steps&at=HEAD":                `at must be a 40- or 64-character lowercase hex commit, got "HEAD"`,
-		"?item=next_steps":                                     `item must be <section>#<index> with section one of state_now, next_steps, members, got "next_steps"`,
-		"?item=" + url.QueryEscape("next_steps#3") + "&from=2": "item names its own section and index; it does not combine with from",
+		"?view=page&section=next_steps&limit=0":     "limit must be an integer from 1 to 200, got 0",
+		"?view=page&section=next_steps&limit=-1":    "limit must be an integer from 1 to 200, got -1",
+		"?view=page&section=next_steps&limit=201":   "limit must be an integer from 1 to 200, got 201",
+		"?view=page&section=next_steps&limit=x":     "limit must be an integer, got 'x'",
+		"?view=page&section=next_steps&max_bytes=0": "max_bytes must be an integer from 1 to 65536, got 0",
+		"?view=page&section=next_steps&from=-1":     "from must be an integer >= 0, got -1",
+		"?view=page&section=nowhere":                `view=page needs section, one of state_now, next_steps, members, got "nowhere"`,
+		"?view=page":                                `view=page needs section, one of state_now, next_steps, members, got ""`,
+		"?view=sideways":                            `view must be one of full, outline, page, got "sideways"`,
+		"?view=outline&from=3":                      "from applies only to view=page, got view=outline",
+		"?section=next_steps":                       "section applies only to view=page, got view=full",
+		"?view=page&section=next_steps&at=HEAD":     `at must be a 40- or 64-character lowercase hex commit, got "HEAD"`,
 	} {
 		for _, target := range []string{viewTarget, "/api/v1/arc/alpha-notes/never-filed"} {
 			for _, token := range []string{wideToken, narrowToken} {
@@ -378,13 +390,5 @@ func TestABadViewParameterIs400ForEveryArc(t *testing.T) {
 				}
 			}
 		}
-	}
-	past := h.do(t, "GET", viewTarget+"?item="+url.QueryEscape("next_steps#46"), wideToken, nil, "")
-	if past.status != 400 || past.body != "bad request: item next_steps#46 does not exist: next_steps has 46 items\n" {
-		t.Fatalf("an item past the end is a 400: %d %q", past.status, past.body)
-	}
-	if hidden := h.do(t, "GET", viewTarget+"?item="+url.QueryEscape("next_steps#46"), narrowToken, nil, ""); hidden.status != 200 ||
-		hidden.headers.Get("X-Store-Status") != report.StatusArcUnregistered {
-		t.Fatalf("for a hidden arc the item is never looked at — arc-unregistered: %d %q", hidden.status, hidden.body)
 	}
 }

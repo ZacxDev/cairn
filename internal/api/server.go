@@ -1449,12 +1449,12 @@ func (s *Server) arcsList(rq *request, parts []string, params url.Values) error 
 // scope's revision GATED BY `rq.visible` exactly as on `recall` — an arc homed in a refused scope
 // gets `unknown` there, the same header a never-registered key under an absent scope gets.
 //
-// 🔴 THE READ VIEWS (`?view=outline|page`, `?item=`) ARE PARSED AND VALIDATED BEFORE THE JOURNAL IS
+// 🔴 THE READ VIEWS (`?view=outline|page`) ARE PARSED AND VALIDATED BEFORE THE JOURNAL IS
 // READ, so a refused parameter is the same 400 for an arc that exists, one that does not and one this
 // caller may not see. No view parameter — or `view=full` — is the answer this route always gave,
-// byte for byte. `X-Arc-View` names the view on every `arc-found` answer and is absent on every
-// other (see `report.Reader.Arc`), so a client that asked for a view and got no header is talking to
-// a pod that predates the views and answered the full arc.
+// byte for byte, headers included. `X-Arc-View` names the view on an `arc-found` answer to a request
+// that named one (`view=`, `full` included) and is absent on every other (see `report.Reader.Arc`),
+// so a client that asked for a view and got no header is talking to a pod that predates the views.
 func (s *Server) arcShow(rq *request, parts []string, params url.Values) error {
 	view, err := arcViewFromParams(params)
 	if err != nil {
@@ -1465,11 +1465,6 @@ func (s *Server) arcShow(rq *request, parts []string, params url.Values) error {
 		return err
 	}
 	rendered, err := s.Renderer.Arc(s.StoreRoot, parts[0], parts[1], rq.visible, snap, view)
-	var refused *report.ArcViewError
-	if errors.As(err, &refused) {
-		// Content-dependent (an `item=` past the end), so reachable only for an arc the caller sees.
-		return badRequest("%s", refused.Message)
-	}
 	if err != nil {
 		return err
 	}
@@ -1489,7 +1484,7 @@ func arcViewFromParams(params url.Values) (report.ArcView, error) {
 		Limit:    report.ArcPageDefaultLimit,
 		MaxBytes: report.ArcPageDefaultMaxBytes,
 	}
-	_, viewGiven := lastValue(params, "view")
+	_, view.Named = lastValue(params, "view")
 	from, err := intParam(params, "from")
 	if err != nil {
 		return view, err
@@ -1513,25 +1508,10 @@ func arcViewFromParams(params url.Values) (report.ArcView, error) {
 	if maxBytes != nil {
 		view.MaxBytes = *maxBytes
 	}
-	if item, named := lastValue(params, "item"); named {
-		if viewGiven && view.Mode != report.ArcViewPage {
-			return view, badRequest("item names one item of a page; it does not combine with view=%s", view.Mode)
-		}
-		for _, name := range []string{"section", "from", "limit"} {
-			if _, given := params[name]; given {
-				return view, badRequest("item names its own section and index; it does not combine with %s", name)
-			}
-		}
-		section, index, parseErr := report.ParseArcItem(item)
-		if parseErr != nil {
-			return view, badRequest("%s", parseErr.Error())
-		}
-		view.Mode, view.Section, view.From, view.Limit, view.Item = report.ArcViewPage, section, index, 1, true
-	}
 	if view.Mode != report.ArcViewPage {
 		for _, name := range arcPageOnlyParams {
 			if _, given := params[name]; given {
-				return view, badRequest("%s applies only to view=page (or item=), got view=%s", name, view.Mode)
+				return view, badRequest("%s applies only to view=page, got view=%s", name, view.Mode)
 			}
 		}
 	}

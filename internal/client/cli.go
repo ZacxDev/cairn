@@ -105,8 +105,8 @@ func Verbs() []Verb {
 			Flags: []string{"--scope", "--repo", "--check", "--all-scopes"}, Run: ArcsList},
 		// The read views are FLAGS on this verb for `--check`'s reason: the same pod, the same head
 		// (`arc/<home>/<slug>?view=…`), no ledger moves. See `ArcShow`.
-		{Name: "arc-show", Ledger: LedgerAll, Help: "one registered arc: status, coverage, members; --outline / --section / --item page it (asks the pod)",
-			Flags: []string{"--scope", "--repo", "--slug", "--outline", "--section", "--from", "--limit", "--max-bytes", "--item", "--at"},
+		{Name: "arc-show", Ledger: LedgerAll, Help: "one registered arc: status, coverage, members; --outline / --section page it (asks the pod)",
+			Flags: []string{"--scope", "--repo", "--slug", "--outline", "--section", "--from", "--limit", "--max-bytes", "--at"},
 			Run:   ArcShow},
 		{Name: "arc-register", Ledger: LedgerResolved, Writes: true,
 			Help:  "register or update an arc from a JSON payload (writes to the pod)",
@@ -612,8 +612,6 @@ func Parse(argv []string) (Verb, Options, error) {
 			opts.From = value
 		case "--section":
 			opts.Section = value
-		case "--item":
-			opts.Item = value
 		case "--at":
 			opts.At = value
 		case "--max-bytes":

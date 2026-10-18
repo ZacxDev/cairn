@@ -184,18 +184,14 @@ func arcsCheck(env Env, opts Options, scope string) (int, error) {
 
 // ArcShow is `cairn arc-show --slug S` (home from `--scope`/`--repo`): `GET arc/<home>/<slug>`.
 //
-// The read-view flags become the route's query (`arcViewQuery`); the POD validates their values, and
+// The read-view flags become the route's query as given (`arcViewQuery`); the POD validates them, and
 // its 400 is a usage error here (2, its sentence on stderr), never "the store was unreachable".
 //
 // 🔴 A VIEW REQUEST ANSWERED WITHOUT `X-Arc-View` IS A POD THAT PREDATES THE VIEWS. It ignored the
 // query and sent the FULL arc, so the body is printed as sent (a correct answer, only a larger one)
 // and stderr says so — a caller that asked for page 40 must not read the whole arc as page 40.
 func ArcShow(env Env, opts Options) (int, error) {
-	query, problem := arcViewQuery(opts)
-	if problem != "" {
-		fmt.Fprintln(env.Stderr, "cairn: arc-show "+problem)
-		return ExitUsage, nil
-	}
+	query := arcViewQuery(opts)
 	home := ResolveScope(opts.Scope, opts.Repo, env.Stderr)
 	if home == "" {
 		return ExitUsage, nil
@@ -224,46 +220,28 @@ func ArcShow(env Env, opts Options) (int, error) {
 	return code, nil
 }
 
-// arcViewQuery is `arc-show`'s view flags as the route's query string ("" for the full view), or a
-// usage problem. Only the COMBINATIONS are checked here — a flag that would otherwise mean nothing —
-// and every value is left to the pod, the one validator.
-func arcViewQuery(opts Options) (string, string) {
-	pageOnly := []string{"--from", "--limit", "--max-bytes", "--at"}
-	given := map[string]bool{"--from": opts.From != "", "--limit": opts.Limit != nil,
-		"--max-bytes": opts.MaxBytes != nil, "--at": opts.At != ""}
+// arcViewQuery is `arc-show`'s view flags as the route's query string, "" when none is given.
+//
+// 🔴 THE FLAGS ARE SENT AS GIVEN; NOTHING IS CHECKED HERE. The pod's `arcViewFromParams` is the one
+// validator — of the values AND of the combinations (a page flag beside `--outline`, `--from` with no
+// `--section`) — and its 400 is this verb's usage exit. A second copy of those rules here could only
+// ever be stricter or wronger than the pod.
+func arcViewQuery(opts Options) string {
 	q := url.Values{}
-	switch {
-	case opts.Outline:
-		if opts.Section != "" || opts.Item != "" {
-			return "", "--outline does not combine with --section or --item"
-		}
-		for _, name := range pageOnly {
-			if given[name] {
-				return "", name + " pages a section; it does not combine with --outline"
-			}
-		}
+	if opts.Outline {
 		q.Set("view", "outline")
-	case opts.Item != "":
-		if opts.Section != "" || given["--from"] || given["--limit"] {
-			return "", "--item names its own section and index; it does not combine with --section, --from or --limit"
+	}
+	if opts.Section != "" {
+		if !opts.Outline {
+			q.Set("view", "page")
 		}
-		q.Set("item", opts.Item)
-	case opts.Section != "":
-		q.Set("view", "page")
 		q.Set("section", opts.Section)
-		if opts.From != "" {
-			q.Set("from", opts.From)
-		}
-		if opts.Limit != nil {
-			q.Set("limit", strconv.Itoa(*opts.Limit))
-		}
-	default:
-		for _, name := range pageOnly {
-			if given[name] {
-				return "", name + " pages a section; name one with --section (or --item)"
-			}
-		}
-		return "", ""
+	}
+	if opts.From != "" {
+		q.Set("from", opts.From)
+	}
+	if opts.Limit != nil {
+		q.Set("limit", strconv.Itoa(*opts.Limit))
 	}
 	if opts.MaxBytes != nil {
 		q.Set("max_bytes", strconv.Itoa(*opts.MaxBytes))
@@ -271,7 +249,10 @@ func arcViewQuery(opts Options) (string, string) {
 	if opts.At != "" {
 		q.Set("at", opts.At)
 	}
-	return "?" + q.Encode(), ""
+	if len(q) == 0 {
+		return ""
+	}
+	return "?" + q.Encode()
 }
 
 // ArcRegister is `cairn arc-register --slug S --from F` (home from `--scope`/`--repo`).

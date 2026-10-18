@@ -158,7 +158,7 @@ type Rendered struct {
 	Text    string
 	Warning string
 	// View is the arc read view an `arc-found` answer was rendered in (`ArcViewFull`, `…Outline`,
-	// `…Page`), and "" for every other answer — the pod echoes it as `X-Arc-View`.
+	// `…Page`) when the request NAMED one, and "" otherwise — the pod echoes it as `X-Arc-View`.
 	View string
 }
 

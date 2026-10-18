@@ -248,7 +248,7 @@ def test_every_QUERY_PARAMETER_the_server_reads_is_sent_by_some_target(targets):
     # declared exclusion is no longer read at all.
     # The arc read views (`arc/<home>/<slug>?view=…`) are read only by that Go-only head, for the
     # same reason; `limit` is NOT declared here because `recall` reads it too and the oracle compares it.
-    go_only_params = {"check", "view", "section", "from", "max_bytes", "at", "item"}
+    go_only_params = {"check", "view", "section", "from", "max_bytes", "at"}
     stale_go_only = go_only_params - discovered
     assert not stale_go_only, (
         f"{sorted(stale_go_only)} is declared Go-only here and the server no longer reads it — "
