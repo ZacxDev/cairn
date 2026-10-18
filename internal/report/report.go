@@ -157,6 +157,9 @@ type Rendered struct {
 	Exit    int
 	Text    string
 	Warning string
+	// View is the arc read view an `arc-found` answer was rendered in (`ArcViewFull`, `…Outline`,
+	// `…Page`), and "" for every other answer — the pod echoes it as `X-Arc-View`.
+	View string
 }
 
 // Renderer is the seam. Reader implements it.
@@ -175,7 +178,9 @@ type Renderer interface {
 	// Arcs and Arc are the Go-only arc-registry answers — see `arcs.go`. `snap` is nil when the
 	// pod has no journal configured (the `registrations-unconfigured` off state).
 	Arcs(storeRoot, scope string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
-	Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
+	// `view` is the arc read view (`arcview.go`); `FullArcView()` is the answer every caller got
+	// before the views existed, byte for byte.
+	Arc(storeRoot, home, slug string, visible store.ScopeSet, snap *arcs.Snapshot, view ArcView) (Rendered, error)
 	// ArcsCheck is the Go-only orphan check, `arcs/<scope>?check=1` — see `arcscheck.go`.
 	ArcsCheck(storeRoot, scope string, allScopes bool, visible store.ScopeSet, snap *arcs.Snapshot) (Rendered, error)
 	// Sources is the Go-only `sources/<scope>` answer — see `sources.go`. `snap` is nil when the

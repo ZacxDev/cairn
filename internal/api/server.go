@@ -1448,16 +1448,97 @@ func (s *Server) arcsList(rq *request, parts []string, params url.Values) error 
 // 🔴 `serveReport` IS HANDED THE HOME AS ITS PATH SCOPE, so `X-Store-Revision` is the home
 // scope's revision GATED BY `rq.visible` exactly as on `recall` — an arc homed in a refused scope
 // gets `unknown` there, the same header a never-registered key under an absent scope gets.
-func (s *Server) arcShow(rq *request, parts []string, _ url.Values) error {
+//
+// 🔴 THE READ VIEWS (`?view=outline|page`, `?item=`) ARE PARSED AND VALIDATED BEFORE THE JOURNAL IS
+// READ, so a refused parameter is the same 400 for an arc that exists, one that does not and one this
+// caller may not see. No view parameter — or `view=full` — is the answer this route always gave,
+// byte for byte. `X-Arc-View` names the view on every `arc-found` answer and is absent on every
+// other (see `report.Reader.Arc`), so a client that asked for a view and got no header is talking to
+// a pod that predates the views and answered the full arc.
+func (s *Server) arcShow(rq *request, parts []string, params url.Values) error {
+	view, err := arcViewFromParams(params)
+	if err != nil {
+		return err
+	}
 	snap, err := s.arcSnapshot()
 	if err != nil {
 		return err
 	}
-	rendered, err := s.Renderer.Arc(s.StoreRoot, parts[0], parts[1], rq.visible, snap)
+	rendered, err := s.Renderer.Arc(s.StoreRoot, parts[0], parts[1], rq.visible, snap, view)
+	var refused *report.ArcViewError
+	if errors.As(err, &refused) {
+		// Content-dependent (an `item=` past the end), so reachable only for an arc the caller sees.
+		return badRequest("%s", refused.Message)
+	}
 	if err != nil {
 		return err
 	}
 	return rq.serveReport(parts[0], rendered)
+}
+
+// arcPageOnlyParams are the parameters that shape a page and nothing else; naming one beside
+// `view=full|outline` is refused rather than ignored, because a caller who sent `from=40` and got the
+// whole arc would read it as page 40.
+var arcPageOnlyParams = []string{"section", "from", "limit", "max_bytes", "at"}
+
+// arcViewFromParams is `arc/<home>/<slug>`'s query, as a `report.ArcView`. Every refusal here is a
+// function of the parameters alone. Parameters this route does not read are ignored (`recall`'s rule).
+func arcViewFromParams(params url.Values) (report.ArcView, error) {
+	view := report.ArcView{
+		Mode:     lastOr(params, "view", report.ArcViewFull),
+		Limit:    report.ArcPageDefaultLimit,
+		MaxBytes: report.ArcPageDefaultMaxBytes,
+	}
+	_, viewGiven := lastValue(params, "view")
+	from, err := intParam(params, "from")
+	if err != nil {
+		return view, err
+	}
+	limit, err := intParam(params, "limit")
+	if err != nil {
+		return view, err
+	}
+	maxBytes, err := intParam(params, "max_bytes")
+	if err != nil {
+		return view, err
+	}
+	view.Section, _ = lastValue(params, "section")
+	view.At, _ = lastValue(params, "at")
+	if from != nil {
+		view.From = *from
+	}
+	if limit != nil {
+		view.Limit = *limit
+	}
+	if maxBytes != nil {
+		view.MaxBytes = *maxBytes
+	}
+	if item, named := lastValue(params, "item"); named {
+		if viewGiven && view.Mode != report.ArcViewPage {
+			return view, badRequest("item names one item of a page; it does not combine with view=%s", view.Mode)
+		}
+		for _, name := range []string{"section", "from", "limit"} {
+			if _, given := params[name]; given {
+				return view, badRequest("item names its own section and index; it does not combine with %s", name)
+			}
+		}
+		section, index, parseErr := report.ParseArcItem(item)
+		if parseErr != nil {
+			return view, badRequest("%s", parseErr.Error())
+		}
+		view.Mode, view.Section, view.From, view.Limit, view.Item = report.ArcViewPage, section, index, 1, true
+	}
+	if view.Mode != report.ArcViewPage {
+		for _, name := range arcPageOnlyParams {
+			if _, given := params[name]; given {
+				return view, badRequest("%s applies only to view=page (or item=), got view=%s", name, view.Mode)
+			}
+		}
+	}
+	if err := report.ValidateArcView(view); err != nil {
+		return view, badRequest("%s", err.Error())
+	}
+	return view, nil
 }
 
 // sourcesShow is the Go-only `GET`/`HEAD sources/<scope>`: the scope's declared code sources
@@ -1591,7 +1672,7 @@ func (rq *request) serveReport(pathScope string, rendered report.Rendered) error
 	freshHeader, freshProse := snapshot.Freshness(rq.srv.StoreRoot)
 	body := freshProse + "\n\n" + rendered.Text + "\n"
 	rq.audit(200, rendered.Status)
-	rq.respond(200, []byte(body), "text/plain; charset=utf-8", map[string]string{
+	headers := map[string]string{
 		"X-Store-Status": rendered.Status,
 		"X-Store-Exit":   strconv.Itoa(rendered.Exit),
 		// 🔴 GATED ON THE CALLER'S ALLOWLIST, INSIDE ScopeRevision. This one header does
@@ -1600,7 +1681,13 @@ func (rq *request) serveReport(pathScope string, rendered report.Rendered) error
 		// one.
 		"X-Store-Revision": revision,
 		"X-Store-Snapshot": freshHeader,
-	})
+	}
+	if rendered.View != "" {
+		// The arc read view (`arcShow`): set on `arc-found` only, so its absence on an answer to a
+		// view request means the pod predates the views.
+		headers["X-Arc-View"] = rendered.View
+	}
+	rq.respond(200, []byte(body), "text/plain; charset=utf-8", headers)
 	return nil
 }
 

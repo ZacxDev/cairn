@@ -258,3 +258,94 @@ func TestAnOldPodsRefusalOfAnOptInOnlyPayloadIsReportedToo(t *testing.T) {
 		t.Fatalf("an opt-in-only payload to an old pod must be reported as refused: %d\nstdout:\n%s\nstderr:\n%s\nshown:\n%s", code, out, errOut, shown)
 	}
 }
+
+// viewPayloadForCLI is a schema-2 arc with three ranked steps; all names synthetic.
+const viewPayloadForCLI = `{"schema":2,"status":"open","members":[{"session":"s-0007","role":"originated"}],` +
+	`"summary":{"state_now":["moved"],"next_steps":["drain the old listener","flip the gadget","close the arc"],"task_refs":[],"aliases":[],` +
+	`"source":{"repo_path":"docs/h.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}}}`
+
+func registerViewArc(t *testing.T, url string) {
+	t.Helper()
+	home := arcClientHost(t, url)
+	payload := filepath.Join(home, "arc.json")
+	if err := os.WriteFile(payload, []byte(viewPayloadForCLI), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := runCLI(t, "arc-register", "--scope", "alpha-notes", "--slug", "gadget-rollout", "--from", payload); code != ExitOK {
+		t.Fatalf("register: %d\n%s\n%s", code, out, errOut)
+	}
+}
+
+// TestArcShowsViewFlagsReachThePod: `--outline`, `--section/--from/--limit` and `--item` become the
+// route's view query, and the client prints the pod's body for THAT query verbatim (the one renderer).
+func TestArcShowsViewFlagsReachThePod(t *testing.T) {
+	tsrv := arcPod(t, filepath.Join(t.TempDir(), "journal.jsonl"))
+	registerViewArc(t, tsrv.URL)
+	for _, tc := range []struct {
+		argv  []string
+		query string
+		has   string
+	}{
+		{[]string{"--outline"}, "?view=outline", "next_steps: 3 items, "},
+		{[]string{"--section", "next_steps", "--from", "1", "--limit", "1"}, "?view=page&section=next_steps&from=1&limit=1",
+			"\n[next_steps#1] flip the gadget\nmore: from=2"},
+		{[]string{"--item", "next_steps#2"}, "?item=next_steps%232", "\n[next_steps#2] close the arc\nend"},
+	} {
+		argv := append([]string{"arc-show", "--scope", "alpha-notes", "--slug", "gadget-rollout"}, tc.argv...)
+		code, out, errOut := runCLI(t, argv...)
+		want, headers := podBody(t, tsrv.URL, "/api/v1/arc/alpha-notes/gadget-rollout"+tc.query)
+		if code != ExitOK || out != want || !strings.Contains(out, tc.has) || errOut != "" || headers.Get("X-Arc-View") == "" {
+			t.Fatalf("%v: %d\n%s\n--- pod\n%s\n--- stderr\n%s", tc.argv, code, out, want, errOut)
+		}
+	}
+}
+
+// TestArcShowRefusesAMeaninglessViewCombination: a page flag with no section, or `--outline` beside a
+// page flag, is usage (2) before the network; a value the POD refuses (its 400) is usage too, with the
+// pod's sentence — never exit 3, which would say the store could not be read.
+func TestArcShowRefusesAMeaninglessViewCombination(t *testing.T) {
+	tsrv := arcPod(t, filepath.Join(t.TempDir(), "journal.jsonl"))
+	registerViewArc(t, tsrv.URL)
+	base := []string{"arc-show", "--scope", "alpha-notes", "--slug", "gadget-rollout"}
+	for _, extra := range [][]string{{"--from", "1"}, {"--limit", "3"}, {"--outline", "--section", "next_steps"},
+		{"--outline", "--from", "1"}, {"--item", "next_steps#0", "--from", "1"}} {
+		if code, _, _ := runCLI(t, append(append([]string{}, base...), extra...)...); code != ExitUsage {
+			t.Fatalf("%v must be usage (2), got %d", extra, code)
+		}
+	}
+	code, _, errOut := runCLI(t, append(append([]string{}, base...), "--section", "next_steps", "--limit", "0")...)
+	if code != ExitUsage || !strings.Contains(errOut, "limit must be an integer from 1 to 200, got 0") {
+		t.Fatalf("the pod's 400 is usage with its sentence: %d\n%s", code, errOut)
+	}
+}
+
+// TestArcShowSaysWhenAnOldPodIgnoredTheView: a pod that predates the views ignores the query and
+// answers the full arc with no `X-Arc-View`. The client prints that body (it is a correct answer) and
+// says on stderr that the view was ignored. CONTROL: the same request to a current pod says nothing.
+func TestArcShowSaysWhenAnOldPodIgnoredTheView(t *testing.T) {
+	tsrv := arcPod(t, filepath.Join(t.TempDir(), "journal.jsonl"))
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.RawQuery = "" // the old pod reads no view parameter
+		rec := httptest.NewRecorder()
+		tsrv.Config.Handler.ServeHTTP(rec, r)
+		for k, v := range rec.Header() {
+			if k != "X-Arc-View" { // …and never sent this header
+				w.Header()[k] = v
+			}
+		}
+		w.WriteHeader(rec.Code)
+		w.Write(rec.Body.Bytes())
+	}))
+	t.Cleanup(old.Close)
+	registerViewArc(t, tsrv.URL)
+	argv := []string{"arc-show", "--scope", "alpha-notes", "--slug", "gadget-rollout", "--section", "next_steps", "--from", "2"}
+	if code, _, errOut := runCLI(t, argv...); code != ExitOK || strings.Contains(errOut, "ignored the view") {
+		t.Fatalf("CONTROL: a current pod answers the view and nothing is said: %d\n%s", code, errOut)
+	}
+	arcClientHost(t, old.URL)
+	code, out, errOut := runCLI(t, argv...)
+	if code != ExitOK || !strings.Contains(errOut, "the pod ignored the view and answered the FULL arc") ||
+		!strings.Contains(out, "next steps (ranked): 3\n") {
+		t.Fatalf("an old pod's full answer must be printed AND flagged: %d\n%s\n--- stderr\n%s", code, out, errOut)
+	}
+}

@@ -75,6 +75,16 @@ type Options struct {
 	Slug string
 	From string
 
+	// The arc read views (`arc-show`): `--outline`, or a page of one section (`--section`, from
+	// `--from`, bounded by `--limit` and `--max-bytes`, checked against `--at`), or one item
+	// (`--item <section>#<index>`). On `arc-show`, `--from` is the page's start index — the same
+	// field `arc-register` reads as its payload path, converted by the verb.
+	Outline  bool
+	Section  string
+	Item     string
+	At       string
+	MaxBytes *int
+
 	// The memo verbs' operands (scope-mail decision 8). `--id` is kept as the TEXT given, with a
 	// `Has…`, so the verb can refuse a malformed id at exit 2 with the value named; `--body` carries
 	// a `Has…` because an EMPTY body given on purpose and no body at all are different requests

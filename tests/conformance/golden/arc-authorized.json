@@ -43,6 +43,10 @@
       "subsystem-store"
     ],
     [
+      "X-Arc-View",
+      "full"
+    ],
+    [
       "X-Store-Exit",
       "0"
     ],
