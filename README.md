@@ -432,7 +432,8 @@ A `schema: 2` payload may add two OPTIONAL fields; everything else is as above.
   `closing_condition` (string, optional), `state_now` (list), `next_steps` (list, **ranked** — order
   is kept), `source` (**required**: `repo_path` relative to the repo, `commit` as a full 40- or 64-hex
   id, `committed_at` RFC 3339), `task_refs` (list, no whitespace) and `aliases` (list, folded like a
-  slug, deduplicated, sorted). `arc-show` prints it after the members, provenance line first
+  slug, deduplicated, sorted). `arc-show` prints it **before the member list** (after the `member writes:` line, so a
+  reader that keeps only a prefix of the body reaches it first), provenance line first
   (`summary: the registering tool's own word, read from <repo_path> at commit <commit> (committed
   <committed_at>)`); a listing row gains ` · aliases a, b`. **`state_now` and `next_steps` items
   are printed VERBATIM, in the order sent**, one per line under `state now: N` / `next steps
@@ -511,6 +512,9 @@ one item in six of real handoff documents mid-sentence (the measurement is besid
   read side re-checks the item COUNTS and the TOTAL (not an item's bytes), so a build with the older
   bounds SKIPS a record stored with more than 20 items in a list or over 16 KiB, counts it as
   damage, and shows that arc's previous record.
+- **`arc-show` now prints the summary before the member list**, where it used to end the body. A
+  consumer that located the summary by position (for example, everything after the last member
+  line) must find it by its `summary: ` provenance line instead; a schema-1 arc's body is unchanged.
 - **Rolling back is therefore not free for those arcs:** after a rollback they fall back to their
   previous record (or vanish if they have none) until re-registered — which the old build then
   clips and drops as before.

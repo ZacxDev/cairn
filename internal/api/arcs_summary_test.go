@@ -159,9 +159,9 @@ func TestAnOptInCannotReachAScopeTheRegistrantCannotWrite(t *testing.T) {
 	}
 }
 
-// TestTheSummaryIsServedAsTheToolsDatedWord pins the rendered summary block as WHOLE lines, after
-// the member list: provenance first, then the claims, the ranked steps numbered in the order sent,
-// aliases folded/deduplicated/sorted.
+// TestTheSummaryIsServedAsTheToolsDatedWord pins the rendered summary block as WHOLE lines, BEFORE
+// the member list (which then ends the body): provenance first, then the claims, the ranked steps
+// numbered in the order sent, aliases folded/deduplicated/sorted.
 func TestTheSummaryIsServedAsTheToolsDatedWord(t *testing.T) {
 	h := newHarness(t)
 	withJournal(t, h)
@@ -169,12 +169,12 @@ func TestTheSummaryIsServedAsTheToolsDatedWord(t *testing.T) {
 		t.Fatalf("register: %d %q", put.status, put.body)
 	}
 	got := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, "").body
-	want := "\nmembers: 0, ordered by session id (byte-wise)\n\n" +
-		"summary: the registering tool's own word, read from docs/handoff-gadget.md at commit 0123456789abcdef0123456789abcdef01234567 (committed 2000-01-04T00:00:00Z)\n" +
+	want := "\n\nsummary: the registering tool's own word, read from docs/handoff-gadget.md at commit 0123456789abcdef0123456789abcdef01234567 (committed 2000-01-04T00:00:00Z)\n" +
 		"closing condition (stated): the gadget answers on the new port\n" +
 		"state now: 2\n  the port moved\n  the old listener is still up\n" +
 		"next steps (ranked): 2\n  drain the old listener\n  close the arc\n" +
-		"task refs: tracker:T-1\naliases: gadget-move"
+		"task refs: tracker:T-1\naliases: gadget-move\n\n" +
+		"members: 0, ordered by session id (byte-wise)"
 	// The served body ends in one newline the renderer does not write (`serveReport`).
 	if !strings.HasSuffix(got, want+"\n") {
 		t.Fatalf("summary block:\n%s", got)

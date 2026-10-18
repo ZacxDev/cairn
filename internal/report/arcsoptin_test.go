@@ -146,3 +146,33 @@ func TestSummaryItemsArePrintedVerbatim(t *testing.T) {
 		t.Fatalf("items must print verbatim:\n%s", got)
 	}
 }
+
+// TestArcShowPrintsTheSummaryBeforeTheMemberList pins the BODY ORDER as whole literal lines: the
+// summary block sits between the `member writes:` line and the `members:` heading, so a reader that
+// keeps only a byte-budgeted prefix reaches the ranked steps before an unbounded member list. The
+// control is a schema-1 arc (no summary), whose `member writes:` line is followed directly by the
+// heading, exactly as before the summary moved.
+func TestArcShowPrintsTheSummaryBeforeTheMemberList(t *testing.T) {
+	reg := arcs.Registration{Schema: arcs.SchemaSummary, Home: "alpha-notes", Slug: "gadget-move", Status: arcs.StatusOpen,
+		ClosingKind: arcs.ClosingCheck, DeclaredScopes: []string{"alpha-notes"},
+		Members: []arcs.Member{{Session: "s-0001", Role: "originated"}, {Session: "s-0002", Role: "wrote"}},
+		Summary: &arcs.Summary{StateNow: []string{"the port moved"}, NextSteps: []string{"1. drain", "2. close"},
+			Source:   arcs.Source{RepoPath: "docs/h.md", Commit: strings.Repeat("0", 40), CommittedAt: "2000-01-04T00:00:00Z"},
+			TaskRefs: []string{}, Aliases: []string{}}}
+	body := ArcReport{Status: StatusArcFound, Reg: reg}.RenderText()
+	block := "\n\nsummary: the registering tool's own word, read from docs/h.md at commit " + strings.Repeat("0", 40) +
+		" (committed 2000-01-04T00:00:00Z)\nstate now: 1\n  the port moved\nnext steps (ranked): 2\n  1. drain\n  2. close\n" +
+		"task refs: none\naliases: none\n\nmembers: 2, ordered by session id (byte-wise)\n- s-0001 · originated"
+	if !strings.Contains(body, block) || !strings.HasSuffix(body, "\n- s-0002 · wrote · first seen unknown · wrote in: none readable to you") {
+		t.Fatalf("the summary must sit before the member list, and the member list end the body:\n%s", body)
+	}
+	if i, j := strings.Index(body, "\nmember writes:"), strings.Index(body, "\nsummary: "); i < 0 || j < i {
+		t.Fatalf("the summary must follow the member-writes line:\n%s", body)
+	}
+	reg.Summary, reg.Schema = nil, arcs.Schema
+	plain := ArcReport{Status: StatusArcFound, Reg: reg}.RenderText()
+	if strings.Contains(plain, "summary: ") || !strings.Contains(plain, "\nmembers: 2, ordered by session id (byte-wise)\n- s-0001") ||
+		strings.Contains(plain, "\n\nmembers: ") {
+		t.Fatalf("control: a schema-1 arc's member-writes line runs straight into the heading:\n%s", plain)
+	}
+}
