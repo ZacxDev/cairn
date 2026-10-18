@@ -491,14 +491,29 @@ scopes, the opt-in — always lands; a problem in the summary is **adjusted and 
 | field | bound | when it is exceeded or broken |
 |---|---|---|
 | `closing_condition` | 1000 bytes | clipped |
-| `state_now`, `next_steps` | 20 items, each ≤ 500 bytes | an item over 500 bytes is clipped; items past the 20th are dropped |
+| `state_now`, `next_steps` | 50 items, each ≤ 1500 bytes | an item over 1500 bytes is clipped; items past the 50th are dropped |
 | `task_refs` | 32 items, each ≤ 200 bytes, no whitespace | clipped; past the 32nd dropped; one containing whitespace (after sanitizing) dropped |
 | `aliases` | 16 items as sent, each ≤ 64 bytes as sent, folded to a non-empty slug | clipped before folding; past the 16th dropped; one folding to nothing dropped |
 | `source` | **required** whenever `summary` is sent | an uncitable source drops the **summary** (the arc still lands) |
 | `source.repo_path` | ≤ 256 bytes; `/`-separated segments of `[A-Za-z0-9._-]` only — so no leading or trailing `/`, no empty segment, no space or backslash — and no segment that is exactly `.` or `..` | summary dropped, `reason=source.repo_path` |
 | `source.commit` | a full lower-case hex commit id, exactly 40 or 64 characters | summary dropped, `reason=source.commit` |
 | `source.committed_at` | ≤ 35 bytes (nanoseconds and a numeric offset fit) and RFC 3339 (Go's `time.RFC3339` parse; fractional seconds accepted) | summary dropped, `reason=source.committed_at` |
-| the whole stored summary | 16 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) | items are dropped from the **end** of the lists — the longer of `state_now`/`next_steps` first (`state_now` on a tie), then `task_refs`, then `aliases` — until it fits |
+| the whole stored summary | 24 KiB, measured as its JSON encoding as stored (aliases folded, absent lists as `[]`) | items are dropped from the **end** of the lists — the longer of `state_now`/`next_steps` first (`state_now` on a tie), then `task_refs`, then `aliases` — until it fits |
+
+⚠ **These bounds were raised from 20 items of 500 bytes and a 16 KiB total**, which clipped about
+one item in six of real handoff documents mid-sentence (the measurement is beside the constants in
+`internal/arcs/summary.go`). Three things follow for an operator:
+
+- **A stored summary is not re-read by the new bounds.** An arc registered under the old ones keeps
+  its clipped or shortened summary until its tooling pushes it again; re-registering it (the same
+  push that registered it) stores the whole text.
+- **Roll every binary that reads the arc journal — `cairn-server` AND `cairn-ui` — together.** The
+  read side re-checks the item COUNTS and the TOTAL (not an item's bytes), so a build with the older
+  bounds SKIPS a record stored with more than 20 items in a list or over 16 KiB, counts it as
+  damage, and shows that arc's previous record.
+- **Rolling back is therefore not free for those arcs:** after a rollback they fall back to their
+  previous record (or vanish if they have none) until re-registered — which the old build then
+  clips and drops as before.
 
 Every **text field** — `closing_condition` (when sent), every `state_now`, `next_steps`, `task_refs`
 and `aliases` item — goes through four steps, in this order:
@@ -540,12 +555,12 @@ several pushes, to show each shape.)
 
 ```text
 arc-registered: alpha-notes/gadget-move · members=1 · unjoinable=0
-summary-adjusted: clipped summary.next_steps[0] bytes=503 max=500
+summary-adjusted: clipped summary.next_steps[0] bytes=1503 max=1500
 summary-adjusted: redacted summary.next_steps[1] rule=authorization
 summary-adjusted: sanitized summary.next_steps[7] replaced=1
 summary-adjusted: dropped summary.next_steps[8] reason=blank
-summary-adjusted: dropped summary.state_now[20] reason=over-count max=20
-summary-adjusted: dropped summary.state_now[19] reason=over-total max=16384
+summary-adjusted: dropped summary.state_now[50] reason=over-count max=50
+summary-adjusted: dropped summary.state_now[49] reason=over-total max=24576
 summary-adjusted: dropped summary reason=source.commit
 ```
 

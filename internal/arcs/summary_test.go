@@ -112,9 +112,9 @@ func TestAnOverCapItemIsClippedAndNamedNeverRefused(t *testing.T) {
 		{"closing", "closing_condition", q(strings.Repeat("c", MaxClosingConditionBytes)), q(strings.Repeat("c", MaxClosingConditionBytes+7)),
 			"clipped summary.closing_condition bytes=1007 max=1000", func(s Summary) string { return s.ClosingCondition }, MaxClosingConditionBytes},
 		{"state", "state_now", jsonList(1, strings.Repeat("s", MaxSummaryItemBytes)), jsonList(1, strings.Repeat("s", MaxSummaryItemBytes+9)),
-			"clipped summary.state_now[0] bytes=509 max=500", func(s Summary) string { return s.StateNow[0] }, MaxSummaryItemBytes},
+			"clipped summary.state_now[0] bytes=1509 max=1500", func(s Summary) string { return s.StateNow[0] }, MaxSummaryItemBytes},
 		{"next", "next_steps", jsonList(1, strings.Repeat("n", MaxSummaryItemBytes)), jsonList(1, strings.Repeat("n", MaxSummaryItemBytes+9)),
-			"clipped summary.next_steps[0] bytes=509 max=500", func(s Summary) string { return s.NextSteps[0] }, MaxSummaryItemBytes},
+			"clipped summary.next_steps[0] bytes=1509 max=1500", func(s Summary) string { return s.NextSteps[0] }, MaxSummaryItemBytes},
 		{"ref", "task_refs", jsonList(1, strings.Repeat("t", MaxTaskRefBytes)), jsonList(1, strings.Repeat("t", MaxTaskRefBytes+9)),
 			"clipped summary.task_refs[0] bytes=209 max=200", func(s Summary) string { return s.TaskRefs[0] }, MaxTaskRefBytes},
 	} {
@@ -130,21 +130,133 @@ func TestAnOverCapItemIsClippedAndNamedNeverRefused(t *testing.T) {
 			}
 		})
 	}
-	// A 3-byte rune straddling the cut is kept whole or dropped, never split: 499 ASCII + one `é`-run.
-	straddle, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, strings.Repeat("x", 496)+"日本語")}))
-	if got := straddle.Summary.NextSteps[0]; !utf8.ValidString(got) || len(got) > MaxSummaryItemBytes || got != strings.Repeat("x", 496)+"…" {
+	// A 3-byte rune straddling the cut is kept whole or dropped, never split: 1496 ASCII + a 3-byte-rune run.
+	straddle, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, strings.Repeat("x", 1496)+"日本語")}))
+	if got := straddle.Summary.NextSteps[0]; !utf8.ValidString(got) || len(got) > MaxSummaryItemBytes || got != strings.Repeat("x", 1496)+"…" {
 		t.Fatalf("clip split a rune or overshot: %d bytes, valid=%v, tail %q", len(got), utf8.ValidString(got), got[len(got)-6:])
 	}
 	// Over a COUNT: the tail is dropped, each named with its sent index.
 	over, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(MaxSummaryItems+2, "s")}))
-	if len(over.Summary.StateNow) != MaxSummaryItems || adjusted(over) != AdjustmentLinePrefix+"dropped summary.state_now[20] reason=over-count max=20\n"+
-		AdjustmentLinePrefix+"dropped summary.state_now[21] reason=over-count max=20" {
+	if len(over.Summary.StateNow) != MaxSummaryItems || adjusted(over) != AdjustmentLinePrefix+"dropped summary.state_now[50] reason=over-count max=50\n"+
+		AdjustmentLinePrefix+"dropped summary.state_now[51] reason=over-count max=50" {
 		t.Fatalf("over the count: kept %d, adjustments %q", len(over.Summary.StateNow), adjusted(over))
 	}
 }
 
+// TestARealHandoffsRankedItemsAreStoredWhole is the REGRESSION the caps were raised for, with every
+// expectation a LITERAL rather than a constant (a test reading `MaxSummaryItemBytes` passes whatever
+// the cap is). Measured over ~500 real handoff documents: a ranked next step's p95 is ~1.2 KB and a
+// state line's ~0.7 KB, and one document carried 46 ranks. At 500 bytes and 20 items the pod clipped
+// a reader's answer mid-sentence ("…") and dropped every rank past the 20th. The lengths below are
+// that shape — synthetic text, real sizes — so each must now be stored exactly as sent, unadjusted.
+func TestARealHandoffsRankedItemsAreStoredWhole(t *testing.T) {
+	step := func(rank, n int) string {
+		lead := fmt.Sprintf("%d. ", rank)
+		return lead + strings.Repeat("w", n-len(lead))
+	}
+	// A 1026-byte rank among ordinary ones, and two state lines over the old cap.
+	next := []string{step(1, 315), step(2, 139), step(3, 497), step(4, 496), step(5, 1026), step(6, 139)}
+	state := []string{strings.Repeat("s", 651), strings.Repeat("t", 714), strings.Repeat("u", 237)}
+	reg, _ := decode(t, summaryJSON(map[string]string{"next_steps": "[" + quoteAll(next) + "]", "state_now": "[" + quoteAll(state) + "]"}))
+	if reg.Summary == nil || adjusted(reg) != "" {
+		t.Fatalf("a typical handoff's items must be stored as sent, got adjustments:\n%s", adjusted(reg))
+	}
+	if !slices.Equal(reg.Summary.NextSteps, next) || !slices.Equal(reg.Summary.StateNow, state) {
+		t.Fatalf("stored items differ from what was sent")
+	}
+	// 46 ranks — the longest ranked list measured — every one kept, in order.
+	ranks := make([]string, 46)
+	for i := range ranks {
+		ranks[i] = step(i+1, 180)
+	}
+	long, _ := decode(t, summaryJSON(map[string]string{"next_steps": "[" + quoteAll(ranks) + "]"}))
+	if long.Summary == nil || adjusted(long) != "" || len(long.Summary.NextSteps) != 46 || long.Summary.NextSteps[45] != ranks[45] {
+		t.Fatalf("46 ranks must all be kept: kept %d, adjustments:\n%s", len(long.Summary.NextSteps), adjusted(long))
+	}
+}
+
+func quoteAll(items []string) string {
+	q := make([]string, len(items))
+	for i, s := range items {
+		q[i] = fmt.Sprintf("%q", s)
+	}
+	return strings.Join(q, ",")
+}
+
+// TestTheItemCapsAtTheirBoundaries walks the per-item byte cap and the per-list count with LITERAL
+// values, each well clear of the boundary on its side (under by 9, over by 9, far over) as well as
+// exactly at it, so a cap moved by a few bytes or one item either way fails a row.
+func TestTheItemCapsAtTheirBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want string // the adjustment line, "" for stored as sent
+		kept int    // stored length
+	}{
+		{1491, "", 1491},
+		{1500, "", 1500},
+		{1509, "clipped summary.next_steps[0] bytes=1509 max=1500", 1500},
+		{4000, "clipped summary.next_steps[0] bytes=4000 max=1500", 1500},
+	} {
+		reg, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, strings.Repeat("n", tc.n))}))
+		got := reg.Summary.NextSteps[0]
+		want := ""
+		if tc.want != "" {
+			want = AdjustmentLinePrefix + tc.want
+		}
+		if adjusted(reg) != want || len(got) != tc.kept || (tc.want != "") != strings.HasSuffix(got, "…") {
+			t.Fatalf("%d bytes: stored %d, adjustments %q, want %q", tc.n, len(got), adjusted(reg), want)
+		}
+	}
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{
+		{41, ""},
+		{50, ""},
+		{53, "dropped summary.state_now[50] reason=over-count max=50\n" + AdjustmentLinePrefix +
+			"dropped summary.state_now[51] reason=over-count max=50\n" + AdjustmentLinePrefix +
+			"dropped summary.state_now[52] reason=over-count max=50"},
+	} {
+		reg, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(tc.n, "s")}))
+		want, kept := "", tc.n
+		if tc.want != "" {
+			want, kept = AdjustmentLinePrefix+tc.want, 50
+		}
+		if adjusted(reg) != want || len(reg.Summary.StateNow) != kept {
+			t.Fatalf("%d items: kept %d, adjustments %q", tc.n, len(reg.Summary.StateNow), adjusted(reg))
+		}
+	}
+}
+
+// TestTheWholeSummaryBoundStillHolds: the total is a LITERAL 24576 bytes of stored JSON. Both lists
+// full of items at the item cap (~150 KB sent) store at most that, every drop named with the literal
+// bound; a summary under it by a margin is stored as sent; one over it by a margin loses exactly its
+// last item.
+func TestTheWholeSummaryBoundStillHolds(t *testing.T) {
+	item := strings.Repeat("x", 1500)
+	full, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(50, item), "next_steps": jsonList(50, item)}))
+	if full.Summary == nil || summaryBytes(*full.Summary) > 24576 {
+		t.Fatalf("the stored summary must fit 24576 bytes: %v", full.Summary == nil)
+	}
+	dropped := strings.Count(adjusted(full), "reason=over-total max=24576")
+	if dropped < 80 || len(full.Summary.StateNow)+len(full.Summary.NextSteps)+dropped != 100 {
+		t.Fatalf("each drop is named once against the literal bound: kept %d+%d, named %d",
+			len(full.Summary.StateNow), len(full.Summary.NextSteps), dropped)
+	}
+	// 15 items of 1500 bytes store at ~22.8 KB: under the bound, stored as sent.
+	under, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(15, item)}))
+	if under.Summary == nil || adjusted(under) != "" || len(under.Summary.NextSteps) != 15 {
+		t.Fatalf("a summary under the total is stored as sent: %q", adjusted(under))
+	}
+	// 17 items store at ~25.8 KB: over by a margin, so exactly the 17th is dropped.
+	over, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(17, item)}))
+	if adjusted(over) != AdjustmentLinePrefix+"dropped summary.next_steps[16] reason=over-total max=24576" || len(over.Summary.NextSteps) != 16 {
+		t.Fatalf("over the total: kept %d, adjustments %q", len(over.Summary.NextSteps), adjusted(over))
+	}
+}
+
 // TestOverTheTotalDropsFromTheListEndsAndNamesEachDrop: every item within its own cap, the whole over
-// 16 KiB. The pod drops items from the END — the longer of state_now/next_steps first — until it
+// 24 KiB. The pod drops items from the END — the longer of state_now/next_steps first — until it
 // fits, names each with its sent index, and keeps everything else. The control is a summary half
 // that size, which is stored with no adjustment.
 func TestOverTheTotalDropsFromTheListEndsAndNamesEachDrop(t *testing.T) {
@@ -153,16 +265,16 @@ func TestOverTheTotalDropsFromTheListEndsAndNamesEachDrop(t *testing.T) {
 	if reg.Summary == nil || summaryBytes(*reg.Summary) > MaxSummaryBytes {
 		t.Fatalf("the summary must be kept within the total: %+v", reg.Summary)
 	}
-	dropped := strings.Count(adjusted(reg), "reason=over-total max=16384")
+	dropped := strings.Count(adjusted(reg), "reason=over-total max=24576")
 	if dropped == 0 || len(reg.Summary.StateNow)+len(reg.Summary.NextSteps)+dropped != 2*MaxSummaryItems {
 		t.Fatalf("each drop is named once: kept %d+%d, named %d\n%s", len(reg.Summary.StateNow), len(reg.Summary.NextSteps), dropped, adjusted(reg))
 	}
-	if !strings.HasPrefix(adjusted(reg), AdjustmentLinePrefix+"dropped summary.state_now[19] reason=over-total") ||
-		!strings.Contains(adjusted(reg), "dropped summary.next_steps[19] reason=over-total") {
+	if !strings.HasPrefix(adjusted(reg), AdjustmentLinePrefix+"dropped summary.state_now[49] reason=over-total") ||
+		!strings.Contains(adjusted(reg), "dropped summary.next_steps[49] reason=over-total") {
 		t.Fatalf("drops start at the lists' ends, state_now first on a tie:\n%s", adjusted(reg))
 	}
-	if half, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(MaxSummaryItems, item)})); half.Summary == nil || adjusted(half) != "" {
-		t.Fatalf("control: half of that total is stored as sent: %q", adjusted(half))
+	if half, _ := decode(t, summaryJSON(map[string]string{"state_now": jsonList(15, item)})); half.Summary == nil || adjusted(half) != "" {
+		t.Fatalf("control: 15 such items (~22.8 KB) are stored as sent: %q", adjusted(half))
 	}
 }
 
@@ -438,15 +550,15 @@ func TestTheWorstCaseEmptySummaryFitsTheTotal(t *testing.T) {
 // as the pod received it, and when sanitizing changed that length the line adds `sanitized_bytes=`,
 // the length compared with the cap. 200 U+2028 (3 bytes each) become 200 spaces.
 func TestAClippedLineReportsTheLengthItWasGivenAndTheLengthItCompared(t *testing.T) {
-	text := strings.Repeat(" ", 200) + strings.Repeat("x", 450)
+	text := strings.Repeat(" ", 200) + strings.Repeat("x", 1450)
 	reg, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, text)}))
 	want := AdjustmentLinePrefix + "sanitized summary.next_steps[0] replaced=200\n" +
-		AdjustmentLinePrefix + "clipped summary.next_steps[0] bytes=1050 max=500 sanitized_bytes=650"
+		AdjustmentLinePrefix + "clipped summary.next_steps[0] bytes=2050 max=1500 sanitized_bytes=1650"
 	if adjusted(reg) != want {
 		t.Fatalf("adjustments:\n%s\nwant:\n%s", adjusted(reg), want)
 	}
-	plain, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, strings.Repeat("x", 650))}))
-	if adjusted(plain) != AdjustmentLinePrefix+"clipped summary.next_steps[0] bytes=650 max=500" {
+	plain, _ := decode(t, summaryJSON(map[string]string{"next_steps": jsonList(1, strings.Repeat("x", 1650))}))
+	if adjusted(plain) != AdjustmentLinePrefix+"clipped summary.next_steps[0] bytes=1650 max=1500" {
 		t.Fatalf("control: no sanitized_bytes when sanitizing changed nothing: %q", adjusted(plain))
 	}
 }

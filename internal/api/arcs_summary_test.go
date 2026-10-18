@@ -223,7 +223,7 @@ func TestAPushWithoutTheOptInMakesTheArcHomeOnlyAgain(t *testing.T) {
 func TestAProblemSummaryNeverRefusesTheArcAndTheResponseNamesEveryAdjustment(t *testing.T) {
 	h := newHarness(t)
 	withJournal(t, h)
-	long := strings.Repeat("x", 497) + "日本"
+	long := strings.Repeat("x", 1497) + "日本"
 	sk := "sk" + "-" + strings.Repeat("Ab3d", 6)
 	stripe := "sk" + "_test_" + strings.Repeat("Ab3d", 5)
 	jwt := "ey" + "J" + strings.Repeat("hbGciOiJ", 2) + ".ey" + "J" + strings.Repeat("zdWIiOiI", 2) + "." + strings.Repeat("c2lnbmF0", 2)
@@ -234,7 +234,7 @@ func TestAProblemSummaryNeverRefusesTheArcAndTheResponseNamesEveryAdjustment(t *
 		`"source":{"repo_path":"a.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}}}`
 	got := h.do(t, "PUT", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, body)
 	want := "arc-registered: alpha-notes/gadget-move · members=1 · unjoinable=0\n" +
-		"summary-adjusted: clipped summary.next_steps[0] bytes=503 max=500\n" +
+		"summary-adjusted: clipped summary.next_steps[0] bytes=1503 max=1500\n" +
 		"summary-adjusted: redacted summary.next_steps[1] rule=authorization\n" +
 		"summary-adjusted: redacted summary.next_steps[2] rule=authorization\n" +
 		"summary-adjusted: redacted summary.next_steps[3] rule=sk-key\n" +
@@ -248,7 +248,7 @@ func TestAProblemSummaryNeverRefusesTheArcAndTheResponseNamesEveryAdjustment(t *
 	}
 	shown := h.do(t, "GET", "/api/v1/arc/alpha-notes/gadget-move", wideToken, nil, "").body
 	for _, line := range []string{"\nstatus: open\n", "\n- s-0042 · originated", "\nnext steps (ranked): 8\n",
-		"\n  " + strings.Repeat("x", 497) + "…\n", "\n  [redacted: authorization]\n", "\n  [redacted: jwt]\n",
+		"\n  " + strings.Repeat("x", 1497) + "…\n", "\n  [redacted: authorization]\n", "\n  [redacted: jwt]\n",
 		"\n  [redacted: url-userinfo-password]\n", "\n  two lines\n"} {
 		if !strings.Contains(shown, line) {
 			t.Fatalf("arc-show lacks %q:\n%s", line, shown)
@@ -275,16 +275,16 @@ func TestAProblemSummaryNeverRefusesTheArcAndTheResponseNamesEveryAdjustment(t *
 func TestEachFormerSummaryRefusalNowRegistersTheArc(t *testing.T) {
 	src := `"source":{"repo_path":"a.md","commit":"0123456789abcdef0123456789abcdef01234567","committed_at":"2000-01-04T00:00:00Z"}`
 	list := func(items ...string) string { b, _ := json.Marshal(items); return string(b) }
-	big := strings.Repeat("y", 500)
-	many := make([]string, 20)
+	big := strings.Repeat("y", 1500)
+	many := make([]string, 50)
 	for i := range many {
 		many[i] = big
 	}
 	for _, tc := range []struct {
 		name, summary, line, served string
 	}{
-		{"over-long item", `"state_now":` + list(strings.Repeat("z", 612)) + `,"next_steps":[]`,
-			"summary-adjusted: clipped summary.state_now[0] bytes=612 max=500", "\n  " + strings.Repeat("z", 497) + "…\n"},
+		{"over-long item", `"state_now":` + list(strings.Repeat("z", 1612)) + `,"next_steps":[]`,
+			"summary-adjusted: clipped summary.state_now[0] bytes=1612 max=1500", "\n  " + strings.Repeat("z", 1497) + "…\n"},
 		// A placeholder in a credential position is REDACTED by design: the raw text is scanned and
 		// nothing explains a hit away — and it registers, which is the point of this test.
 		{"placeholder in a password position", `"state_now":` + list("postgresql://app:${PGPASSWORD}@db:5432/app") + `,"next_steps":[]`,
@@ -298,7 +298,7 @@ func TestEachFormerSummaryRefusalNowRegistersTheArc(t *testing.T) {
 		{"blank item", `"state_now":` + list(" ", "kept") + `,"next_steps":[]`,
 			"summary-adjusted: dropped summary.state_now[0] reason=blank", "\n  kept\n"},
 		{"over the total", `"state_now":` + list(many...) + `,"next_steps":` + list(many...),
-			"summary-adjusted: dropped summary.state_now[19] reason=over-total max=16384", "\nnext steps (ranked): "},
+			"summary-adjusted: dropped summary.state_now[49] reason=over-total max=24576", "\nnext steps (ranked): "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
