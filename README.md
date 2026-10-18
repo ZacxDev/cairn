@@ -503,21 +503,35 @@ scopes, the opt-in — always lands; a problem in the summary is **adjusted and 
 
 ⚠ **These bounds were raised from 20 items of 500 bytes and a 16 KiB total**, which clipped about
 one item in six of real handoff documents mid-sentence (the measurement is beside the constants in
-`internal/arcs/summary.go`). Three things follow for an operator:
+`internal/arcs/summary.go`). What follows for an operator:
 
 - **A stored summary is not re-read by the new bounds.** An arc registered under the old ones keeps
   its clipped or shortened summary until its tooling pushes it again; re-registering it (the same
   push that registered it) stores the whole text.
-- **Roll every binary that reads the arc journal — `cairn-server` AND `cairn-ui` — together.** The
-  read side re-checks the item COUNTS and the TOTAL (not an item's bytes), so a build with the older
-  bounds SKIPS a record stored with more than 20 items in a list or over 16 KiB, counts it as
-  damage, and shows that arc's previous record.
 - **`arc-show` now prints the summary before the member list**, where it used to end the body. A
   consumer that located the summary by position (for example, everything after the last member
   line) must find it by its `summary: ` provenance line instead; a schema-1 arc's body is unchanged.
-- **Rolling back is therefore not free for those arcs:** after a rollback they fall back to their
-  previous record (or vanish if they have none) until re-registered — which the old build then
-  clips and drops as before.
+- **An older build SKIPS a record stored over its bounds — and with it that record's MEMBER LIST,
+  not just its summary.** The read side re-checks the item COUNTS and the TOTAL (not an item's
+  bytes), so a build with the older bounds treats a record with more than 20 items in a list or over
+  16 KiB as damage and folds the arc to its previous record (or to nothing). Three readers see that:
+  - **`arc-show`, `arcs` and the browser** show the previous record's status, summary and members.
+  - **Plugin consent in `cairn-ui`** reads an arc's members to decide which sessions its `off` veto
+    covers. A session that only the skipped record names falls out of the arc, so a plugin the arc
+    vetoed can run on that session while that `cairn-ui` is the older build.
+  - **The next push to an older `cairn-server`** merges against the previous VISIBLE record. A push
+    that does not measure a leg (`readers_measured: false` or `writers_measured: false`) carries
+    that leg's members from the record it can see, so members that only the skipped record held are
+    **dropped from the new record**. They stay gone after rolling forward, until a host that
+    measures that leg pushes the arc again; re-registering from a host that does not measure it
+    does not bring them back.
+- **So roll `cairn-ui` no later than `cairn-server`** (or both together). On the way forward that
+  avoids all of the above: no older reader is left by the time a record over the old bounds exists.
+- **Rolling back past this version is the remaining exposure.** Once any arc has a record with more
+  than 20 items in a list or over 16 KiB, prefer rolling forward to rolling back. If you must roll
+  back, then after rolling forward again have **each host that registers the affected arcs re-push
+  them** — including any host that measures readers — and expect an arc whose members were dropped
+  to stay short until that host does.
 
 Every **text field** — `closing_condition` (when sent), every `state_now`, `next_steps`, `task_refs`
 and `aliases` item — goes through four steps, in this order:
