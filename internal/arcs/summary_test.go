@@ -255,6 +255,24 @@ func TestTheWholeSummaryBoundStillHolds(t *testing.T) {
 	}
 }
 
+// TestTheReadSideReChecksTheTotal: the fold applies a stored summary up to the literal 24576 bytes and
+// SKIPS one past it. The applied arm (~24.2 KB) is over the OLD 16 KiB total — which is exactly the
+// record an older build skips, the rollback hazard the README names.
+func TestTheReadSideReChecksTheTotal(t *testing.T) {
+	line := strings.TrimSpace(journalLine(t, summaryJSON(nil)))
+	item := strings.Repeat("x", 1500)
+	for _, tc := range []struct {
+		n       int
+		applied bool
+	}{{16, true}, {17, false}} {
+		stored := strings.Replace(line, `"state_now":[]`, `"state_now":`+jsonList(tc.n, item), 1)
+		snap := fold([]byte(stored + "\n"))
+		if (snap.Records == 1) != tc.applied || (snap.Skipped == 1) == tc.applied {
+			t.Fatalf("%d items (%d bytes stored): records %d skipped %d, want applied=%v", tc.n, len(stored), snap.Records, snap.Skipped, tc.applied)
+		}
+	}
+}
+
 // TestOverTheTotalDropsFromTheListEndsAndNamesEachDrop: every item within its own cap, the whole over
 // 24 KiB. The pod drops items from the END — the longer of state_now/next_steps first — until it
 // fits, names each with its sent index, and keeps everything else. The control is a summary half
