@@ -1620,8 +1620,10 @@ def test_the_CI_FLOOR_PROSE_CANNOT_DISAGREE_WITH_THE_LITERAL():
     floor = int(literal.group(1))
     block = text[: literal.start()]
 
-    # The derivation the comment prescribes: `m - min(50, max(1, m/20)) = <floor>`.
-    arithmetic = re.findall(r"min\(50, max\(1, \d+/20\)\) = (\d+)", block)
+    # The derivation the comment states: `m - min(50, max(1, m/20)) = <floor>` up to the
+    # 2886 -> 2956 move, `FLOOR = m = <floor>` from it on. Either form, the LAST one wins.
+    arithmetic = re.findall(
+        r"(?:min\(50, max\(1, \d+/20\)\)|FLOOR = m) = (\d+)", block)
     assert arithmetic, "the floor's arithmetic line is gone — it is the only derivation"
     assert int(arithmetic[-1]) == floor, (
         f"the floor comment's arithmetic computes {arithmetic[-1]} but the job uses "
@@ -1635,8 +1637,9 @@ def test_the_CI_FLOOR_PROSE_CANNOT_DISAGREE_WITH_THE_LITERAL():
         f"{floor}; a heading restating the number is what drifted three rounds running"
     )
     # POSITIVE CONTROL: the patterns must be able to see a disagreement at all.
-    assert re.search(r"min\(50, max\(1, \d+/20\)\) = (\d+)",
-                     "`9999 - min(50, max(1, 9999/20)) = 1234`"), "pattern wired to nothing"
+    for sample in ("`9999 - min(50, max(1, 9999/20)) = 1234`", "`FLOOR = m = 1234`"):
+        assert re.search(r"(?:min\(50, max\(1, \d+/20\)\)|FLOOR = m) = (\d+)", sample), (
+            f"pattern wired to nothing: {sample}")
 
 
 def test_the_hook_namespace_loads_and_is_not_the_live_one():
