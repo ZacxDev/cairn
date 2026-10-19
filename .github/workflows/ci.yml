@@ -155,10 +155,12 @@ jobs:
       # 🔴 AND A FLOOR FAR BELOW THE SUITE IS THE SAME BLINDNESS ONE STEP UP. At
       # 200 against a suite of 1698 it could not see a collection narrowing to
       # 300 — 82% of the suite gone, silently — which is the exact failure the
-      # paragraph above says it prevents. The floor is `m - min(50, max(1, m/20))`
+      # paragraph above says it prevents. The floor WAS `m - min(50, max(1, m/20))`
       # for a measured `m`: close enough that a real narrowing cannot hide under
       # it, loose enough that removing a handful of tests in a PR does not turn
-      # this into a permanently-red gate nobody reads.
+      # this into a permanently-red gate nobody reads. (That formula still sets
+      # the parity harness's case floor.) This step's floor is now `m` ITSELF —
+      # the last transition above the `FLOOR` literal says why.
       #
       # ⚠ THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE. No bug ever
       # narrowed this suite; it pins a property so that one cannot pass unseen.
@@ -248,8 +250,9 @@ jobs:
           # the only documentation of the matching rule and a wrong example there is
           # worse than none.
           #
-          # Raise as the suite grows — `m - min(50, max(1, m/20))` for the m you
-          # measured; never lower without saying why. ⚠ THE GO TESTS ARE NOT IN
+          # Raise as the suite grows — to the m you measured (it was
+          # `m - min(50, max(1, m/20))` until the 2886 -> 2956 move below);
+          # never lower without saying why. ⚠ THE GO TESTS ARE NOT IN
           # THIS NUMBER: they are a different runner in a different job, and
           # folding them in would make one floor answer two questions. Nor is the
           # PARITY gate: it is its own job with its own floor, for the same reason.
@@ -714,7 +717,20 @@ jobs:
           # DRIFT GUARD FORCED IT: CI measured 2936 collected on the PR head, a gap of 101 against a
           # `MAX_GAP` of 100 (S4's and S11's Python tests together — `tests/test_read_ledger.py`,
           # the env_pin rows, the parity-harness rows). `2936 - min(50, max(1, 2936/20)) = 2886`.
-          FLOOR = 2886
+          # ⚠ 2886 -> 2956, AND THE 50-TEST MARGIN IS RETIRED FOR THIS FLOOR: `FLOOR` IS NOW
+          # THE MEASURED COUNT ITSELF. The margin existed so the upper-gap drift guard and a PR
+          # that deletes a few tests could coexist. That guard is gone (see below), so ADDING
+          # tests can no longer turn this step red, and the margin's only remaining effect was
+          # to let a narrowing of up to the gap pass silently — 70 tests at `33a3d49`.
+          # Measured from this step's own output line on four consecutive green `main` push
+          # runs — 39009901427 (`d9d4413`), 39040677217 (`d293e52`), 39091800380 (`7e0ee3f`),
+          # 39100571663 (`33a3d49`) — `collected=2956 failed=0 floor=2886` in every one, each
+          # `2955 passed, 1 skipped` (a skip counts as collected): no spread across them. The
+          # two runs before them read 2949 (`3ae6fbb`) and 2943 (`6d4ab29`) — the suite
+          # growing, not run-to-run variance. Cost, chosen: a PR that REMOVES a test is now
+          # red here until it lowers this literal, which makes "never lower without saying
+          # why" mechanical. Derivation: `FLOOR = m = 2956`.
+          FLOOR = 2956
           t = ET.parse("/tmp/r.xml").getroot()
           suites = [t] if t.tag == "testsuite" else list(t)
           ran = sum(int(s.get("tests", 0)) for s in suites)
@@ -733,7 +749,8 @@ jobs:
           # What it defended (a floor left far below the suite, so a
           # narrowing of up to the gap could hide) is NOT defended now; `ran < FLOOR`
           # still refuses any narrowing below the literal. Raising the literal stays a
-          # manual choice, per the formula above.
+          # manual choice: to the measured count, per the 2886 -> 2956 note above. A
+          # literal left below a grown suite re-opens exactly that hiding gap.
           sys.exit(1 if fail else 0)
           PY
 
