@@ -174,17 +174,18 @@ func TestAGoneWorktreeIsReachedThroughItsSandbox(t *testing.T) {
 }
 
 // TestDiscoveryNeverDegradesToNoProjects: a runner that fails, and every answer that is not a list
-// of projects with absolute worktrees (and absolute string sandboxes), is an ERROR — while `[]` is
-// zero projects and no error.
+// of projects with absolute canonical paths or legacy worktrees (and absolute string sandboxes),
+// is an ERROR — while `[]` is zero projects and no error.
 func TestDiscoveryNeverDegradesToNoProjects(t *testing.T) {
 	if _, err := DiscoverOpencodeDirs(&fakeRunner{projErr: errors.New("exit status 1")}, nil); err == nil {
-		t.Fatal("a failed `debug scrap` was not an error")
+		t.Fatal("a failed project query was not an error")
 	}
 	for _, raw := range []string{"", "null", "{}", `"x"`, "[", `[{"id":"x"}]`, `[{"worktree":"relative/dir"}]`,
 		`[{"worktree":7}]`, `[{"worktree":"/ok"}, {"worktree":null}]`, `[{"worktree":"/ok","sandboxes":["rel"]}]`,
+		`[{"canonical":null}]`, `[{"canonical":"relative/dir"}]`, `[{"canonical":"/ok"}, {"canonical":""}]`,
 		`[{"worktree":"/ok","sandboxes":[{"dir":"/x"}]}]`, `[{"worktree":"/ok","sandboxes":"/x"}]`} {
 		if _, err := DiscoverOpencodeDirs(&fakeRunner{projects: []byte(raw)}, nil); !errors.Is(err, ErrProjectsUnreadable) {
-			t.Errorf("scrap answering %q: %v; want ErrProjectsUnreadable", raw, err)
+			t.Errorf("project query answering %q: %v; want ErrProjectsUnreadable", raw, err)
 		}
 	}
 	d, err := DiscoverOpencodeDirs(&fakeRunner{projects: []byte(" [] \n")}, []string{"/work/alpha"})
@@ -193,8 +194,86 @@ func TestDiscoveryNeverDegradesToNoProjects(t *testing.T) {
 	}
 }
 
-// TestDiscoveryRunsTheRealSubprocess: `debug scrap` through ExecRunner — stdout to a file, the
-// stub answering it — and a binary that does not exist is an error.
+// TestDiscoveryUsesV2ProjectAPIAndFallsBackToLegacyScrap exercises both discovery protocols
+// through ExecRunner's real subprocess path. The v2 API's canonical path is authoritative; a
+// failing v2 API command falls back to the v1 debug command.
+func TestDiscoveryUsesV2ProjectAPIAndFallsBackToLegacyScrap(t *testing.T) {
+	t.Run("v2 canonical", func(t *testing.T) {
+		stub := t.TempDir()
+		project := filepath.Join(stub, "project")
+		if err := os.Mkdir(project, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stub, "v2-projects.json"),
+			[]byte(fmt.Sprintf(`[{"id":"synthetic","canonical":%q,"sandboxes":[]}]`, project)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CAPTURE_OPENCODE_STUB", stub)
+		d, err := DiscoverOpencodeDirs(ExecRunner{Bin: os.Args[0], TempDir: t.TempDir()}, nil)
+		if err != nil || d.Projects != 1 || len(d.Dirs) != 1 || d.Dirs[0] != project {
+			t.Fatalf("v2 discovery: %+v (%v); want canonical project %q", d, err, project)
+		}
+		called, err := os.ReadFile(filepath.Join(stub, "v2-called"))
+		if err != nil || string(called) != "api --standalone GET /api/project" {
+			t.Fatalf("v2 API command was not called as specified: %q (%v)", called, err)
+		}
+		if _, err := os.Stat(filepath.Join(stub, "legacy-called")); !os.IsNotExist(err) {
+			t.Fatalf("legacy fallback ran despite a successful v2 answer: %v", err)
+		}
+	})
+
+	t.Run("legacy fallback when v2 API fails", func(t *testing.T) {
+		stub := t.TempDir()
+		project := filepath.Join(stub, "legacy-project")
+		if err := os.Mkdir(project, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stub, "scrap.json"),
+			[]byte(fmt.Sprintf(`[{"id":"synthetic","worktree":%q,"sandboxes":[]}]`, project)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CAPTURE_OPENCODE_STUB", stub)
+		d, err := DiscoverOpencodeDirs(ExecRunner{Bin: os.Args[0], TempDir: t.TempDir()}, nil)
+		if err != nil || d.Projects != 1 || len(d.Dirs) != 1 || d.Dirs[0] != project {
+			t.Fatalf("legacy discovery: %+v (%v); want worktree project %q", d, err, project)
+		}
+		if _, err := os.Stat(filepath.Join(stub, "v2-called")); err != nil {
+			t.Fatalf("v2 API was not attempted before fallback: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(stub, "legacy-called")); err != nil {
+			t.Fatalf("legacy fallback was not called: %v", err)
+		}
+	})
+
+	t.Run("malformed successful v2 answer does not fall back", func(t *testing.T) {
+		stub := t.TempDir()
+		project := filepath.Join(stub, "legacy-project")
+		if err := os.Mkdir(project, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stub, "v2-projects.json"),
+			[]byte(`[{"id":"synthetic","canonical":"relative/project","sandboxes":[]}]`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stub, "scrap.json"),
+			[]byte(fmt.Sprintf(`[{"id":"synthetic","worktree":%q,"sandboxes":[]}]`, project)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CAPTURE_OPENCODE_STUB", stub)
+		d, err := DiscoverOpencodeDirs(ExecRunner{Bin: os.Args[0], TempDir: t.TempDir()}, nil)
+		if _, statErr := os.Stat(filepath.Join(stub, "legacy-called")); statErr == nil {
+			t.Fatal("legacy fallback ran after the v2 API succeeded with an invalid project shape")
+		} else if !os.IsNotExist(statErr) {
+			t.Fatalf("checking the legacy-call marker: %v", statErr)
+		}
+		if !errors.Is(err, ErrProjectsUnreadable) || d.Projects != 0 || len(d.Dirs) != 0 {
+			t.Fatalf("malformed v2 answer: %+v (%v); want a fail-closed project-shape error", d, err)
+		}
+	})
+}
+
+// TestDiscoveryRunsTheRealSubprocess: the legacy subprocess path remains available — stdout to a
+// file, the stub answering it — and a binary that does not exist is an error.
 func TestDiscoveryRunsTheRealSubprocess(t *testing.T) {
 	stub := t.TempDir()
 	if err := os.WriteFile(filepath.Join(stub, "scrap.json"), []byte(`[{"id":"global","worktree":"/"}]`), 0o600); err != nil {

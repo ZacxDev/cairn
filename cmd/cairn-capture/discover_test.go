@@ -10,14 +10,21 @@ import (
 )
 
 // TestMain doubles as a FAKE opencode: when CAIRN_CAPTURE_FAKE_OPENCODE names a directory, the
-// test binary answers `debug scrap` from `scrap.json` there (exit 65 when it is absent), `session
-// list` with ONE root named after the directory it runs IN (`ses_<base name>`), and fails every
+// test binary answers the v2 project API from `projects.json` there (exit 65 when it is absent),
+// the legacy `debug scrap` from `scrap.json`, `session list` with ONE root named after the directory
+// it runs IN (`ses_<base name>`), and fails every
 // `export` — so a dry run's `opencode ses_<name> refused: the export failed` lines name exactly
 // the project directories the pass enumerated.
 func TestMain(m *testing.M) {
 	if dir := os.Getenv("CAIRN_CAPTURE_FAKE_OPENCODE"); dir != "" {
 		args := os.Args[1:]
 		switch {
+		case len(args) == 4 && args[0] == "api" && args[1] == "--standalone" && args[2] == "GET" && args[3] == "/api/project":
+			data, err := os.ReadFile(filepath.Join(dir, "projects.json"))
+			if err != nil {
+				os.Exit(65)
+			}
+			os.Stdout.Write(data)
 		case len(args) == 2 && args[0] == "debug" && args[1] == "scrap":
 			data, err := os.ReadFile(filepath.Join(dir, "scrap.json"))
 			if err != nil {
@@ -36,9 +43,9 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// discoverWorld is two project directories that exist (alpha, beta), one scrap names that does
-// not (gone), and the fake opencode answering scrap with `scrap` (nil: no scrap.json, exit 65).
-func discoverWorld(t *testing.T, scrap []byte) (base string) {
+// discoverWorld is two project directories that exist (alpha, beta), one project names that does
+// not (gone), and a fake opencode with no project list when `projects` is nil.
+func discoverWorld(t *testing.T, projects []byte) (base string) {
 	t.Helper()
 	base = t.TempDir()
 	for _, d := range []string{"alpha", "beta"} {
@@ -47,8 +54,8 @@ func discoverWorld(t *testing.T, scrap []byte) (base string) {
 		}
 	}
 	fake := t.TempDir()
-	if scrap != nil {
-		if err := os.WriteFile(filepath.Join(fake, "scrap.json"), scrap, 0o600); err != nil {
+	if projects != nil {
+		if err := os.WriteFile(filepath.Join(fake, "projects.json"), projects, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,10 +63,10 @@ func discoverWorld(t *testing.T, scrap []byte) (base string) {
 	return base
 }
 
-func scrapOf(worktrees ...string) []byte {
-	rows := make([]map[string]any, len(worktrees))
-	for i, w := range worktrees {
-		rows[i] = map[string]any{"id": "p" + string(rune('0'+i)), "worktree": w, "vcs": "git",
+func projectsOf(paths ...string) []byte {
+	rows := make([]map[string]any, len(paths))
+	for i, path := range paths {
+		rows[i] = map[string]any{"id": "p" + string(rune('0'+i)), "canonical": path, "vcs": "git",
 			"time": map[string]any{"created": 946684800000, "updated": 946684800000}, "sandboxes": []any{}}
 	}
 	raw, _ := json.Marshal(rows)
@@ -76,14 +83,14 @@ func opencodeLines(out string) []string {
 	return got
 }
 
-// TestADryRunDiscoversOpencodesProjects: `-opencode-discover` unions scrap's projects with the
+// TestADryRunDiscoversOpencodesProjects: `-opencode-discover` unions the v2 project API's results with the
 // explicit `-opencode-project` (one per cleaned path), skips the worktree that is gone, and says
 // the counts on ONE stderr line.
 func TestADryRunDiscoversOpencodesProjects(t *testing.T) {
 	base := discoverWorld(t, nil)
 	alpha, beta := filepath.Join(base, "alpha"), filepath.Join(base, "beta")
-	if err := os.WriteFile(filepath.Join(os.Getenv("CAIRN_CAPTURE_FAKE_OPENCODE"), "scrap.json"),
-		scrapOf(alpha, filepath.Join(base, "gone")), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(os.Getenv("CAIRN_CAPTURE_FAKE_OPENCODE"), "projects.json"),
+		projectsOf(alpha, filepath.Join(base, "gone")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	home := t.TempDir()
@@ -98,7 +105,7 @@ func TestADryRunDiscoversOpencodesProjects(t *testing.T) {
 	if strings.Count(errb.String(), "opencode discovery") != 1 || !strings.Contains(errb.String(), want) {
 		t.Fatalf("stderr does not carry the one discovery line %q:\n%s", want, errb.String())
 	}
-	// CONTROL: without the flag, scrap is never asked and only the explicit directories are read.
+	// CONTROL: without the flag, project discovery is never asked and only explicit directories are read.
 	out.Reset()
 	errb.Reset()
 	code = run([]string{"--dry-run", "-claude-root", "", "-opencode-bin", os.Args[0], "-opencode-project", beta},
@@ -112,9 +119,9 @@ func TestADryRunDiscoversOpencodesProjects(t *testing.T) {
 // exists is listed from the sandbox, and the counts line says so (`via-sandbox=1`).
 func TestAGoneWorktreeIsEnumeratedFromItsSandbox(t *testing.T) {
 	base := discoverWorld(t, nil)
-	scrap, _ := json.Marshal([]map[string]any{{"id": "p0", "worktree": filepath.Join(base, "gone"),
+	projects, _ := json.Marshal([]map[string]any{{"id": "p0", "canonical": filepath.Join(base, "gone"),
 		"sandboxes": []string{filepath.Join(base, "alpha")}}})
-	if err := os.WriteFile(filepath.Join(os.Getenv("CAIRN_CAPTURE_FAKE_OPENCODE"), "scrap.json"), scrap, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(os.Getenv("CAIRN_CAPTURE_FAKE_OPENCODE"), "projects.json"), projects, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
@@ -133,18 +140,18 @@ func TestAGoneWorktreeIsEnumeratedFromItsSandbox(t *testing.T) {
 // pass that quietly enumerated nothing, and never one that dropped Claude Code over opencode.
 func TestAFailedDiscoveryRefusesOnlyTheOpencodeHalf(t *testing.T) {
 	cases := []struct {
-		name  string
-		scrap []byte
-		bin   string
-		says  string
+		name     string
+		projects []byte
+		bin      string
+		says     string
 	}{
-		{"unparseable", []byte(`{"worktree":"/"}`), "", "did not answer a JSON list of projects"},
+		{"unparseable", []byte(`{"canonical":"/"}`), "", "did not answer a JSON list of projects"},
 		{"non-zero exit", nil, "", "exit status 65"},
 		{"missing binary", []byte(`[]`), "/nonexistent/opencode-for-a-test", "opencode project discovery failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			base := discoverWorld(t, tc.scrap)
+			base := discoverWorld(t, tc.projects)
 			bin := tc.bin
 			if bin == "" {
 				bin = os.Args[0]

@@ -20,8 +20,9 @@ import (
 )
 
 // TestMain doubles as an opencode STUB: when CAPTURE_OPENCODE_STUB names a directory, the test
-// binary answers `export <id>`, `session list …` and `debug scrap` from files there and exits — so
-// ExecRunner's real subprocess path (stdout to a FILE) is exercised without opencode installed.
+// binary answers `export <id>`, `session list …`, the v2 project API and legacy `debug scrap` from
+// files there and exits — so ExecRunner's real subprocess path (stdout to a FILE) is exercised
+// without opencode installed.
 //
 // 🔴 `session list` MODELS THE REAL BINARY'S ROW CAP, measured on opencode 1.18.29: with no `-n`
 // it answers at most [stubDefaultListRows] rows (exit 0, nothing on stderr), and `-n N` answers at
@@ -46,8 +47,12 @@ func TestMain(m *testing.M) {
 					limit = n
 				}
 			}
+		case len(args) == 4 && args[0] == "api" && args[1] == "--standalone" && args[2] == "GET" && args[3] == "/api/project":
+			file = filepath.Join(dir, "v2-projects.json")
+			_ = os.WriteFile(filepath.Join(dir, "v2-called"), []byte(strings.Join(args, " ")), 0o600)
 		case len(args) == 2 && args[0] == "debug" && args[1] == "scrap":
 			file = filepath.Join(dir, "scrap.json")
+			_ = os.WriteFile(filepath.Join(dir, "legacy-called"), []byte(strings.Join(args, " ")), 0o600)
 		default:
 			os.Exit(64)
 		}

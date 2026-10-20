@@ -23,8 +23,8 @@ type OpencodeRunner interface {
 	List(dir string, limit int) ([]byte, error)
 	// Export is `opencode export <id>`.
 	Export(id string) ([]byte, error)
-	// Projects is `opencode debug scrap`: every project opencode knows, as a JSON list. A CLI call
-	// like the other two — the database stays unopened.
+	// Projects reads every project opencode knows, preferring the v2 API and falling back to the
+	// v1 CLI command when the v2 API command fails. Both are CLI calls; the database stays unopened.
 	Projects() ([]byte, error)
 }
 
@@ -85,8 +85,16 @@ func (r ExecRunner) List(dir string, limit int) ([]byte, error) {
 	return r.run(dir, "session", "list", "--format", "json", "-n", strconv.Itoa(limit))
 }
 
-// Projects runs `opencode debug scrap`.
-func (r ExecRunner) Projects() ([]byte, error) { return r.run("", "debug", "scrap") }
+// Projects runs the v2 standalone API command, falling back to the v1 CLI command when it fails.
+// A successful command's output is returned unchanged; malformed output is rejected by parseProjects
+// rather than hidden by trying a second protocol.
+func (r ExecRunner) Projects() ([]byte, error) {
+	projects, err := r.run("", "api", "--standalone", "GET", "/api/project")
+	if err == nil {
+		return projects, nil
+	}
+	return r.run("", "debug", "scrap")
+}
 
 // Export runs `opencode export <id>`.
 func (r ExecRunner) Export(id string) ([]byte, error) { return r.run("", "export", id) }
@@ -230,44 +238,50 @@ func listRoots(raw []byte, limit int) ([]listedRoot, error) {
 	return out, nil
 }
 
-// ErrProjectsUnreadable is a `debug scrap` answer that is not a JSON list of projects each naming
-// an absolute worktree. Discovery REFUSES on it; it never degrades to "no projects".
-var ErrProjectsUnreadable = errors.New("capture: `opencode debug scrap` did not answer a JSON list of projects " +
-	"with absolute worktrees")
+// ErrProjectsUnreadable is a project-list answer that is not a JSON list of projects each naming
+// an absolute v2 canonical path or legacy v1 worktree. Discovery REFUSES on it; it never degrades to "no projects".
+var ErrProjectsUnreadable = errors.New("capture: opencode project discovery did not answer a JSON list of projects " +
+	"with absolute canonical paths or legacy worktrees")
 
-// scrapProject is one project `debug scrap` names: its worktree and its sandboxes — further
-// directories of the SAME project — all cleaned absolute paths.
-type scrapProject struct {
-	Worktree  string
+// projectInfo is one discovered project: its canonical path and sandboxes — further directories
+// of the SAME project — all cleaned absolute paths.
+type projectInfo struct {
+	Path      string
 	Sandboxes []string
 }
 
-// parseProjects reads `opencode debug scrap`'s `[{"id", "worktree", "sandboxes", …}]`. The
-// `global` project's worktree is `/`, and `session list` run there lists the global project's
+// parseProjects reads project rows with a v2 `canonical` path or legacy v1 `worktree`, plus optional sandboxes. The
+// `global` project's path is `/`, and `session list` run there lists the global project's
 // sessions (measured), so it is a project like any other.
 //
-// 🔴 ONLY A LIST IS AN ANSWER. `null`, an object, a row with no worktree or a relative one, or a
+// 🔴 ONLY A LIST IS AN ANSWER. `null`, an object, a row with no canonical/worktree path or a relative one, or a
 // sandbox that is not an absolute path string, is [ErrProjectsUnreadable]: each would otherwise
 // read as "fewer projects", the silent loss this discovery exists to end. `[]` IS an answer:
 // opencode knows no project. A row with no `sandboxes` has none.
-func parseProjects(raw []byte) ([]scrapProject, error) {
+func parseProjects(raw []byte) ([]projectInfo, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || trimmed[0] != '[' {
 		return nil, ErrProjectsUnreadable
 	}
 	var rows []struct {
-		Worktree  *string           `json:"worktree"`
+		Canonical json.RawMessage   `json:"canonical"`
+		Worktree  json.RawMessage   `json:"worktree"`
 		Sandboxes []json.RawMessage `json:"sandboxes"`
 	}
 	if err := json.Unmarshal(trimmed, &rows); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProjectsUnreadable, err)
 	}
-	out := make([]scrapProject, 0, len(rows))
+	out := make([]projectInfo, 0, len(rows))
 	for i, r := range rows {
-		if r.Worktree == nil || !filepath.IsAbs(*r.Worktree) {
+		pathField := r.Canonical
+		if pathField == nil {
+			pathField = r.Worktree
+		}
+		var projectPath string
+		if len(pathField) == 0 || json.Unmarshal(pathField, &projectPath) != nil || !filepath.IsAbs(projectPath) {
 			return nil, fmt.Errorf("%w: row %d", ErrProjectsUnreadable, i)
 		}
-		p := scrapProject{Worktree: filepath.Clean(*r.Worktree)}
+		p := projectInfo{Path: filepath.Clean(projectPath)}
 		for _, s := range r.Sandboxes {
 			var dir string
 			if err := json.Unmarshal(s, &dir); err != nil || !filepath.IsAbs(dir) {
@@ -281,7 +295,7 @@ func parseProjects(raw []byte) ([]scrapProject, error) {
 }
 
 // Discovery is [DiscoverOpencodeDirs]'s answer: the directories to enumerate, and the counts the
-// caller prints — how many projects scrap named, how many of those whose worktree is gone were
+// caller prints — how many projects the CLI named, how many of those whose canonical path is gone were
 // reached through an existing sandbox instead, and how many could be reached through neither.
 type Discovery struct {
 	Dirs                          []string
@@ -295,13 +309,13 @@ func gone(dir string) bool {
 }
 
 // DiscoverOpencodeDirs is the opencode project directories one run enumerates: the `explicit`
-// ones (`-opencode-project`) UNION every project `opencode debug scrap` names, deduplicated by
+// ones (`-opencode-project`) UNION every project discovered from opencode, deduplicated by
 // cleaned absolute path and sorted.
 //
 // `session list` runs IN a directory and answers that directory's PROJECT — it filters by project,
 // not by directory (measured: a base checkout and a worktree of it answered identical id sets; a
-// project whose worktree was gone answered all 10 of its sessions from either of its 2 sandboxes).
-// So a project whose worktree no longer exists is reached through its FIRST existing sandbox
+// project whose primary path was gone answered all 10 of its sessions from either of its 2 sandboxes).
+// So a project whose primary path no longer exists is reached through its FIRST existing sandbox
 // (`ViaSandbox`), and only a project with neither is SKIPPED (`Skipped`) — the caller prints both
 // counts, so the loss is never silent. Any other stat error keeps the directory, and the run's own
 // `refused opencode project` line then names it. An explicit directory is never skipped. Two
@@ -328,8 +342,8 @@ func DiscoverOpencodeDirs(r OpencodeRunner, explicit []string) (Discovery, error
 		set[filepath.Clean(dir)] = true
 	}
 	for _, p := range found {
-		if set[p.Worktree] || !gone(p.Worktree) {
-			set[p.Worktree] = true
+		if set[p.Path] || !gone(p.Path) {
+			set[p.Path] = true
 			continue
 		}
 		reached := false
