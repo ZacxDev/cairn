@@ -18,7 +18,8 @@ operator's act.
    the session directory as a blob — stat first, read only when size or mtime moved. opencode:
    `opencode export <id>` for each root `opencode session list --format json -n <SessionListCap>`
    names in each `-opencode-project` directory — and, under `-opencode-discover`, in every project
-   `opencode debug scrap` names — and each child its `task` parts name, recursively; a unit (session
+   the v2 API (`opencode api --standalone GET /api/project`) names — and each child its `task` parts
+   name, recursively; the v1 `opencode debug scrap` command is tried when the v2 API command fails; a unit (session
    info, message info, part) is new when the digest of its bytes changed. Each root is processed
    once per pass, however many directories list it (`session list` answers a PROJECT). A root whose
    listed `updated` is unchanged since a pass that exported and shipped it completely, an export
@@ -137,12 +138,12 @@ placed elsewhere from that instance and re-ships it whole to the default.
   with `--format json` or without — not `[]`. An all-whitespace answer is therefore zero roots;
   before this was read, one such project was a recurring refusal on `--run` and stopped
   `--dry-run` outright.
-- `debug scrap` prints every project opencode knows as `[{"id", "worktree", "sandboxes", …}]`;
-  the `global` project's worktree is `/`, and `session list` run there lists the global project's
+- The v2 project API prints every project opencode knows as rows with absolute `canonical` paths
+  and `sandboxes`; discovery accepts legacy v1 `worktree` rows too. The `global` project's path is `/`, and `session list` run there lists the global project's
   sessions. `session list` runs IN a directory but filters by PROJECT, not directory: a base
-  checkout and a worktree of it answered identical id sets, and a project whose worktree was gone
+  checkout and a worktree of it answered identical id sets, and a project whose canonical path was gone
   answered all 10 of its sessions from either of its 2 existing `sandboxes`. So
-  `-opencode-discover` lists a project whose worktree is gone from its first existing sandbox, and
+  `-opencode-discover` lists a project whose canonical path is gone from its first existing sandbox, and
   skips only a project with neither; it says both counts on stderr every pass
   (`opencode discovery: projects=N via-sandbox=S skipped-missing-worktree=M enumerated=K`).
 - One `opencode export` costs **~0.65 s whatever its size**, so exporting every root and child on
@@ -217,7 +218,7 @@ means something else).
 | exit | means |
 |---|---|
 | 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run, as is a session DEFERRED because its repo now routes to an instance with no `-worker` (§ *A session that recorded no scope*); a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` |
-| 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session for a reason that recurs on every run with nothing changed on either side (`capture.Recurs`): an **unresumable position** or **another uploader** (table below) — or **`-opencode-discover` was refused**: `opencode debug scrap` failed (a missing binary, a non-zero exit, or an answer that is not a list of projects with absolute worktrees and sandboxes — never read as "no projects"). That refuses only the DISCOVERED projects: Claude Code and every explicit `-opencode-project` directory are still captured, and a `refused opencode discovery` line says so at the start. One last stderr line per cause names the count and that cause's remedy |
+| 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session for a reason that recurs on every run with nothing changed on either side (`capture.Recurs`): an **unresumable position** or **another uploader** (table below) — or **`-opencode-discover` was refused**: project discovery failed (a missing binary, non-zero exits from both the v2 API and v1 CLI fallback, or an answer that is not a list of projects with absolute canonical paths/worktrees and sandboxes — never read as "no projects"). That refuses only the DISCOVERED projects: Claude Code and every explicit `-opencode-project` directory are still captured, and a `refused opencode discovery` line says so at the start. One last stderr line per cause names the count and that cause's remedy |
 | 1 | the state cannot be read or saved, a session tree cannot be listed, or an instance refused the capture token (401/403); wins over 3 |
 | 2 | usage, and `--self-test`'s "could not vouch" |
 
@@ -230,7 +231,7 @@ it could read was printed.
 |---|---|---|---|
 | a stored position the state cannot resume from (`UnresumableError`) | `refused <session>: the instance holds this stream at "<pos>", which is not the start or the end of any record this run carries; …` | 3, every run | **On a host routed to ONE instance:** once the cause is understood (say, the instance's store was restored behind this host), with no run in progress, remove that session's entry (keyed by its id, under `sessions`) from the state file; the next run reads it again from the start. The entry also remembers which records the pod's re-check refused, so their bytes may be sent once more (the pod refuses them again). **On a host routed to SEVERAL instances: do not remove the whole entry** — it also records which instance holds the session's earlier upload (`instance`, the withdrawal obligation of decision 16) and any final hold (`held`), and removing it can strand or duplicate that upload. No narrower remedy has been measured; resolve it with the instance's operator |
 | another (owner, host) holds the root (`ErrNotOwner`) | `refused <session>: the instance answered that this session is held by another uploader (409); …` — or, on a move, a `refused <session>: its routing answer now names instance …` line ending in that text | 3, every run | resolved **on the instance** (the other uploader's copy of that root — a token reissued under another host label, say). Clearing this host's state does **not** resolve it. **On a host routed to SEVERAL instances, do not remove the whole entry** either: when the refusal came from a move's destination probe, clearing empties `instance`, the next run ships straight to the destination and is refused again, and the copy on the instance the session left is never withdrawn — stranded |
-| `-opencode-discover`'s `opencode debug scrap` failed or answered something unreadable | `refused opencode discovery: …` first, and `opencode discovery was refused …` last | 3, every run until it answers | make `-opencode-bin` run and `opencode debug scrap` print a JSON list of projects (an opencode upgrade that changed its shape needs a cairn-capture that reads it); nothing in the state is involved |
+| `-opencode-discover`'s project API/fallback failed or answered something unreadable | `refused opencode discovery: …` first, and `opencode discovery was refused …` last | 3, every run until it answers | make `-opencode-bin` run and its v2 project API or v1 `debug scrap` fallback print a JSON list with absolute project paths (an opencode upgrade that changed its shape needs a cairn-capture that reads it); nothing in the state is involved |
 | a 422 naming a request field (the pod's redaction re-check matched a name or cursor) | `HOLD <session>/<stream>: … — held on this host for good and never resent` (no `refused` line) | 0 | **never clear the entry**: that forgets the hold and re-sends bytes the re-check refused. Marked once, so it would fail only one run anyway |
 | a rewritten Claude Code stream | `refused <session>/<stream>: …` | 0 | marked once and skipped after; clearing would re-ship the rewritten file from its start |
 

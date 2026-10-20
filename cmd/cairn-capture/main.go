@@ -102,8 +102,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		ledgerDir  = fs.String("ledger-dir", "", "the client read-ledger directory (default $XDG_STATE_HOME/cairn/read-ledger)")
 		denylist   = fs.String("denylist", "", "a 0600 per-host denylist file (optional)")
 		ocBin      = fs.String("opencode-bin", "opencode", "the opencode binary, by name or path")
-		ocDisc     = fs.Bool("opencode-discover", false, "also enumerate every project `opencode debug scrap` names "+
-			"(unioned with -opencode-project; a project whose worktree is gone is listed through its first existing sandbox, "+
+		ocDisc     = fs.Bool("opencode-discover", false, "also enumerate projects from opencode's v2 API (v1 `debug scrap` fallback) "+
+			"(unioned with -opencode-project; a project whose canonical path is gone is listed through its first existing sandbox, "+
 			"else skipped; both counted on stderr)")
 		ocDirs      multi
 		ownerRoutes multi
@@ -222,7 +222,7 @@ type runConfig struct {
 }
 
 // opencodeDirs is the opencode project directories a pass enumerates: `-opencode-project` alone,
-// or — under `-opencode-discover` — unioned with every project `opencode debug scrap` names
+// or — under `-opencode-discover` — unioned with every project discovered from opencode
 // ([capture.DiscoverOpencodeDirs]).
 //
 // 🔴 A DISCOVERY THAT FAILS REFUSES THE DISCOVERED HALF, NEVER THE PASS, AND NEVER READS AS "NO
@@ -252,8 +252,8 @@ func opencodeDirs(discover bool, explicit []string, runner capture.OpencodeRunne
 // discoveryLine is the run's LAST line when discovery was refused: the cause, its exit, its remedy.
 func discoveryLine(refused error) string {
 	return fmt.Sprintf("opencode discovery was refused (the `refused opencode discovery` line above), so the projects "+
-		"`opencode debug scrap` names were not captured; refused again on every run until it answers (exit %d). "+
-		"Check that -opencode-bin runs and that `opencode debug scrap` prints a JSON list of projects", exitRefused)
+		"opencode knows were not captured; refused again on every run until project discovery answers (exit %d). "+
+		"Check that -opencode-bin runs and that its v2 project API or v1 debug-scrap fallback prints a JSON list of projects", exitRefused)
 }
 
 // aliased splits `[ALIAS=]VALUE`; no alias is the default instance.
