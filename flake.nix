@@ -2281,6 +2281,10 @@
             # those tests on a host that happens to carry its own (workbench gets
             # one from `~/.nix-profile`); the remote-run workspace pod has none.
             pkgs.rsync
+            # `verify-byte-identity.sh` fetches with curl, and the byte-identity
+            # verifier tests run it; like rsync, the shell only passed them on a
+            # host that carries its own.
+            pkgs.curl
           ];
           shellHook = ''
             echo "cairn dev shell — run the suite with:"
