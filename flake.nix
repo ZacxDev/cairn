@@ -2247,7 +2247,7 @@
       });
 
       devShells = forAll (pkgs: {
-        default = pkgs.mkShell {
+        default = pkgs.mkShell ({
           # 🔴 THE SAME PIN AS THE ARTEFACTS, AND THIS WAS THE FOURTH THING.
           # `pkgs.python3` here resolved to 3.14 while the package shebang, the
           # image `Cmd`, `server/Dockerfile` and the CI matrix were all 3.12 —
@@ -2275,6 +2275,16 @@
             # no test here can read them; this comment is the only coupling. Both are 18
             # today. If you move one, move the other.
             pkgs.postgresql_18
+            # `server/seed.sh` stages the store with `rsync -a --delete`, and the
+            # seed tests in `tests/test_subsystem_store_api.py` run it for real.
+            # stdenv does not provide rsync, so without this the shell only passes
+            # those tests on a host that happens to carry its own (workbench gets
+            # one from `~/.nix-profile`); the remote-run workspace pod has none.
+            pkgs.rsync
+            # `verify-byte-identity.sh` fetches with curl, and the byte-identity
+            # verifier tests run it; like rsync, the shell only passed them on a
+            # host that carries its own.
+            pkgs.curl
           ];
           shellHook = ''
             echo "cairn dev shell — run the suite with:"
@@ -2286,7 +2296,17 @@
             echo "and the leak gate, which must pass before any push:"
             echo "    python3 tests/leakscan.py --self-test && python3 tests/leakscan.py"
           '';
-        };
+        }
+        # 🔴 A NON-C LOCALE, SUPPLIED RATHER THAN BORROWED FROM THE HOST.
+        # `TestSeedPushVerdict::test_a_README_beside_a_lowercase_sibling_survives_a_UTF8_LOCALE`
+        # needs `LC_ALL=en_US.UTF-8 sort` to collate differently from C, and fails
+        # naming this variable when it cannot. On NixOS nixpkgs' glibc falls back to
+        # the system's locale archive, so the test passed there with nothing set
+        # here; the remote-run workspace pod has no system archive and only C.
+        # Linux-only: `glibcLocales` does not exist for Darwin.
+        // nixpkgs.lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system linuxSystems) {
+          LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
+        });
       });
     };
 }

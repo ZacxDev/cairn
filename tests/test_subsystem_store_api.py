@@ -20115,12 +20115,34 @@ class TestTheStoreIsSitedOffTheContendedDisk:
         # refused: the guard is the FILESYSTEM TYPE, never the path's spelling.
         # This is the case that makes `/dev/shm` being conventionally-tmpfs safe
         # to rely on — we do not rely on it.
-        monkeypatch.setenv("CAIRN_TEST_TMPFS", str(tmp_path))
-        got = store_siting.tmpfs_dir()
-        assert got != tmp_path, (
-            "a disk-backed directory was accepted as tmpfs — the type check is "
-            "not doing the work its docstring claims"
-        )
+        #
+        # 🔴 The candidate must be MEASURED disk-backed, not assumed: pytest's
+        # `tmp_path` lives under the runner's temp dir, and the GitHub runner's is
+        # tmpfs (2026-10-24: this failed on an unchanged `main`), so a correct
+        # guard accepted it and the test called that a defect. Fall back to a dir
+        # inside the checkout, which is on disk wherever the suite runs; skip only
+        # if neither is.
+        import shutil
+        import tempfile
+
+        made = None
+        candidate = tmp_path
+        if store_siting.mount_fstype(candidate) == "tmpfs":
+            made = Path(tempfile.mkdtemp(prefix=".siting-", dir=Path(__file__).resolve().parent))
+            candidate = made
+        try:
+            fstype = store_siting.mount_fstype(candidate)
+            if fstype in (None, "tmpfs"):
+                pytest.skip(f"no disk-backed writable dir to test against (got {fstype!r})")
+            monkeypatch.setenv("CAIRN_TEST_TMPFS", str(candidate))
+            got = store_siting.tmpfs_dir()
+            assert got != candidate, (
+                "a disk-backed directory was accepted as tmpfs — the type check is "
+                "not doing the work its docstring claims"
+            )
+        finally:
+            if made is not None:
+                shutil.rmtree(made, ignore_errors=True)
 
     def test_an_ABSENT_candidate_falls_back_rather_than_raising(
         self, tmp_path: Path, monkeypatch
