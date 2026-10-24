@@ -2275,6 +2275,12 @@
             # no test here can read them; this comment is the only coupling. Both are 18
             # today. If you move one, move the other.
             pkgs.postgresql_18
+            # `server/seed.sh` stages the store with `rsync -a --delete`, and the
+            # seed tests in `tests/test_subsystem_store_api.py` run it for real.
+            # stdenv does not provide rsync, so without this the shell only passes
+            # those tests on a host that happens to carry its own (workbench gets
+            # one from `~/.nix-profile`); the remote-run workspace pod has none.
+            pkgs.rsync
           ];
           shellHook = ''
             echo "cairn dev shell — run the suite with:"
