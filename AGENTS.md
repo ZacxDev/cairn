@@ -467,12 +467,8 @@ cutover; do not mass-rename them away without a migration path for people alread
 `.github/workflows/ci.yml` (leakscan, changes, tests, go, mutants, parity, dualrun,
 nix, uiaudit, pgtest) is where a change is validated. Do **not** run the whole local
 mirror to "reproduce CI" — the box is shared by every agent and the operator's
-desktop, and a whole-suite run spins the disks and slows both. The heavy-command
-gate (devrc, both runtimes) HARD-DENIES the enumerated whole-suite forms
-(`make -j`/bare `make`/build-ci targets, `nix build .#checks.*`, `turbo`/`pnpm -r`,
-an unscoped `scripts/tests/run-ci-suite.sh`) and names the `remote-run` form.
+desktop, and a whole-suite run spins the disks and slows both. Whole-suite invocations are refused by the local agent tooling.
 
 **A change-scoped subset is the local loop** — `python3 tests/leakscan.py --self-test`,
 one harness directly (`tests/control_mutants.py`, `tests/parity/harness.py`), or one
-test module. The full suite is CI's. CI-wait time is recorded (`ci-wait-report`,
-ClickHouse `activity.events` `source=ci`).
+test module. The full suite is CI's.
