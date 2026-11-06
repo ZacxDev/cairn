@@ -96,8 +96,22 @@ func (r ExecRunner) Projects() ([]byte, error) {
 	return r.run("", "debug", "scrap")
 }
 
-// Export runs `opencode export <id>`.
-func (r ExecRunner) Export(id string) ([]byte, error) { return r.run("", "export", id) }
+// Export runs the v2 `opencode session export <id>`, falling back to the v1 top-level
+// `opencode export <id>` when it fails — the same compatibility shape as Projects.
+//
+// 🔴 v2.0.32 MOVED `export` UNDER `session`, and this function was left on the old form. The
+// failure is not a clean "unknown command" an operator would notice: the top-level form prints
+// HELP and exits non-zero, so cairn-capture refused every opencode session with
+// `capture: opencode [export ses_…]: exit status 1` — measured 2026-11-06, ~1400 sessions in one
+// 5-minute pass, none reaching the store — while `opencode session export <ses_…>` returned the
+// session JSON with exit 0. Same migration that `List` and `Projects` already carry.
+func (r ExecRunner) Export(id string) ([]byte, error) {
+	out, err := r.run("", "session", "export", id)
+	if err == nil {
+		return out, nil
+	}
+	return r.run("", "export", id)
+}
 
 // ErrIncompleteExport is an export that is not ONE complete JSON document: the measured pipe
 // truncation, or anything else that cut it short. Nothing from it is shipped.
