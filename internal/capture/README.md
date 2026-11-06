@@ -124,12 +124,12 @@ placed elsewhere from that instance and re-ships it whole to the default.
 
 ## Measured facts it is built on (one host, opencode 1.18.29)
 
-- 🔴 **`export` moved UNDER `session` in v2** (measured 2026-11-06, opencode 2.0.32): the top-level
-  `opencode export <id>` prints HELP and exits non-zero rather than saying "unknown command", so
-  `Export` asks for `opencode session export <id>` first and falls back to the v1 form. On the old
-  form every opencode capture was refused — `capture: opencode [export ses_…]: exit status 1`,
-  ~1400 sessions in one 5-minute pass, none reaching the store — while the v2 form answered the
-  session JSON with exit 0. The same migration `List` and `Projects` already carry.
+- 🔴 **`export` moved UNDER `session` in v2**: the top-level `opencode export <id>` prints HELP and
+  exits non-zero rather than saying "unknown command", so `Export` asks for
+  `opencode session export <id>` first and falls back to the v1 form. On the old form every
+  opencode capture was refused — `capture: opencode [export ses_…]: exit status 1`, none reaching
+  the store — while the v2 form answered the session JSON with exit 0. The same migration `List`
+  and `Projects` already carry.
 - `opencode export` **truncates at exit 0 when stdout is a pipe** (somewhere in 8–96 KiB; the
   boundary varies), so stdout is a regular temp file and a document that does not parse ships
   nothing.

@@ -9,11 +9,10 @@ import (
 // TestExportUsesV2SessionExportAndFallsBackToLegacy pins the argv the capture pass sends to the
 // opencode binary.
 //
-// 🔴 MEASURED 2026-11-06 on opencode v2.0.32: v2 moved `export` under `session`, so the top-level
-// `opencode export <id>` prints HELP and exits non-zero. cairn-capture still asked for the old
-// form, so every opencode capture was refused — `capture: opencode [export ses_…]: exit status 1`,
-// ~1400 sessions in one 5-minute pass, nothing reaching the store — while
-// `opencode session export <ses_…>` answered the session JSON with exit 0.
+// 🔴 MEASURED: v2 moved `export` under `session`, so the top-level `opencode export <id>` prints
+// HELP and exits non-zero. cairn-capture still asked for the old form, so every opencode capture
+// was refused — `capture: opencode [export ses_…]: exit status 1`, nothing reaching the store —
+// while `opencode session export <ses_…>` answers the session JSON with exit 0.
 func TestExportUsesV2SessionExportAndFallsBackToLegacy(t *testing.T) {
 	t.Run("v2 canonical", func(t *testing.T) {
 		stub := t.TempDir()
