@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -211,8 +212,8 @@ func boundSkipWorld(t *testing.T) (world, env, *fakeRunner, *Agent, *bytes.Buffe
 
 // TestASkippedRootIsStillRoutedOnANewRead: a skip makes no export call, but the session's ledgers
 // are still folded and its routing still decided — a read of a client scope recorded in a CHILD's
-// ledger after the last export HOLDS the session (it wrote a personal scope), exactly as without
-// the skip.
+// ledger after the last export makes the session OWNER-ONLY (it also read a personal scope), exactly
+// as without the skip. Under the old rule that read HELD it, which is the gap this pins closed.
 func TestASkippedRootIsStillRoutedOnANewRead(t *testing.T) {
 	w, e, runner, a, log := boundSkipWorld(t)
 	root, child := w.Sessions["oc-root"].ID, w.Sessions["oc-child"].ID
@@ -222,9 +223,13 @@ func TestASkippedRootIsStillRoutedOnANewRead(t *testing.T) {
 	}
 	sum := mustRun(t, a)
 	ss := a.State.Sessions[root]
-	if runner.calls != 0 || sum.ExportSkipped != 1 || !ss.Held || sum.Held != 1 {
-		t.Fatalf("a child's read of a client scope under a skip: %d export call(s), held %v (%+v); want 0 calls and HELD\n%s",
+	if runner.calls != 0 || sum.ExportSkipped != 1 || ss.Held || sum.Held != 0 {
+		t.Fatalf("a child's read of a client scope under a skip: %d export call(s), held %v (%+v); want 0 calls and NO hold\n%s",
 			runner.calls, ss.Held, sum, log.String())
+	}
+	if ss.Instance != "personal" || !slices.Contains(ss.Declared, "*") {
+		t.Fatalf("the skip did not route the session owner-only where it stands: instance=%q declared=%v",
+			ss.Instance, ss.Declared)
 	}
 }
 

@@ -19,23 +19,28 @@ import (
 // generated world's `cc-plain` session, the instances `personal` and `client`, the scopes
 // `alpha-notes` (personal) and `beta-notes` (client).
 
-// shipThenRead ships `cc-plain` to the personal instance (it read `alpha-notes`), then appends a
-// read of `beta-notes`, so the NEXT run's routing answer is no longer the instance holding the
-// prefix. It returns the agent, its log and the session's id.
+// shipThenRead ships `cc-plain` to the CLIENT instance (it read `beta-notes`), then appends a read of
+// `alpha-notes` — a DEFAULT-instance scope — so the NEXT run's routing answer is `personal`, not the
+// instance holding the prefix, and that run must MOVE the session.
+//
+// 🔴 IT USED TO BE THE OTHER WAY ROUND, because a read on the other instance used to HOLD. Under the
+// operator decision a session that reads both is placed on the default one, so the only surviving
+// direction of a routing-driven move is client → personal; personal → client can now only come from a
+// table edit (V is grow-only and a conflict always resolves to the default).
 func shipThenRead(t *testing.T) (*Agent, env, *bytes.Buffer, string) {
 	t.Helper()
 	w := loadWorld(t)
 	e := materialize(t, w, "cc-plain")
 	s := w.Sessions["cc-plain"]
 	path := filepath.Join(e.claude, s.Project, s.ID+".jsonl")
-	appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
+	appendTo(t, path, betaRead)
 	var log bytes.Buffer
 	a := newAgent(t, e, twoInstances, &fakeRunner{}, &log)
 	mustRun(t, a)
-	if len(spooled(t, e, "personal", s.ID, "main")) == 0 || a.State.Sessions[s.ID].Instance != "personal" {
-		t.Fatal("control: run 1 did not ship the alpha-notes session to the personal instance")
+	if len(spooled(t, e, "client", s.ID, "main")) == 0 || a.State.Sessions[s.ID].Instance != "client" {
+		t.Fatal("control: run 1 did not ship the beta-notes session to the client instance")
 	}
-	appendTo(t, path, betaRead)
+	appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
 	return a, e, &log, s.ID
 }
 
@@ -48,43 +53,41 @@ func TestAWithdrawalAnsweredFalseHoldsTheSessionForGood(t *testing.T) {
 	e.sink.notHeld = true
 	sum := mustRun(t, a)
 	ss := a.State.Sessions[id]
-	if !ss.Held || !strings.Contains(ss.HeldReason, "prefix not withdrawn: not held by this owner and host") || ss.Instance != "personal" {
+	if !ss.Held || !strings.Contains(ss.HeldReason, "prefix not withdrawn: not held by this owner and host") || ss.Instance != "client" {
 		t.Fatalf("after a `false` answer the session is held=%v (%q) bound to %q — want held, with the reason, still naming where the prefix is",
 			ss.Held, ss.HeldReason, ss.Instance)
 	}
-	if sum.Held != 1 || sum.Withdrawn != 0 || sum.Records != 0 || e.sink.has("client", id) {
-		t.Fatalf("run 2: %+v, shipped to client=%v — want held, nothing withdrawn, nothing shipped", sum, e.sink.has("client", id))
+	if sum.Held != 1 || sum.Withdrawn != 0 || sum.Records != 0 || e.sink.has("personal", id) {
+		t.Fatalf("run 2: %+v, shipped to personal=%v — want held, nothing withdrawn, nothing shipped", sum, e.sink.has("personal", id))
 	}
 	if !strings.Contains(log.String(), "HOLD "+id+": PREFIX NOT WITHDRAWN: not held by this owner and host") {
 		t.Fatalf("the hold is not logged loudly:\n%s", log.String())
 	}
-	asked := len(e.sink.withdrawn["personal"])
+	asked := len(e.sink.withdrawn["client"])
 	e.sink.notHeld = false
-	if sum := mustRun(t, a); sum.Records != 0 || len(e.sink.withdrawn["personal"]) != asked || e.sink.has("client", id) {
-		t.Fatalf("a later run acted on a session held for good: %+v, withdrawals %d → %d", sum, asked, len(e.sink.withdrawn["personal"]))
+	if sum := mustRun(t, a); sum.Records != 0 || len(e.sink.withdrawn["client"]) != asked || e.sink.has("personal", id) {
+		t.Fatalf("a later run acted on a session held for good: %+v, withdrawals %d → %d", sum, asked, len(e.sink.withdrawn["client"]))
 	}
 }
 
 // TestAFailedWithdrawalShipsNothingAndIsRetried: a withdrawal that got NO answer is not done. The
 // session stays bound where its prefix is, nothing of it reaches the new instance, and the next run
-// asks again — and then re-ships the whole session.
+// asks again — and then withdraws and settles where the routing answer says.
 func TestAFailedWithdrawalShipsNothingAndIsRetried(t *testing.T) {
 	a, e, _, id := shipThenRead(t)
-	// The session's new answer is HELD (it read both instances' scopes), so drive the MOVE case too:
-	// a second world below. Here: the held case, with the instance unreachable.
 	e.sink.withdrawErr = errors.New("synthetic: the instance did not answer")
 	sum, err := a.Run()
 	if err != nil {
 		t.Fatalf("a failed withdrawal ended the run: %v", err)
 	}
 	ss := a.State.Sessions[id]
-	if sum.Refused != 1 || sum.Withdrawn != 0 || ss.Held || ss.Instance != "personal" || e.sink.has("client", id) {
-		t.Fatalf("after a withdrawal with no answer: %+v held=%v instance=%q client=%v — want the session refused for this run and bound where it was",
-			sum, ss.Held, ss.Instance, e.sink.has("client", id))
+	if sum.Refused != 1 || sum.Withdrawn != 0 || ss.Held || ss.Instance != "client" || e.sink.has("personal", id) {
+		t.Fatalf("after a withdrawal with no answer: %+v held=%v instance=%q personal=%v — want the session refused for this run and bound where it was",
+			sum, ss.Held, ss.Instance, e.sink.has("personal", id))
 	}
 	e.sink.withdrawErr = nil
-	if sum := mustRun(t, a); sum.Withdrawn != 1 || !slices.Contains(e.sink.withdrawn["personal"], id) || a.State.Sessions[id].Instance != "" {
-		t.Fatalf("the next run did not withdraw: %+v, bound to %q", sum, a.State.Sessions[id].Instance)
+	if sum := mustRun(t, a); sum.Withdrawn != 1 || !slices.Contains(e.sink.withdrawn["client"], id) || a.State.Sessions[id].Instance != "personal" {
+		t.Fatalf("the next run did not withdraw and move: %+v, bound to %q", sum, a.State.Sessions[id].Instance)
 	}
 }
 
@@ -179,22 +182,33 @@ func TestTheAgentWithdrawsThroughTheRealRoute(t *testing.T) {
 	e := materialize(t, w, "cc-plain")
 	s := w.Sessions["cc-plain"]
 	path := filepath.Join(e.claude, s.Project, s.ID+".jsonl")
-	appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
-	p := newPod(t, podOpts{})
+	appendTo(t, path, betaRead)
+	// 🔴 ONE POD PER INSTANCE, EACH WITH ITS OWN ARCHIVE — which is what an instance IS. A single
+	// archive shared by both aliases cannot model a move: withdrawing the root's only copy marks it
+	// deleted for that (owner, host) in the archive itself, so the re-upload to the OTHER alias is
+	// answered 410 and the session ends `deleted=1` instead of moving.
+	onPersonal, onClient := newPod(t, podOpts{}), newPod(t, podOpts{})
+	// personal → onPersonal (the move's destination), client → onClient (run 1's home).
+	sinkFor := func(host, token string) *HTTPSink {
+		s := onPersonal.sink(host, token, 0)
+		s.Endpoints["client"] = Endpoint{URL: onClient.srv.URL, Token: token}
+		return s
+	}
 	var log bytes.Buffer
 	a := newAgent(t, e, twoInstances, &fakeRunner{}, &log)
-	sink := p.sink("host-a", sinkTokenA, 0)
+	sink := sinkFor("host-a", sinkTokenA)
 	sink.Log = &log
 	a.Sink = sink
 	mustRun(t, a)
-	if m, err := p.arc.ReadMeta(s.ID); err != nil || m == nil {
-		t.Fatalf("control: run 1 stored nothing on the instance (%v)", err)
+	if m, err := onClient.arc.ReadMeta(s.ID); err != nil || m == nil {
+		t.Fatalf("control: run 1 stored nothing on the client instance (%v)", err)
 	}
-	appendTo(t, path, betaRead)
+	appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
 
 	// Another host's agent, with its own state claiming the same prefix: `false`, held, nothing deleted.
-	other := newAgent(t, e, twoInstances, &fakeRunner{}, &bytes.Buffer{})
-	other.Sink = p.sink("host-b", sinkTokenB, 0)
+	var otherLog bytes.Buffer
+	other := newAgent(t, e, twoInstances, &fakeRunner{}, &otherLog)
+	other.Sink = sinkFor("host-b", sinkTokenB)
 	raw, err := json.Marshal(a.State) // host-a's own watermarks, as if this host had shipped them
 	if err != nil {
 		t.Fatal(err)
@@ -204,18 +218,27 @@ func TestTheAgentWithdrawsThroughTheRealRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	if sum := mustRun(t, other); sum.Held != 1 || sum.Withdrawn != 0 || !other.State.Sessions[s.ID].Held {
-		t.Fatalf("host-b's withdrawal of host-a's root: %+v, held=%v — want `false`, held", sum, other.State.Sessions[s.ID].Held)
+		t.Fatalf("host-b's withdrawal of host-a's root: %+v, held=%v — want `false`, held\n%s", sum, other.State.Sessions[s.ID].Held, otherLog.String())
 	}
-	if m, _ := p.arc.ReadMeta(s.ID); m == nil {
+	if m, _ := onClient.arc.ReadMeta(s.ID); m == nil {
 		t.Fatal("host-b's withdrawal deleted host-a's root")
 	}
 
 	sum := mustRun(t, a)
-	if sum.Withdrawn != 1 || sum.Held != 1 || sum.Records != 0 {
-		t.Fatalf("run 2: %+v — want one withdrawal, held, no record shipped\n%s", sum, log.String())
+	if sum.Withdrawn != 1 || sum.Held != 0 || sum.Records == 0 {
+		t.Fatalf("run 2: %+v — want one withdrawal and the whole session re-shipped to the default instance\n%s", sum, log.String())
 	}
-	if m, err := p.arc.ReadMeta(s.ID); err != nil || m != nil {
-		t.Fatalf("the instance still holds the withdrawn session (%v, %v)", m != nil, err)
+	// It is on the DESTINATION now, from offset 0, owner-only (it read both instances' scopes), and
+	// the copy it left is gone from the instance that held it.
+	m, err := onPersonal.arc.ReadMeta(s.ID)
+	if err != nil || m == nil {
+		t.Fatalf("the withdrawn session was not re-shipped to the destination (%v, %v)", m != nil, err)
+	}
+	if !slices.Contains(m.Declared, "*") {
+		t.Fatalf("the re-shipped session is not declared owner-only: %v", m.Declared)
+	}
+	if gone, _ := onClient.arc.ReadMeta(s.ID); gone != nil {
+		t.Fatal("the instance that held it still holds it after the move")
 	}
 }
 

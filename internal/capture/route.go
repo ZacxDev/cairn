@@ -14,7 +14,12 @@ type Decision struct {
 	// to an instance this run has no `-worker` for, and it is bound to a DIFFERENT non-default one
 	// ([RepoRules.place]). Not final, unlike Held.
 	Deferred bool
-	Reason   string
+	// OwnerOnly is "ship this session, but declare it owner-only": it carries `*` (a visibility
+	// statement, not a scope — see [Decide]) or it read scopes on TWO instances and has been placed
+	// on the default one anyway. [Agent.route] adds `*` to the session's `Declared` set so the pod
+	// stores it owner-only.
+	OwnerOnly bool
+	Reason    string
 }
 
 // Decide is decision 16: the instance that routes EVERY scope in V — writes AND reads.
@@ -22,10 +27,28 @@ type Decision struct {
 //   - V empty → placed by the REPOSITORY the session ran in ([decideByRepo]), and failing that the
 //     DEFAULT instance (where the owner-only rule applies, O10).
 //   - every scope routes to one alias → that alias.
-//   - scopes route to two aliases → HELD.
-//   - `*`, or a scope the routing cannot place, with MORE than one instance configured → HELD.
-//     With exactly one instance there is nowhere else it could go, so it ships to that one, where
-//     `*` and unknown names make it owner-only.
+//   - scopes route to two aliases → the DEFAULT instance, OWNER-ONLY (OwnerOnly).
+//   - `*` with MORE than one instance configured → the DEFAULT instance, OWNER-ONLY (OwnerOnly).
+//     `*` forces the default however V is ordered, and however few other scopes it carries: it is
+//     the conservative direction, and an order-dependent answer is not a policy.
+//   - a scope the routing names but this host does not configure → HELD (unchanged): the table says
+//     that scope lives on ANOTHER instance, and shipping its records to the one this host runs is
+//     the cross-instance leak decision 16 exists to stop.
+//
+// 🔴 `*` IS A VISIBILITY STATEMENT, NOT AN UNPLACEABLE SCOPE — and it used to HOLD the session for
+// good, which was measured to be the largest capture gap on a two-instance host: the client records
+// `*` for every verb whose output names scopes it cannot enumerate (`routes`, `doctor`, `arcs`, the
+// `transcript` verbs) and for any header that named no scope, so one `cairn routes` condemned a
+// whole session. `*` says "this may be anything, so nobody but the owner may read it"; it does not
+// say the session has no home. Routing it to the default instance while DECLARING `*` gives the pod
+// exactly that visibility, which is the same rule a one-instance host has always applied.
+//
+// 🔴 CROSS-INSTANCE SESSIONS ARE PLACED, NOT HELD (operator decision): a session that read BOTH
+// instances' scopes is shipped to the default instance OWNER-ONLY. The trade is explicit and was
+// accepted with it: bytes read from the other instance now sit on this one, and the ONLY thing
+// keeping them away from a reader who could not see them there is the owner-only declaration. A
+// session that must move is withdrawn from where it was, exactly as any other move (S6, clause m),
+// so nothing is duplicated.
 //
 // 🔴 `repo` AND `rules` ARE READ ONLY WHEN V IS EMPTY. A session that recorded a scope is placed
 // by what it READ, never by where it ran: a session in a repo the second instance's organisation
@@ -40,10 +63,18 @@ func Decide(v []string, repo Repo, routing client.Routing, rules RepoRules) Deci
 	}
 	multi := routing.MultiInstance()
 	target := ""
+	ownerOnly, ownerOnlyWhy := false, ""
 	for _, scope := range v {
 		if scope == scopeuse.Star {
 			if multi {
-				return Decision{Held: true, Reason: "an unknown scope (*) with more than one instance configured"}
+				// See the doc comment: `*` narrows who may READ the session; it does not decide
+				// where the session lives, and it does not "vote" for the instance its other scopes
+				// name either — it forces the DEFAULT one. Otherwise the answer would depend on the
+				// ORDER of V (`{*, beta-notes}` → personal, `{beta-notes, *}` → client), and the
+				// conservative direction is the one that keeps content that may belong to either
+				// instance off the non-default one.
+				ownerOnly, ownerOnlyWhy = true, "an unknown scope (*)"
+				target = client.DefaultAlias
 			}
 			continue
 		}
@@ -53,19 +84,31 @@ func Decide(v []string, repo Repo, routing client.Routing, rules RepoRules) Deci
 			// one-instance host the "nowhere else it could go" argument holds only for a scope the
 			// table says NOTHING about; a table naming an alias this host has no config for is a
 			// statement that the scope lives on ANOTHER instance, and shipping it to the sole one
-			// is the cross-instance leak decision 16 exists to stop (review round 1).
+			// is the cross-instance leak decision 16 exists to stop (review round 1). Unchanged by
+			// the owner-only decision above: THAT one places a session whose scopes this host DOES
+			// serve, and says so with `*`; this one would move records to an instance the table
+			// says nothing about.
 			if _, named := routing.Routes[scope]; multi || named {
 				return Decision{Held: true, Reason: "scope " + scope + " routes to no configured instance"}
 			}
 			continue
 		}
-		if target != "" && alias != target {
-			return Decision{Held: true, Reason: "its scopes route to two instances (" + target + ", " + alias + ")"}
+		if target == "" {
+			target = alias
+			continue
 		}
-		target = alias
+		if alias != target {
+			// Two instances, one session: place it on the default one, owner-only.
+			ownerOnly, ownerOnlyWhy = true, "its scopes route to two instances ("+target+", "+alias+")"
+			target = client.DefaultAlias
+		}
 	}
 	if target == "" {
 		target = client.DefaultAlias
+	}
+	if ownerOnly {
+		return Decision{Instance: target, OwnerOnly: true,
+			Reason: ownerOnlyWhy + ": shipped to " + target + ", owner-only"}
 	}
 	return Decision{Instance: target, Reason: "every scope routes to " + target}
 }

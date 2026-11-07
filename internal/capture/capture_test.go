@@ -614,15 +614,21 @@ func TestTheOpencodeDatabaseIsNeverOpened(t *testing.T) {
 }
 
 // TestRoutingHonoursReads is THE fixture of clause (h) and decision 16.
+//
+// 🔴 THE TWO CROSS-INSTANCE CASES NOW SHIP, OWNER-ONLY (operator decision, and the reason `held` no longer covers it). A session
+// that read both instances' scopes is placed on the DEFAULT instance with `*` in what it declares,
+// so the pod stores it owner-only — it does not sit held forever. `*` itself is a VISIBILITY
+// statement, so it narrows who may read the session and places nothing.
 func TestRoutingHonoursReads(t *testing.T) {
 	w := loadWorld(t)
 	cases := []struct {
 		session, want string
+		ownerOnly     bool
 	}{
-		{"cc-routing-two-instances", "held"}, // wrote alpha (personal), read beta (client)
-		{"cc-hook-recall", "client"},         // read beta-notes only
-		{"cc-plain", "personal"},             // V empty → the default instance
-		{"cc-hook-allscopes", "held"},        // `*` with two instances
+		{"cc-routing-two-instances", "personal", true}, // wrote alpha (personal), read beta (client)
+		{"cc-hook-recall", "client", false},            // read beta-notes only
+		{"cc-plain", "personal", false},                // V empty → the default instance
+		{"cc-hook-allscopes", "personal", true},        // `*` with two instances
 	}
 	for _, c := range cases {
 		e := materialize(t, w, c.session)
@@ -636,21 +642,18 @@ func TestRoutingHonoursReads(t *testing.T) {
 				shippedTo = append(shippedTo, inst)
 			}
 		}
-		switch c.want {
-		case "held":
-			if len(shippedTo) != 0 || !strings.Contains(log.String(), "held "+id) {
-				t.Errorf("%s: want held (nothing queued for either instance, logged); queued for %v, log %q",
-					c.session, shippedTo, log.String())
-			}
-		default:
-			if !slices.Equal(shippedTo, []string{c.want}) {
-				t.Errorf("%s: queued for %v, want [%s]", c.session, shippedTo, c.want)
-			}
+		if !slices.Equal(shippedTo, []string{c.want}) {
+			t.Errorf("%s: queued for %v, want [%s]; log %q", c.session, shippedTo, c.want, log.String())
+		}
+		got := slices.Contains(e.sink.declared[c.want+"/"+id], "*")
+		if got != c.ownerOnly {
+			t.Errorf("%s: declared owner-only = %v, want %v (declared %v)",
+				c.session, got, c.ownerOnly, e.sink.declared[c.want+"/"+id])
 		}
 	}
-	// CONTROL: routing on WRITES only queues the clause-(h) fixture for the personal instance —
-	// the difference between that and "held" is the read half of V.
-	if d := Decide([]string{"alpha-notes"}, Repo{}, twoInstances, RepoRules{}); d.Held || d.Instance != "personal" {
+	// CONTROL: routing on WRITES only queues the clause-(h) fixture for the personal instance and
+	// declares nothing extra — the difference the read half of V makes is OWNER-ONLY, not a hold.
+	if d := Decide([]string{"alpha-notes"}, Repo{}, twoInstances, RepoRules{}); d.Held || d.OwnerOnly || d.Instance != "personal" {
 		t.Fatalf("control: writes-only routing = %+v", d)
 	}
 }
@@ -697,10 +700,15 @@ func TestAMoveWithdrawsAndReshipsFromOffsetZero(t *testing.T) {
 	}
 }
 
-// TestAReadOnAnotherInstanceWithdrawsTheShippedPrefix is clause (m)'s agent half: a session whose
-// first run shipped alpha-notes turns to the personal instance and whose second run reads
-// beta-notes is HELD — the second run queues NO record and a withdrawal for the personal instance.
-func TestAReadOnAnotherInstanceWithdrawsTheShippedPrefix(t *testing.T) {
+// TestAReadOnAnotherInstanceKeepsTheSessionOwnerOnly is what replaced clause (m)'s "held" arm for a
+// session ALREADY on the default instance: run 1 ships alpha-notes to personal, run 2 reads
+// beta-notes (client), and the session STAYS on personal — nothing is withdrawn, and the new record
+// ships there with `*` declared, so the pod stores it owner-only.
+//
+// 🔴 THE DEFAULT INSTANCE IS ABSORBING, and that is the accepted shape of the operator decision: once
+// V holds a default-instance scope, every later scope lands on the default too (a conflict resolves
+// to the default). The old rule held such a session forever instead.
+func TestAReadOnAnotherInstanceKeepsTheSessionOwnerOnly(t *testing.T) {
 	w := loadWorld(t)
 	e := materialize(t, w, "cc-plain")
 	s := w.Sessions["cc-plain"]
@@ -715,17 +723,20 @@ func TestAReadOnAnotherInstanceWithdrawsTheShippedPrefix(t *testing.T) {
 	}
 	appendTo(t, path, betaRead)
 	sum := mustRun(t, a)
-	if sum.Records != 0 || sum.Withdrawn != 1 || sum.Held != 1 {
-		t.Fatalf("run 2: %+v — want 0 records, 1 withdrawal, held", sum)
+	if sum.Held != 0 || sum.Withdrawn != 0 || sum.Records == 0 {
+		t.Fatalf("run 2: %+v — want the session shipped, not held or moved", sum)
 	}
-	if got := len(spooled(t, e, "personal", s.ID, "main")); got != shipped {
-		t.Fatalf("the record that READ beta-notes reached the personal instance (%d → %d)", shipped, got)
+	if got := len(spooled(t, e, "personal", s.ID, "main")); got <= shipped {
+		t.Fatalf("the record that READ beta-notes did not reach the personal instance (%d → %d)", shipped, got)
 	}
-	if e.sink.has("client", s.ID) {
-		t.Fatal("a held session was queued for the client instance")
+	if e.sink.has("client", s.ID) || slices.Contains(e.sink.withdrawn["personal"], s.ID) {
+		t.Fatal("a session placed owner-only was moved or duplicated")
 	}
-	if !slices.Contains(e.sink.withdrawn["personal"], s.ID) {
-		t.Fatal("no withdrawal was queued for the personal instance")
+	if !slices.Contains(e.sink.declared["personal/"+s.ID], "*") {
+		t.Fatalf("the session was not declared owner-only: %v", e.sink.declared["personal/"+s.ID])
+	}
+	if a.State.Sessions[s.ID].Instance != "personal" {
+		t.Fatalf("bound to %q, want personal", a.State.Sessions[s.ID].Instance)
 	}
 }
 

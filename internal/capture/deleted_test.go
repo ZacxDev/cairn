@@ -133,11 +133,15 @@ func TestAWithdrawalReachesAnInstanceThatIsNotTakingUploads(t *testing.T) {
 			e := materialize(t, w, "cc-plain")
 			s := w.Sessions["cc-plain"]
 			path := filepath.Join(e.claude, s.Project, s.ID+".jsonl")
-			appendTo(t, path, strings.Replace(betaRead, "beta-notes", "alpha-notes", 1))
 			in := newStoppedInstance(t)
+			// 🔴 THE DESTINATION IS A HEALTHY INSTANCE AND ONLY THE HOLDER IS STOPPED. A move asks the
+			// destination FIRST whether it deleted the root (S10) — with both aliases on the stopped
+			// stub the probe fails, the move defers, and the withdrawal this test exists for is never
+			// reached. That is the shape a real move has: one stopped instance, one reachable one.
+			dest := newPod(t, podOpts{})
 			sinkFor := func() *HTTPSink {
 				return &HTTPSink{Host: "host-a", Log: &bytes.Buffer{}, Endpoints: map[string]Endpoint{
-					"personal": {URL: in.srv.URL, Token: sinkTokenA}, "client": {URL: in.srv.URL, Token: sinkTokenA}}}
+					"personal": {URL: in.srv.URL, Token: sinkTokenA}, "client": {URL: dest.srv.URL, Token: sinkTokenA}}}
 			}
 			var log bytes.Buffer
 			a := newAgent(t, e, twoInstances, &fakeRunner{}, &log)
@@ -145,7 +149,11 @@ func TestAWithdrawalReachesAnInstanceThatIsNotTakingUploads(t *testing.T) {
 			if sum := mustRun(t, a); sum.Shipped != 1 || a.State.Sessions[s.ID].Instance != "personal" {
 				t.Fatalf("control: run 1 = %+v, bound to %q", sum, a.State.Sessions[s.ID].Instance)
 			}
-			// The instance stops taking uploads, and the session reads the OTHER instance's scope.
+			// The instance stops taking uploads, and the read that arrives names the OTHER
+			// instance's scope, so the answer moves the session — and the WITHDRAWAL has to reach the
+			// stopped instance holding the prefix. (Under the operator decision a session that reads
+			// both is placed on the default, so this is the direction a routing-driven move keeps:
+			// V empty -> personal, then a client read -> client.)
 			in.status.Store(int64(status))
 			appendTo(t, path, betaRead)
 			stopped := func() *HTTPSink { // a sink this run has already seen the instance refuse through
@@ -172,8 +180,8 @@ func TestAWithdrawalReachesAnInstanceThatIsNotTakingUploads(t *testing.T) {
 			before := in.withdrawn.Load()
 			a.Sink = stopped()
 			sum = mustRun(t, a)
-			if sum.Withdrawn != 1 || sum.Held != 1 || sum.Skipped != 0 || sum.WithdrawalPending != 0 || in.withdrawn.Load() != before+1 {
-				t.Fatalf("the stopped instance: %+v, %d withdrawal(s) reached it — want withdrawn=1 held=1 skipped=0\n%s",
+			if sum.Withdrawn != 1 || sum.Held != 0 || sum.Skipped != 0 || sum.WithdrawalPending != 0 || in.withdrawn.Load() != before+1 {
+				t.Fatalf("the stopped instance: %+v, %d withdrawal(s) reached it — want withdrawn=1, the move done, nothing held\n%s",
 					sum, in.withdrawn.Load()-before, log.String())
 			}
 			// CONTROL: a session with NOTHING shipped, bound for a stopped instance, is skipped unread.

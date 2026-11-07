@@ -29,6 +29,15 @@
 //	              [-ledger-dir DIR] [-denylist FILE] [-route-origin-owner OWNER=ALIAS]...
 //	cairn-capture --run -host LABEL -worker [ALIAS=]URL -capture-token-file [ALIAS=]FILE [-state FILE]
 //	              [-host-key FILE] [-allow-plaintext-host [ALIAS=]HOST]... [the --dry-run reading flags]
+//	cairn-capture --list-held [-state FILE]
+//	cairn-capture --clear-held [-state FILE]
+//
+// 🔴 `held` IS FINAL, SO `--list-held` AND `--clear-held` EXIST: the run line's `held=` counts the
+// holds ONE PASS MADE, and a held session is skipped before routing on every later pass, so a
+// permanently held session reads as `held=0` forever. `held-backlog=` on the run line is the level;
+// `--list-held` names the sessions; `--clear-held` clears the ones whose hold carries no `instance`
+// (nothing of such a session ever left this host) so the next pass routes them again. See
+// `internal/capture/README.md` § *`held=` is not the backlog*.
 //
 // 🔴 `-allow-plaintext-host` IS AN EXPLICIT OPERATOR OPT-IN, FLAG ONLY — no default, no environment
 // spelling. A worker URL must be `https`, or `http` to a loopback address; this names ONE instance's
@@ -91,6 +100,8 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		seed       = fs.Uint64("seed", 20000101, "the self-test corpus seed")
 		dryRun     = fs.Bool("dry-run", false, "print per-session counts, V and the routing decision; write nothing")
 		runOnce    = fs.Bool("run", false, "one capture pass: read, redact, route, upload, save the watermarks, exit")
+		listHeld   = fs.Bool("list-held", false, "print the sessions the state marks HELD — the capture gap, which `held=` cannot report; write nothing")
+		clearHeld  = fs.Bool("clear-held", false, "clear the holds that carry no withdrawable prefix (under the run lock), so the next pass reads them again")
 		host       = fs.String("host", "", "--run: this host's label, the one its capture token was minted for (-worker-host)")
 		statePath  = fs.String("state", "", "--run: the 0600 state file (default $XDG_STATE_HOME/cairn/capture/state.json); --dry-run reads it, never writes it")
 		hostKey    = fs.String("host-key", "", "--run: the 0600 per-host redaction tag key (default $XDG_STATE_HOME/cairn/capture/host.key)")
@@ -124,14 +135,14 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return exitUsage
 	}
 	modes := 0
-	for _, on := range []bool{*selfTest, *dryRun, *runOnce} {
+	for _, on := range []bool{*selfTest, *dryRun, *runOnce, *listHeld, *clearHeld} {
 		if on {
 			modes++
 		}
 	}
 	switch {
 	case modes != 1:
-		fmt.Fprintln(stderr, "cairn-capture: name exactly one of --run, --dry-run or --self-test")
+		fmt.Fprintln(stderr, "cairn-capture: name exactly one of --run, --dry-run, --list-held, --clear-held or --self-test")
 		return exitUsage
 	case *selfTest:
 		return redact.SelfTest(stdout, *seed)
@@ -148,6 +159,12 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 			workers: workers, tokenFiles: tokenFiles, plaintext: plaintext, stateHome: stateHome, claudeRoot: *claudeRoot,
 			ocDirs: ocDirs, ocDiscover: *ocDisc, ocBin: *ocBin, ledgerDir: *ledgerDir, denylist: *denylist,
 			ownerRoutes: ownerRoutes}, stderr, getenv)
+	}
+	if *listHeld {
+		return listHeldSessions(*statePath, stateHome, stdout, stderr)
+	}
+	if *clearHeld {
+		return clearHeldSessions(*statePath, stateHome, stdout, stderr)
 	}
 	// 🔴 --dry-run WRITES NOTHING, THE HOST KEY INCLUDED. It prints counts by rule, never a tag, so
 	// an ephemeral in-memory key is all it needs; creating the persistent key file as a side effect
@@ -434,6 +451,88 @@ func sortedKeys(m map[string]string) []string {
 // runPass is `--run`: ONE capture pass. Its exit codes are `internal/capture/README.md` § *`--run`'s
 // exit status*. A refusal never stops the pass early: exit 3 is decided after it has completed and
 // the state is saved, from [capture.Recurs]'s counts.
+// captureStatePath is `--run`'s state file, which the read-only and maintenance modes also read and
+// (for --clear-held only) write.
+func captureStatePath(path, stateHome string) string {
+	if path != "" {
+		return path
+	}
+	return filepath.Join(stateHome, "cairn", "capture", "state.json")
+}
+
+// listHeldSessions prints the HELD BACKLOG: one line per session the state marks held, tab-separated
+// `<root> <runtime> <clearable|permanent> <instance|-> <reason>`.
+//
+// 🔴 THIS IS THE NUMBER THE RUN LINE CANNOT GIVE. `held=` counts the holds ONE PASS MADE, and a held
+// session is skipped before routing on every later pass, so a permanently stuck session reads as
+// `held=0` forever while it is never captured again. Held is FINAL, so the backlog only shrinks when
+// an operator clears a hold ([clearHeldSessions]) — assuming the condition that caused it has
+// actually been fixed first.
+func listHeldSessions(path, stateHome string, stdout, stderr io.Writer) int {
+	state, err := capture.LoadState(captureStatePath(path, stateHome))
+	if err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
+		return exitError
+	}
+	held := state.Held()
+	clearable := 0
+	for _, e := range held {
+		status, instance := "permanent", e.Instance
+		if e.Clearable() {
+			status, instance, clearable = "clearable", "-", clearable+1
+		}
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\n", e.Root, e.Runtime, status, instance, e.Reason)
+	}
+	fmt.Fprintf(stderr, "cairn-capture: held=%d clearable=%d — clearable holds carry no instance, so clearing one "+
+		"loses nothing that was never uploaded\n", len(held), clearable)
+	return exitOK
+}
+
+// clearHeldSessions clears every [capture.HeldEntry.Clearable] hold and saves the state, under the
+// same run lock a pass takes so a running pass cannot lose the edit.
+//
+// 🔴 ONLY `held` AND `held_reason` MOVE. A held session's `instance` is the record of a prefix that
+// landed on an instance: clearing that would ship the session again elsewhere and either strand the
+// old copy or duplicate it, so a hold that names an instance is KEPT and named on stderr. That is
+// why this is safe at all: for a routing-only hold nothing of the session ever left this host.
+func clearHeldSessions(path, stateHome string, stdout, stderr io.Writer) int {
+	p := captureStatePath(path, stateHome)
+	release, err := capture.LockState(p)
+	if errors.Is(err, capture.ErrRunning) {
+		fmt.Fprintln(stderr, "cairn-capture: another run holds the lock; nothing cleared")
+		return exitError
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
+		return exitError
+	}
+	defer release()
+	state, err := capture.LoadState(p)
+	if err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
+		return exitError
+	}
+	cleared, kept := state.ClearHeld()
+	for _, e := range kept {
+		fmt.Fprintf(stderr, "cairn-capture: kept %s (instance %s, runtime %s): %s\n", e.Root, e.Instance, e.Runtime, e.Reason)
+	}
+	if len(cleared) == 0 {
+		fmt.Fprintf(stderr, "cairn-capture: held=%d, none clearable; the state is unchanged\n", len(kept))
+		return exitOK
+	}
+	if err := state.Save(p); err != nil {
+		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
+		return exitError
+	}
+	for _, e := range cleared {
+		fmt.Fprintf(stdout, "cleared\t%s\t%s\t%s\n", e.Root, e.Runtime, e.Reason)
+	}
+	fmt.Fprintf(stderr, "cairn-capture: cleared=%d kept=%d — the next pass reads the cleared sessions again\n",
+		len(cleared), len(kept))
+	return exitOK
+}
+
+// runPass is `--run` itself: one pass, under the run lock, saving as it goes.
 func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 	fail := func(err error) int {
 		fmt.Fprintf(stderr, "cairn-capture: %v\n", err)
@@ -537,7 +636,8 @@ func runPass(c runConfig, stderr io.Writer, getenv func(string) string) int {
 		CheckpointEvery: 2 * time.Second,
 	}
 	sum, runErr := agent.Run()
-	fmt.Fprintf(stderr, "cairn-capture: run %s omitted=%d recheck-omitted=%d requests=%d\n", sum, sink.Omitted, sink.Rechecked, sink.Requests)
+	fmt.Fprintf(stderr, "cairn-capture: run %s omitted=%d recheck-omitted=%d requests=%d held-backlog=%d\n",
+		sum, sink.Omitted, sink.Rechecked, sink.Requests, state.HeldCount())
 	if runErr != nil {
 		return fail(runErr)
 	}

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"syscall"
 
 	"github.com/ZacxDev/cairn/internal/transcript/scopeuse"
@@ -207,6 +208,68 @@ func (s *State) Save(path string) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// HeldEntry is one held session, as an operator listing shows it: enough to decide what to do with
+// it and nothing that is transcript content.
+type HeldEntry struct {
+	Root     string
+	Runtime  string
+	Reason   string
+	Instance string
+	Deleted  string
+}
+
+// Clearable reports whether clearing this hold is SAFE. A hold that recorded an INSTANCE is the
+// record of an upload that landed there (or of a move the instance answered 410 for): clearing it
+// and shipping again can strand that copy or duplicate it, so it is never clearable here. A
+// routing-only hold (`instance` empty) is: nothing of the session ever left this host, so the next
+// pass reads it and routes it under whatever the rules now say.
+func (e HeldEntry) Clearable() bool { return e.Instance == "" && e.Deleted == "" }
+
+// Held lists the sessions the state marks HELD, sorted by root. 🔴 THE RUN SUMMARY'S `held=` CANNOT
+// ANSWER THIS: it counts the holds made BY ONE PASS, so a permanently held session is in this list
+// and in `held=0` at the same time.
+func (s *State) Held() []HeldEntry {
+	out := make([]HeldEntry, 0, len(s.Sessions))
+	for root, ss := range s.Sessions {
+		if ss == nil || !ss.Held {
+			continue
+		}
+		out = append(out, HeldEntry{Root: root, Runtime: ss.Runtime, Reason: ss.HeldReason,
+			Instance: ss.Instance, Deleted: ss.Deleted})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Root < out[j].Root })
+	return out
+}
+
+// HeldCount is [State.Held]'s length.
+func (s *State) HeldCount() int {
+	n := 0
+	for _, ss := range s.Sessions {
+		if ss != nil && ss.Held {
+			n++
+		}
+	}
+	return n
+}
+
+// ClearHeld clears the hold on every session whose hold is [HeldEntry.Clearable], and returns the
+// roots it cleared and those it left (with the reason it left them). It does NOT save: the caller
+// decides when, and under the run lock only. `*` and `held_reason` are the ONLY fields touched — the
+// watermarks, the binding and the withdrawal obligation are left exactly as they were.
+func (s *State) ClearHeld() (cleared, kept []HeldEntry) {
+	for _, e := range s.Held() {
+		if !e.Clearable() {
+			kept = append(kept, e)
+			continue
+		}
+		ss := s.Sessions[e.Root]
+		ss.Held = false
+		ss.HeldReason = ""
+		cleared = append(cleared, e)
+	}
+	return cleared, kept
 }
 
 func (s *State) session(root, runtime string) *SessionState {

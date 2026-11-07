@@ -470,6 +470,28 @@ func TestARootHeldByAnotherHostIsNotOwner(t *testing.T) {
 	}
 }
 
+// TestAPositionProbeOnARootAnotherHostOwnsIsNotAnError: the move probe ([HTTPSink.Position], S10)
+// asks the DESTINATION whether it deleted this root, and the uniform 409 answers it: this (owner,
+// host) has no prefix there, so nothing of ours was deleted there. It is the answer a cross-instance
+// move meets when the destination holds the root under ANOTHER host label.
+func TestAPositionProbeOnARootAnotherHostOwnsIsNotAnError(t *testing.T) {
+	p := newPod(t, podOpts{})
+	a := p.sink("host-a", sinkTokenA, 0)
+	if _, err := a.Records(up(""), "main", synth(1, 50)); err != nil {
+		t.Fatalf("control: host-a could not store a record: %v", err)
+	}
+	// POSITIVE CONTROL: a probe by the host that OWNS the root answers a real position (its `from`
+	// cursor is not where the stream is), so the branch below is not "the probe never says anything".
+	if got, err := a.Position(up(""), "main"); err != nil || got == "" {
+		t.Fatalf("control: host-a's own probe = %q, %v — want the stored position", got, err)
+	}
+	// host-b holds no prefix for that root: the uniform 409, which is NOT an error for this question.
+	b := p.sink("host-b", sinkTokenB, 0)
+	if got, err := b.Position(up(""), "main"); err != nil || got != "" {
+		t.Fatalf("a probe on a root another host owns answered %q, %v — want \"\" and no error (a deferral here is forever)", got, err)
+	}
+}
+
 // TestARecordThatIsNotJSONShipsWrappedAndExact: a line that is not JSON (and not UTF-8) cannot be
 // a `rec` as it is; it ships as an object holding its exact bytes.
 func TestARecordThatIsNotJSONShipsWrappedAndExact(t *testing.T) {
