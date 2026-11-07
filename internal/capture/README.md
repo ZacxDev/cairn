@@ -130,6 +130,16 @@ placed elsewhere from that instance and re-ships it whole to the default.
   opencode capture was refused — `capture: opencode [export ses_…]: exit status 1`, none reaching
   the store — while the v2 form answered the session JSON with exit 0. The same migration `List`
   and `Projects` already carry.
+- 🔴 **v2 CHANGED THE DOCUMENT AS WELL AS THE VERB, and the two failures look identical from the
+  log.** `session export` returns `messages[]` FLAT — each element is the message itself (`id`,
+  `type`, `agent`, `model`, `cost`, `tokens`) with its parts under `content`, and no `{info, parts}`
+  wrapper; parts name a tool `name` where v1 named it `tool`, and keep a completed call's result in
+  `state.content` where v1 used `state.output`. Against that document the capture refused every
+  session as *"N bytes that are not one complete JSON document"* — with a 0 exit code and valid
+  JSON, so the command-level fix alone did not restore capture. `parseExport` now accepts both
+  shapes and normalizes v2 to the same units (a message unit carries `role`, a part unit
+  `messageID`), which is what the store and the transcript reader consume. v2 leaves `text` and
+  `reasoning` parts with NO `id`, so those key on `<message-id>-<index>`.
 - `opencode export` **truncates at exit 0 when stdout is a pipe** (somewhere in 8–96 KiB; the
   boundary varies), so stdout is a regular temp file and a document that does not parse ships
   nothing.
