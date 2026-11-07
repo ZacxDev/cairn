@@ -96,7 +96,10 @@ type SessionState struct {
 	Runtime string `json:"runtime"`
 	// Instance is where this session's prefix has been shipped, "" when nowhere yet.
 	Instance string `json:"instance,omitempty"`
-	// Held is FINAL: V only grows, so a held session stays held (decision 16).
+	// Held is FINAL: V only grows, so a held session stays held (decision 16). Nothing in a run
+	// clears it, and a held session is skipped before routing on every later pass — so a rule change
+	// never recovers one. The operator remedy is `cairn-capture --clear-held` (only for a hold whose
+	// Instance is empty), and the level is the run line's `held-backlog=`.
 	Held       bool   `json:"held,omitempty"`
 	HeldReason string `json:"held_reason,omitempty"`
 	// Deleted names the instance that answered 410 for this session: its transcript was deleted
