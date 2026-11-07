@@ -127,54 +127,192 @@ type exportUnit struct {
 }
 
 // parseExport splits an export into units and finds the child sessions its `task` parts name.
+//
+// 🔴 TWO DOCUMENT SHAPES, ONE UNIT MODEL. opencode v2 moved the verb (`session export`) AND changed
+// the document: `messages[]` is FLAT — each element being the message itself (`id`, `type`, `agent`,
+// `model`, `cost`, `tokens`) with its parts under `content`, and no `{info, parts}` wrapper. Against
+// that document the v1 reader refused every session as "not one complete JSON document" while the
+// exit code was 0 and the bytes were valid JSON. Both shapes normalize to the SAME units here,
+// because the store and the transcript reader consume one model: a message unit must carry `role`
+// and each part unit must carry `messageID`.
+//
+// The v1 path is deliberately LEFT BYTE-FOR-BYTE as it was. A unit's shipped bytes ARE its version,
+// so re-encoding what v1 already parsed would re-version every known unit for no gain.
 func parseExport(raw []byte) ([]exportUnit, []string, error) {
 	if !json.Valid(raw) {
 		return nil, nil, ErrIncompleteExport
 	}
 	var doc struct {
-		Info     json.RawMessage `json:"info"`
-		Messages []struct {
-			Info  json.RawMessage   `json:"info"`
-			Parts []json.RawMessage `json:"parts"`
-		} `json:"messages"`
+		Info     json.RawMessage   `json:"info"`
+		Messages []json.RawMessage `json:"messages"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil || doc.Info == nil {
 		return nil, nil, ErrIncompleteExport
 	}
 	units := []exportUnit{{Key: "info", Raw: doc.Info}}
 	var children []string
-	for _, m := range doc.Messages {
-		var mi struct {
-			ID   string `json:"id"`
-			Role string `json:"role"`
+	for _, mraw := range doc.Messages {
+		var m struct {
+			Info    json.RawMessage   `json:"info"`
+			Parts   []json.RawMessage `json:"parts"`
+			ID      string            `json:"id"`
+			Type    string            `json:"type"`
+			Content []json.RawMessage `json:"content"`
 		}
-		if err := json.Unmarshal(m.Info, &mi); err != nil || mi.ID == "" {
+		if err := json.Unmarshal(mraw, &m); err != nil {
 			return nil, nil, ErrIncompleteExport
 		}
-		units = append(units, exportUnit{Key: "msg:" + mi.ID, Raw: m.Info})
-		for _, p := range m.Parts {
-			dec := json.NewDecoder(bytes.NewReader(p))
-			dec.UseNumber()
-			var part map[string]any
-			if err := dec.Decode(&part); err != nil {
+		if m.Info != nil {
+			var mi struct {
+				ID   string `json:"id"`
+				Role string `json:"role"`
+			}
+			if err := json.Unmarshal(m.Info, &mi); err != nil || mi.ID == "" {
 				return nil, nil, ErrIncompleteExport
 			}
-			id, _ := part["id"].(string)
-			if id == "" {
-				return nil, nil, ErrIncompleteExport
-			}
-			units = append(units, exportUnit{Key: "prt:" + id, Raw: p, Part: part, Role: mi.Role})
-			if part["type"] == "tool" && part["tool"] == "task" {
-				state, _ := part["state"].(map[string]any)
-				md, _ := state["metadata"].(map[string]any)
-				if child, ok := md["sessionId"].(string); ok && child != "" {
-					children = append(children, child)
+			units = append(units, exportUnit{Key: "msg:" + mi.ID, Raw: m.Info})
+			for _, p := range m.Parts {
+				part, err := decodePart(p)
+				if err != nil {
+					return nil, nil, err
 				}
+				id, _ := part["id"].(string)
+				if id == "" {
+					return nil, nil, ErrIncompleteExport
+				}
+				units = append(units, exportUnit{Key: "prt:" + id, Raw: p, Part: part, Role: mi.Role})
+				if c := taskChild(part); c != "" {
+					children = append(children, c)
+				}
+			}
+			continue
+		}
+		// ---- v2: the message object IS the info, and its parts are `content`.
+		if m.ID == "" {
+			return nil, nil, ErrIncompleteExport
+		}
+		meta, err := v2MessageInfo(mraw, m.Type)
+		if err != nil {
+			return nil, nil, ErrIncompleteExport
+		}
+		units = append(units, exportUnit{Key: "msg:" + m.ID, Raw: meta})
+		for i, p := range m.Content {
+			u, child, err := v2Part(p, m.ID, m.Type, strconv.Itoa(i))
+			if err != nil {
+				return nil, nil, err
+			}
+			units = append(units, u)
+			if child != "" {
+				children = append(children, child)
 			}
 		}
 	}
 	sort.Strings(children)
 	return units, dedupe(children), nil
+}
+
+// decodePart decodes ONE part with numbers kept as written (`UseNumber`), so a shipped digest is a
+// digest of the part's own bytes rather than of a float round-trip.
+func decodePart(raw json.RawMessage) (map[string]any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var part map[string]any
+	if err := dec.Decode(&part); err != nil {
+		return nil, ErrIncompleteExport
+	}
+	return part, nil
+}
+
+// taskChild is the child session a `task` tool part names, or "". ONE predicate, shared by both
+// shapes — the tool's own name field is `tool` on v1 and `name` on v2, normalized by v2Part.
+func taskChild(part map[string]any) string {
+	if part["type"] != "tool" || part["tool"] != "task" {
+		return ""
+	}
+	state, _ := part["state"].(map[string]any)
+	md, _ := state["metadata"].(map[string]any)
+	if child, ok := md["sessionId"].(string); ok {
+		return child
+	}
+	return ""
+}
+
+// v2MessageInfo is the message unit for a v2 message: the message object itself, WITHOUT its
+// `content` (each part is its own unit) and WITH a `role`, which v2 spells `type` and which the
+// reader keys the transcript's classification off.
+func v2MessageInfo(raw json.RawMessage, typ string) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return nil, ErrIncompleteExport
+	}
+	delete(fields, "content")
+	if _, ok := fields["role"]; !ok && typ != "" {
+		role, err := json.Marshal(typ)
+		if err != nil {
+			return nil, ErrIncompleteExport
+		}
+		fields["role"] = role
+	}
+	return json.Marshal(fields)
+}
+
+// v2Part normalizes ONE part of a v2 message into a unit, adding the three fields the v1 shape
+// carried and v2 does not:
+//
+//   - `messageID` — what links a part to its message's role;
+//   - `tool`      — v2 names a tool call's tool `name`;
+//   - `state.output` — v2 keeps a completed call's result in `state.content`, which `unitText`
+//     already renders, so it is aliased rather than reformatted.
+//
+// 🔴 A PART WITH NO `id` IS STILL A UNIT. v2 leaves its `text`/`reasoning` parts id-less, so the key
+// falls back to the message id plus the part's INDEX within it. That is stable for the case that
+// matters: mutating a part's text changes its bytes, hence its digest, under the SAME key.
+func v2Part(raw json.RawMessage, msgID, role, index string) (exportUnit, string, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return exportUnit{}, "", ErrIncompleteExport
+	}
+	id := ""
+	if v, ok := fields["id"]; ok {
+		_ = json.Unmarshal(v, &id)
+	}
+	if id == "" {
+		id = msgID + "-" + index
+	}
+	if _, ok := fields["messageID"]; !ok {
+		v, err := json.Marshal(msgID)
+		if err != nil {
+			return exportUnit{}, "", ErrIncompleteExport
+		}
+		fields["messageID"] = v
+	}
+	if _, ok := fields["tool"]; !ok {
+		if name, ok := fields["name"]; ok {
+			fields["tool"] = name
+		}
+	}
+	if st, ok := fields["state"]; ok {
+		var state map[string]json.RawMessage
+		if err := json.Unmarshal(st, &state); err == nil && state != nil {
+			if _, hasOut := state["output"]; !hasOut {
+				if content, hasContent := state["content"]; hasContent {
+					state["output"] = content
+					if b, err := json.Marshal(state); err == nil {
+						fields["state"] = b
+					}
+				}
+			}
+		}
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return exportUnit{}, "", ErrIncompleteExport
+	}
+	part, err := decodePart(out)
+	if err != nil {
+		return exportUnit{}, "", err
+	}
+	return exportUnit{Key: "prt:" + id, Raw: out, Part: part, Role: role}, taskChild(part), nil
 }
 
 // diffUnits is the upsert set: every unit whose VERSION differs from the one already shipped.

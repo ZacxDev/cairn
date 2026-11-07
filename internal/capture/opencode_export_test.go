@@ -1,8 +1,10 @@
 package capture
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -62,4 +64,90 @@ func TestExportUsesV2SessionExportAndFallsBackToLegacy(t *testing.T) {
 			t.Fatalf("legacy fallback command: %q (%v)", called, err)
 		}
 	})
+}
+
+// TestParseExportAcceptsTheV2MessageShape pins the ONE thing the v2 export changed that the verb
+// fix did not: the DOCUMENT. v2's `session export` returns `messages[]` flat — the message object
+// itself carries `id`/`type`, and its parts live under `content`, with no `{info, parts}` wrapper —
+// so the v1 reader refused every session as "not one complete JSON document" even though the exit
+// code was 0 and the bytes were valid JSON.
+//
+// 🔴 THE TEST IS ON THE NORMALIZED UNITS, NOT ON "it parsed": the store and the transcript reader
+// consume one model, so a message must still yield a `role` and each part a `messageID`.
+func TestParseExportAcceptsTheV2MessageShape(t *testing.T) {
+	doc := `{"info":{"id":"ses_v2"},
+	  "messages":[
+	    {"id":"msg_1","type":"user","time":{"created":1},"text":"hi","files":[]},
+	    {"id":"msg_2","type":"assistant","time":{"created":2},
+	     "content":[
+	       {"type":"reasoning","text":"thinking"},
+	       {"type":"tool","id":"call_1","name":"task",
+	        "state":{"status":"completed","input":{},"metadata":{"sessionId":"ses_child"}}},
+	       {"type":"text","text":"done"}
+	     ]}
+	  ]}`
+	units, children, err := parseExport([]byte(doc))
+	if err != nil {
+		t.Fatalf("a v2 export must parse, got %v", err)
+	}
+	byKey := map[string]exportUnit{}
+	var order []string
+	for _, u := range units {
+		byKey[u.Key] = u
+		order = append(order, u.Key)
+	}
+	if _, ok := byKey["info"]; !ok {
+		t.Fatalf("no `info` unit; keys=%v", order)
+	}
+	for _, want := range []struct{ key, role string }{
+		{"msg:msg_1", "user"},
+		{"msg:msg_2", "assistant"},
+	} {
+		u, ok := byKey[want.key]
+		if !ok {
+			t.Fatalf("no %s unit; keys=%v", want.key, order)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(u.Raw, &got); err != nil {
+			t.Fatalf("%s is not an object: %v", want.key, err)
+		}
+		if got["role"] != want.role {
+			t.Fatalf("%s role = %v, want %q (the reader keys the transcript off it)", want.key, got["role"], want.role)
+		}
+		if _, ok := got["content"]; ok {
+			t.Fatalf("%s still carries `content`; parts must be separate units", want.key)
+		}
+	}
+	// A part with its own id keeps it; a part WITHOUT one still lands, under the message's id.
+	if u, ok := byKey["prt:call_1"]; !ok {
+		t.Fatalf("no prt:call_1 unit; keys=%v", order)
+	} else {
+		var got map[string]any
+		if err := json.Unmarshal(u.Raw, &got); err != nil {
+			t.Fatalf("prt:call_1 is not an object: %v", err)
+		}
+		if got["messageID"] != "msg_2" {
+			t.Fatalf("prt:call_1 messageID = %v, want msg_2", got["messageID"])
+		}
+		if got["tool"] != "task" {
+			t.Fatalf("prt:call_1 tool = %v, want task (v2 names it `name`)", got["tool"])
+		}
+	}
+	var textPart bool
+	for key := range byKey {
+		if strings.HasPrefix(key, "prt:") && key != "prt:call_1" {
+			textPart = true
+		}
+	}
+	if !textPart {
+		t.Fatalf("the id-less `content` parts were dropped; keys=%v", order)
+	}
+	if len(children) != 1 || children[0] != "ses_child" {
+		t.Fatalf("children = %v, want [ses_child] from the `task` part", children)
+	}
+
+	// Still FAIL-CLOSED: a message with no id is not a document this can vouch for.
+	if _, _, err := parseExport([]byte(`{"info":{"id":"s"},"messages":[{"type":"user"}]}`)); err == nil {
+		t.Fatal("a v2 message with no id must refuse, not ship")
+	}
 }
