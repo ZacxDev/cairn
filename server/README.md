@@ -1743,3 +1743,20 @@ layers' job; this layer is the only one that can see a wrong credential.
   one-command rotation has a thing to live in. The procedure above remains four
   steps across a SOPS file and a `kubectl` signal. Stated here rather than
   claimed as done.
+
+## Byte-identity: why the gate is scoped to the UNCOMPRESSED tar
+
+Moved out of `AGENTS.md` during a headroom eviction (the ceiling lives in
+`tests/test_agent_instructions_weight.py`), because it is WHY a rule is what it is rather
+than decision input for the next edit. The rule itself stays in `AGENTS.md`: do not add a
+gate on the gzip bytes, and byte-diff the two archives when `internal/snapshot/paxtar.go`
+changes.
+
+🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP IDENTITY
+IS UNATTAINABLE — MEASURED, NOT ASSUMED.** Two independent reasons, so closing one does
+not help. **Do not add a gate on the gzip bytes, and do not read this row as "nobody
+looked"** — `wire.py` drops `Content-Length` on `/snapshot` and compares the extracted
+tree for the same reason. ⚠ **But an extracted-tree comparison is ALSO what HID four PAX
+header divergences**, because every POSIX reader prefers an extended record over the
+ustar field it shadows. **Byte-diff the two archives when you change
+`internal/snapshot/paxtar.go`** — the tree comparison structurally cannot see it.

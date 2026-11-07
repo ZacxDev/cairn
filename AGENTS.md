@@ -107,32 +107,25 @@ both implementations on one store and the difference MEASURED. ⚠ So the ORACLE
 NOWHERE, and a divergence ships before any gate reading `server.py` sees it.
 
 📄 **P1'S HISTORY LIVES IN `tests/conformance/README.md` AND `tests/dualrun/README.md`,
-NOT HERE**: the measured corpus splits, the reader fixture's case list and its ancillary
-tables, the mutation batteries, the two reader divergences' reasoning, the closed
-`ErrFocusSelectorUnported` row, the `?page=<21 digits>` worked example, the gzip/DEFLATE
-measurements and the PAX-header story. Records of rounds, read on demand. What is below
-is what binds the next edit.
+NOT HERE** — the corpus splits, the runner fixtures, the mutation rounds, the closed
+`ErrFocusSelectorUnported` row, the `?page=<21 digits>` example and the byte-identity
+story. Records of rounds, read on demand. What is below is what binds the next edit.
 
 ✅ **ALL THREE STEPS ARE DONE, STEP TWO IS `tests/dualrun/`**, and 🔴 **do not declare a
 step done early** — a sentence about the CORPUS is satisfied by a green corpus while every
 step stands untouched. ⚠ **It reads NEITHER IMAGE, so it licenses an image swap's
-PRECONDITION and never the swap** — diff the two images. What it compared, and the 0
-differences: `tests/dualrun/README.md`.
+PRECONDITION and never the swap** — diff the two images. See `tests/dualrun/README.md`.
 
-🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR, BECAUSE GZIP IDENTITY
-IS UNATTAINABLE — MEASURED, NOT ASSUMED.** Two independent reasons, so closing one does
-not help. **Do not add a gate on the gzip bytes, and do not read this row as "nobody
-looked"** — `wire.py` drops `Content-Length` on `/snapshot` and compares the extracted
-tree for the same reason. ⚠ **But an extracted-tree comparison is ALSO what HID four PAX
-header divergences**, because every POSIX reader prefers an extended record over the
-ustar field it shadows. **Byte-diff the two archives when you change
-`internal/snapshot/paxtar.go`** — the tree comparison structurally cannot see it.
+🔴 **AND THE BYTE-IDENTITY GATE IS SCOPED TO THE *UNCOMPRESSED* TAR.** **Do not add a gate on the
+gzip bytes, and do not read this row as "nobody looked"** — why gzip identity is unattainable
+there, and what an extracted-tree comparison cannot see, are in `server/README.md`. **Byte-diff
+the two archives when you change `internal/snapshot/paxtar.go`**: the tree comparison cannot see it.
 
-**The corpus is the specification, and it is GREEN for both implementations** — the Go
-server with four rows skipped as oracle-specific, the oracle with none skipped and no
-failures. 🔴 **A GREEN CORPUS IS THE START OF THE BYTE-IDENTITY QUESTION, NOT THE END OF
-IT** — it replays a declared list against a declared world; `tests/dualrun/` is what
-compares the two servers over a store nobody wrote a fixture for.
+**The corpus is the specification, and it is GREEN for both implementations** (the
+per-implementation skip counts are in `tests/conformance/README.md`). 🔴 **A GREEN CORPUS IS
+THE START OF THE BYTE-IDENTITY QUESTION, NOT THE END OF IT** — it replays a declared list
+against a declared world; `tests/dualrun/` is what compares the two servers over a store
+nobody wrote a fixture for.
 
 ```bash
 go vet ./... && go test ./...            # the port's own guards
@@ -150,15 +143,12 @@ structurally blind to. Read both.
 two responses that both fail their own golden still satisfy a relation BETWEEN them. So **a
 relation with NO non-5xx member is a FAILURE**: the bar is **one** real answer and the floor
 is **500, not 400**, because a 4xx refusal IS an answer and the uniformity of those refusals
-is itself part of the contract, where every 5xx this server emits is uniform *by design*. A
-printed caveat was tried first and **measured insufficient** — it annotates a PASS rather
-than withholding one.
+is itself part of the contract, where every 5xx this server emits is uniform *by design*.
+Why a printed caveat was rejected instead: `tests/conformance/README.md`.
 
-🔴 **A GREEN CORPUS IS NOT A GREEN PORT, AND THAT IS MEASURED RATHER THAN CAUTIONARY** — two
-defects shipped in the first Go commit with all four CI jobs green, both DECODING
-differences, both found by reading the port against `server.py` function by function rather
-than by the suite. **When the corpus is green, the question left is "what does it not
-send", and DECODING differences are the answer.**
+🔴 **A GREEN CORPUS IS NOT A GREEN PORT.** **When the corpus is green, the question left is "what
+does it not send", and DECODING differences are the answer** — the two defects that shipped green in
+the first Go commit, and how they were found, are in `tests/conformance/README.md`.
 
 🔴 **AND THE RENDERER'S OWN GATE IS A DIFFERENTIAL FIXTURE, BECAUSE THE CORPUS CANNOT SEND
 MOST OF WHAT IT RENDERS.** `internal/report/testdata/reader_fixtures.json` holds the
