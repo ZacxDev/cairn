@@ -33,8 +33,17 @@ func TestMain(m *testing.M) {
 		var file string
 		limit := -1
 		switch {
+		case len(args) == 3 && args[0] == "session" && args[1] == "export":
+			// The marker is written BEFORE any v1-only exit so a caller can prove the v2 verb was
+			// attempted even when it is unavailable.
+			_ = os.WriteFile(filepath.Join(dir, "v2-export-called"), []byte(strings.Join(args, " ")), 0o600)
+			if _, err := os.Stat(filepath.Join(dir, "v1-only")); err == nil {
+				os.Exit(64) // v1 had no `session export` verb
+			}
+			file = filepath.Join(dir, "export-"+args[2]+".json")
 		case len(args) == 2 && args[0] == "export":
 			file = filepath.Join(dir, "export-"+args[1]+".json")
+			_ = os.WriteFile(filepath.Join(dir, "legacy-export-called"), []byte(strings.Join(args, " ")), 0o600)
 		case len(args) >= 2 && args[0] == "session" && args[1] == "list":
 			file = filepath.Join(dir, "list.json")
 			limit = stubDefaultListRows

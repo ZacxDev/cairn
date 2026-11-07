@@ -1241,8 +1241,18 @@ with open(os.path.join(root, "list.json"), "w") as f:
 PY
 cat >"$work/bin/opencode-stub" <<STUB
 #!/usr/bin/env bash
+# 🔴 \`session export\` MUST be answered with the EXPORT, not the list. v2 moved \`export\` under
+# \`session\`, so the capture now asks for \`session export <id>\` first; a bare \`session) list\`
+# case catches it, answers a session LIST where a session DOCUMENT is expected, exits 0, and
+# every unit silently disappears — the pass then stores nothing and this file's own
+# "0 of 62 opencode units" assertion is what notices.
 case "\$1" in
-  session) cat "$world3/list.json" ;;
+  session)
+    case "\$2" in
+      export) cat "$world3/export.json" ;;
+      *) cat "$world3/list.json" ;;
+    esac
+    ;;
   export) cat "$world3/export.json" ;;
   *) exit 64 ;;
 esac
