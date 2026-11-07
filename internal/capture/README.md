@@ -31,8 +31,15 @@ operator's act.
 2. **Derives `V`'s read half** with `internal/transcript/scopeuse` over the new records, the
    persisted evidence of earlier runs, and the client read ledgers of the root and every child —
    a UNION with the stored `V`, so a deleted ledger cannot shrink it.
-3. **Routes** (`Decide`, decision 16) over `V` *including* the records about to ship. A scope the
-   routing table explicitly sends to an unconfigured alias is HELD at any instance count. A session
+3. **Routes** (`Decide`, decision 16) over `V` *including* the records about to ship. `*` in `V` is a
+   VISIBILITY statement, not a scope: on a host with more than one instance it forces the DEFAULT
+   instance and the session is shipped OWNER-ONLY (`OwnerOnly`, which `Agent.route` writes into
+   `Declared`, so the pod stores it owner-only). A session whose scopes name TWO instances is placed
+   on the default instance OWNER-ONLY for the same reason — the trade the operator accepted on
+   and the reason a cross-instance session is no longer held. A scope the routing table
+   explicitly sends to an unconfigured alias is still HELD at any instance count: the table says it
+   lives on an instance this host does not run, and shipping its records to the one it does is the
+   cross-instance leak decision 16 exists to stop. A session
    whose `V` is **empty** is placed by the repository it ran in — § *A session that recorded no
    scope* below.
 4. **Acts**: ship to the routed instance — the client read ledger FIRST (S11, decision 3a): the
@@ -234,7 +241,7 @@ means something else).
 
 | exit | means |
 |---|---|
-| 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run, as is a session DEFERRED because its repo now routes to an instance with no `-worker` (§ *A session that recorded no scope*); a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` |
+| 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run, as is a session DEFERRED because its repo now routes to an instance with no `-worker` (§ *A session that recorded no scope*); a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` — and each of those holds is made by ONE pass, so the level is `held-backlog=` (§ *`held=` is not the backlog*) |
 | 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session for a reason that recurs on every run with nothing changed on either side (`capture.Recurs`): an **unresumable position** or **another uploader** (table below) — or **`-opencode-discover` was refused**: project discovery failed (a missing binary, non-zero exits from both the v2 API and v1 CLI fallback, or an answer that is not a list of projects with absolute canonical paths/worktrees and sandboxes — never read as "no projects"). That refuses only the DISCOVERED projects: Claude Code and every explicit `-opencode-project` directory are still captured, and a `refused opencode discovery` line says so at the start. One last stderr line per cause names the count and that cause's remedy |
 | 1 | the state cannot be read or saved, a session tree cannot be listed, or an instance refused the capture token (401/403); wins over 3 |
 | 2 | usage, and `--self-test`'s "could not vouch" |
@@ -303,7 +310,8 @@ cross it in clear.
 ## The withdrawal (S6, decision 16, clause m)
 
 When a run's routing answer is no longer the instance holding a session's prefix — its scopes now
-route to another instance, or to two (held) — the agent FIRST asks the holding instance to forget it:
+route to another instance, which includes a cross-instance session moving to the default one — the
+agent FIRST asks the holding instance to forget it:
 `POST /capture/v1/sessions/{root}/withdraw` with that instance's capture token (`HTTPSink.Withdraw`;
 `internal/worker`'s `WithdrawPattern`). Nothing of the session is shipped anywhere until that
 instance has answered.
@@ -329,7 +337,34 @@ to be skipped before it was read — so a read that changed its routing answer w
 its prefix never withdrawn, for as long as the instance stayed stopped. Now a session WITH a shipped
 prefix is still derived and routed (its new bytes only), and the withdrawal — which stores nothing
 and is not behind the arming gate — goes out; a session with nothing shipped is still skipped
-unread. A refused token (401/403) still ends every request to that instance.
+unread. A refused token (401/403) still ends every request to that instance. 🔴 A move asks the
+DESTINATION first, so a stopped destination defers the move (`withdrawal-pending`, retried); only the
+HOLDER has to be reachable for the withdrawal itself.
+
+## `held=` is not the backlog: `--list-held` and `--clear-held`
+
+🔴 **`held=` COUNTS THE HOLDS ONE PASS MADE. A HELD SESSION IS THEN NEVER COUNTED AGAIN.** `held` is
+FINAL in the state, and `runOpencode`/`runClaude` return at the top for it — before routing, before
+every counter but `sessions=`. So the pass that holds a session says `held=<n>` once, logs one
+`held <root>: <reason>` line, and EVERY LATER PASS SAYS `held=0` ABOUT THE SAME SESSION, forever. A
+zero there means "this pass held nothing", never "nothing is held" (measured on a two-instance host:
+30 sessions held in one pass, `held=0` on every pass afterwards, 883 held in the state).
+
+The level is on the run line as **`held-backlog=<n>`** (read from the state after the pass), and the
+sessions themselves are two modes:
+
+| mode | what it does |
+|---|---|
+| `--list-held` | prints one line per held session, tab-separated `<root> <runtime> <clearable\|permanent> <instance\|-> <reason>`, then `held=<n> clearable=<n>` on stderr. Reads only |
+| `--clear-held` | clears every CLEARABLE hold and saves the state, under the same run lock a pass takes. Writes; prints `cleared <root> <runtime> <reason>` per session and names every KEPT one on stderr |
+
+**Clearable is exactly `instance` empty.** A hold that names an instance is the record of a prefix
+that landed there (or of a move the instance answered 410 for): clearing it and shipping again can
+strand or duplicate that copy, so it is never cleared, and `--clear-held` reports it instead. A
+routing-only hold (`instance` empty) is a hold on a session nothing of which ever left this host —
+clearing it loses nothing, and the next pass reads the session and routes it under whatever the rules
+now say. 🔴 **A RULE CHANGE ALONE RECOVERS NOTHING**: `held` is final, so fixing a routing rule that
+held sessions leaves every one of them held until an operator clears it (`--clear-held`).
 
 ## A session deleted on its instance (410)
 

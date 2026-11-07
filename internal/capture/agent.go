@@ -609,6 +609,21 @@ func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, r
 			return false, false, err
 		}
 	}
+	// 🔴 OWNER-ONLY IS PERSISTED, NOT JUST DECIDED. `Declared` is grow-only and it is what the pod
+	// keeps as the session's declared scopes, so writing `*` here is the whole mechanism that hides
+	// a placed cross-instance session from anyone but its owner; nothing later can take it back,
+	// which is the point. V only grows, so the decision itself is stable — but it must not depend on
+	// re-deriving it after the bytes have already landed, which is why it is saved BEFORE the ship.
+	if dec.OwnerOnly {
+		// `union` is the package's one spelling of a grow-only union (sorted, deduped), so this is
+		// "add `*` if it is not already there" without a second membership predicate.
+		if merged := union(ss.Declared, []string{scopeuse.Star}); len(merged) != len(ss.Declared) {
+			ss.Declared = merged
+			if err := a.saveRouting(root); err != nil {
+				return false, false, err
+			}
+		}
+	}
 	return true, reset, nil
 }
 

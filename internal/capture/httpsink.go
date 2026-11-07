@@ -704,6 +704,18 @@ func (s *HTTPSink) Position(u Upload, stream string) (string, error) {
 	b.Write(s.header(u, probeCursor, probeCursor))
 	b.WriteString(`,"records":[{"src":"probe","rec":{}}]}`)
 	status, ans, err := s.post(u.Instance, s.recordsPath(u.Root, stream), b.Bytes())
+	// 🔴 THE UNIFORM 409 IS AN ANSWER TO THIS PROBE, NOT A FAILURE OF IT. A destination that holds the
+	// root under ANOTHER (owner, host) — the same owner under another host label, say — answers
+	// `{"refused":"held-by-another-uploader"}` and no position, and the worker answers 410 ONLY to the
+	// deleted root's OWN (owner, host) (`worker.answer`, `archive.gone`; `worker/withdraw.go` states
+	// the pair). So this answer means "this (owner, host) has no prefix on that instance", and nothing
+	// of ours can have been deleted there — exactly what the probe asks before telling the holder to
+	// forget (S10). Treated as an error it DEFERS such a move on EVERY run, counted
+	// `withdrawal-pending`: a move whose destination is owned by another host stalled forever, which
+	// is what made this visible when cross-instance sessions started being placed instead of held.
+	if errors.Is(err, ErrNotOwner) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}

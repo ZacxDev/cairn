@@ -222,12 +222,12 @@ PY
     $'\t\tif !viewer.owns(meta) {' \
     $'\t\tif v, _ := s.View(viewer, root); v == nil {' \
     "g-my-sessions-lists-the-owners-own-and-no-one-elses"
-  # (h) Routing on the first scope only — the WRITTEN `alpha-notes` sorts first — so the read of
-  #     `beta-notes` no longer holds the session.
+  # (h) Routing on the first scope only — `alpha-notes` sorts first — so the read of `beta-notes` is
+  #     never seen and the session ships WITHOUT the owner-only declaration its two instances demand.
   sabotage h-routes-on-one-scope internal/capture/route.go \
     $'\tfor _, scope := range v {' \
     $'\tfor _, scope := range v[:1] {' \
-    "h-held-session-reaches-neither-instance"
+    "h-cross-instance-session-ships-owner-only"
   # (i) A scope nobody toggled defaults to ON, so every session whose scopes the authority knows is
   #     pending before anybody consented.
   sabotage i-a-missing-scope-toggle-defaults-on internal/plugins/toggles.go \
@@ -275,7 +275,7 @@ pids=()
 cleanup() {
   for p in "${pids[@]}"; do kill "$p" 2>/dev/null || true; done
   for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
-  rm -rf "$work"
+  echo "KEPT: $work"
 }
 trap cleanup EXIT
 
@@ -495,6 +495,7 @@ cfg="$work/cfg"
 mkdir -p "$cfg/instances"
 : >"$cfg/instances/client.env"
 printf '{"alpha-notes": "personal", "beta-notes": "client"}\n' >"$cfg/routes.json"
+unset client_endpoint
 
 # capture <binary> <home> <claude-root> <ledger-dir> <relay-url> [more flags…] → the run's exit code;
 # stderr in <home>/run.log
@@ -502,9 +503,10 @@ capture() {
   local bin="$1" home="$2" root="$3" ledger="$4" url="$5"
   shift 5
   mkdir -p "$home"
+  local client="${client_endpoint:-$url}"
   "${clean_env[@]}" HOME="$home" XDG_STATE_HOME="$home/state" CAIRN_CONFIG="$cfg/env" "$bin" --run -host host-a \
     -claude-root "$root" -ledger-dir "$ledger" -max-request-bytes 262144 \
-    -worker "personal=$url" -worker "client=$url" \
+    -worker "personal=$url" -worker "client=$client" \
     -capture-token-file "personal=$tokenfile" -capture-token-file "client=$tokenfile" "$@" >>"$home/run.log" 2>&1
 }
 
@@ -595,6 +597,12 @@ PY
 }
 
 # path_requests <relay log> <root> → how many requests name that root
+# path_requests_withdrawals <relay log> <root> → how many requests naming the root are withdrawals.
+path_requests_withdrawals() {
+  python3 -c 'import json, sys
+print(sum(1 for l in open(sys.argv[1]) if json.loads(l)["path"].endswith("/sessions/" + sys.argv[2] + "/withdraw")))' "$1" "$2"
+}
+
 path_requests() {
   python3 -c 'import json, sys
 print(sum(1 for l in open(sys.argv[1]) if "/sessions/" + sys.argv[2] + "/" in json.loads(l)["path"]))' "$1" "$2"
@@ -1083,6 +1091,32 @@ with open(os.path.join(root, "ledger", sid + ".jsonl"), "w") as f:
     f.write(json.dumps({"schema": 1, "session": sid, "verb": "append", "instance": "personal", "scope": "alpha-notes",
         "client": "cairn-go", "client_version": "synthetic", "at": "2000-01-01T00:00:01.000Z"}) + "\n")
 PY
+# 🔴 ONE POD PER INSTANCE, EACH WITH ITS OWN TRANSCRIPT ARCHIVE — that is what an instance IS. A single
+# archive shared by both aliases cannot model a move: `Withdraw` deletes the root and remembers the
+# deletion for this (owner, host), so the re-upload to the other alias is answered 410 and the session
+# ends `deleted=1`. This clause used to end in a HOLD, where nothing re-shipped, so one archive was
+# enough; a move needs two.
+tdir2="$work/transcripts2"
+mkdir -p "$tdir2"
+port2="$(free_port)"
+wport2="$(free_port)"
+"${clean_env[@]}" "$work/bin/cairn-ui" -store "$store" -control-journal "$journal" -session-file "$work/sessions2.json" \
+  -host 127.0.0.1 -port "$port2" -worker-addr "127.0.0.1:$wport2" -worker-tokens "$wtokens" -worker-owner "$owner" \
+  -transcript-dir "$tdir2" -transcript-retention 90d -transcript-quota 1GB -arm-transcript-capture \
+  -plugin-registry "$registry" -plugin-journal "$work/toggles2.jsonl" >"$work/ui2.log" 2>&1 &
+ui2=$!
+pids+=("$ui2")
+up2=no
+for _ in $(seq 1 200); do
+  if curl -fsS "http://127.0.0.1:$port2/healthz" >/dev/null 2>&1; then up2=yes; break; fi
+  kill -0 "$ui2" 2>/dev/null || break
+  sleep 0.05
+done
+[[ $up2 == yes ]] || { cat "$work/ui2.log" >&2; couldnt "the second instance's cairn-ui did not come up"; }
+pod2="http://127.0.0.1:$wport2"
+start_relay m-dest --upstream "$pod2"
+# The `client` alias points at the second instance for this clause only.
+client_endpoint="$relay_url"
 start_relay run-m1 --upstream "$pod"
 capture "$work/bin/cairn-capture" "$work/home6" "$world5/projects" "$world5/ledger" "$relay_url"
 m1_rc=$?
@@ -1094,22 +1128,24 @@ summary_for "$m_root" 2 "clause m summary"
 [[ $code == 201 ]] || couldnt "writing the summary of the clause (m) session answered $code: $body"
 edge_for "$m_root"
 [[ $code == 201 ]] || couldnt "writing the clause (m) session's ticket edge answered $code: $body"
-# …then it READS `beta-notes`, which routes to the client instance: its scopes now route to two.
-python3 - "$world5" "$m_root" <<'PY' || couldnt "clause (m)'s read could not be written"
+# 🔴 THE MOVE IS DRIVEN BY THE ROUTING TABLE, NOT BY A NEW READ — and that is a consequence worth
+# pinning. A session that READS a scope on the other instance is now PLACED on the default instance
+# owner-only rather than held, so a read alone can no longer move it off the default; the table is
+# what still can, and it is the only remaining trigger that keeps this clause's plugin tokens valid
+# (they are scoped to `alpha-notes`).
+printf '{"alpha-notes": "client", "beta-notes": "client"}\n' >"$cfg/routes.json"
+python3 - "$world5" "$m_root" <<'PY' || couldnt "clause (m)'s record could not be written"
 import json, os, sys
 root, sid = sys.argv[1], sys.argv[2]
 with open(os.path.join(root, "projects", "-work-alpha", sid + ".jsonl"), "a") as f:
     f.write(json.dumps({"type": "user", "sessionId": sid, "uuid": "00000000-0000-4000-8000-000000000003",
-        "timestamp": "2000-01-01T00:00:03Z", "message": {"role": "user", "content": "clause m: THE RECORD AFTER THE READ"}}) + "\n")
-with open(os.path.join(root, "ledger", sid + ".jsonl"), "a") as f:
-    f.write(json.dumps({"schema": 1, "session": sid, "verb": "recall", "instance": "client", "scope": "beta-notes",
-        "client": "cairn-go", "client_version": "synthetic", "at": "2000-01-01T00:00:02.000Z"}) + "\n")
+        "timestamp": "2000-01-01T00:00:03Z", "message": {"role": "user", "content": "clause m: THE RECORD AFTER THE TABLE CHANGE"}}) + "\n")
 PY
 start_relay run-m2 --upstream "$pod"
 capture "$work/bin/cairn-capture" "$work/home6" "$world5/projects" "$world5/ledger" "$relay_url"
 m2_rc=$?
 stop_relay
-# m_requests <relay log> → "<requests naming the session> <of them, withdrawals> <bodies carrying the record after the read>"
+# m_requests <relay log> → "<requests naming the session> <of them, withdrawals> <bodies carrying the record after the table change>"
 m_requests() {
   python3 - "$1" "$m_root" <<'PY'
 import base64, json, sys
@@ -1120,31 +1156,40 @@ for line in open(sys.argv[1]):
         continue
     naming += 1
     withdrawals += e["path"].endswith("/sessions/" + sys.argv[2] + "/withdraw")
-    after += b"THE RECORD AFTER THE READ" in base64.b64decode(e["body"])
+    after += b"THE RECORD AFTER THE TABLE CHANGE" in base64.b64decode(e["body"])
 print(naming, withdrawals, after)
 PY
 }
-read -r m_naming m_withdrawals m_after < <(m_requests "$work/run-m2.log") || couldnt "clause (m)'s relay log could not be read"
-# A third run: the session is held now — nothing more is asked of either instance.
+# 🔴 THE WITHDRAWAL IS ON THE FIRST INSTANCE'S RELAY AND THE RE-SHIP IS ON THE SECOND'S: after the
+# move, everything the agent sends for this session names the destination, so both logs are read.
+read -r m_naming _ m_after < <(m_requests "$work/m-dest.log") || couldnt "clause (m)'s destination relay log could not be read"
+m_withdrawals="$(path_requests_withdrawals "$work/run-m2.log" "$m_root")"
+# A third run: the move is done — nothing more is asked of EITHER instance.
+m_dest_before="$(wc -l <"$work/m-dest.log")"
 start_relay run-m3 --upstream "$pod"
 capture "$work/bin/cairn-capture" "$work/home6" "$world5/projects" "$world5/ledger" "$relay_url"
 m3_rc=$?
 stop_relay
-read -r m3_naming _ _ < <(m_requests "$work/run-m3.log") || couldnt "clause (m)'s third relay log could not be read"
+m3_naming=$(( $(path_requests "$work/run-m3.log" "$m_root") + $(wc -l <"$work/m-dest.log") - m_dest_before ))
+printf '{"alpha-notes": "personal", "beta-notes": "client"}\n' >"$cfg/routes.json"
+unset client_endpoint
 # The route's own answers, asked directly with the owner's capture token: the repeat is `true` again
 # (idempotent across a lost acknowledgement) and a root that never existed is `false`.
 post "/capture/v1/sessions/$m_root/withdraw" '{}'
 m_repeat="$code $body"
 post "/capture/v1/sessions/e2e-never-withdrawn/withdraw" '{}'
 m_never="$code $body"
-echo "clause m: run 2 sent $m_naming request(s) naming the session ($m_withdrawals a withdrawal, $m_after carrying the record after the read); the repeat answered [$m_repeat], a root never stored [$m_never]"
-# The agent sent ONE request for the session — the withdrawal — and no record from the read onward;
-# the instance's directory for it (transcript, summary, edge) is gone and the fact is journaled.
+echo "clause m: run 2 sent $m_withdrawals withdrawal(s) from the instance holding the prefix and $m_naming request(s) to the destination ($m_after carrying the record after the table change); run 3 sent $m3_naming; the repeat answered [$m_repeat], a root never stored [$m_never]"
+# The agent asked the instance holding the prefix to forget it, it answered `deleted: true`, and the
+# whole session was re-shipped to the OTHER instance from offset 0 — so the record after the table
+# change IS sent (it was not, when this clause ended in a hold), the transcript is back there, and the
+# outputs the withdrawal deleted are NOT re-derived. The fact is journaled.
 assert m-a-shipped-prefix-is-withdrawn-when-routing-changes eval '
-  [[ $m2_rc == 0 && $m_naming == 1 && $m_withdrawals == 1 && $m_after == 0 ]] &&
+  [[ $m2_rc == 0 && $m_withdrawals == 1 && $m_after -ge 1 ]] &&
   [[ ! -e "$tdir/sessions/$m_root" ]] &&
+  [[ -s "$tdir2/sessions/$m_root/stream-main.jsonl.gz" && ! -e "$tdir2/sessions/$m_root/outputs.jsonl" ]] &&
   grep -qF "\"root\":\"$m_root\",\"owner\":\"$owner\",\"host\":\"host-a\",\"reason\":\"withdrawn\"" "$tdir/journal.jsonl" &&
-  grep -qF "withdraw $m_root from personal" "$work/home6/run.log" && grep -qF "held $m_root" "$work/home6/run.log" &&
+  grep -qF "withdraw $m_root from personal" "$work/home6/run.log" &&
   [[ $m3_rc == 0 && $m3_naming == 0 ]] &&
   [[ "$m_repeat" == "200 {\"deleted\":true}" && "$m_never" == "200 {\"deleted\":false}" ]]'
 
@@ -1158,8 +1203,32 @@ read -r found1 frecs1 fblobs1 naming1 < <(count_planted "$work/run1.log") || cou
 assert b-no-planted-secret-leaves-the-host eval '[[ $found1 == 0 && $naming1 -gt 0 ]]'
 assert b-the-relay-reassembled-a-framed-record-and-blob eval '[[ $frecs1 -ge 1 && $fblobs1 -ge 1 ]]'
 held_requests="$(path_requests "$work/run1.log" "$held_root")"
-assert h-held-session-reaches-neither-instance eval '[[ $held_requests == 0 ]] && grep -qF "held $held_root" "$work/home1/run.log"'
-assert h-the-unheld-session-in-the-same-run-shipped eval '[[ $naming1 -gt 0 ]] && grep -qF " shipped=1 " "$work/home1/run.log"'
+# declared_owner_only <relay log> <root> -> 1 when a request naming the root declares `*`, i.e. the
+# session was uploaded OWNER-ONLY. The wire header carries `declared_scopes`; the body is base64.
+declared_owner_only() {
+  python3 - "$1" "$2" <<'PYDECL'
+import base64, json, sys
+for line in open(sys.argv[1]):
+    e = json.loads(line)
+    if "/sessions/" + sys.argv[2] + "/" not in e["path"]:
+        continue
+    try:
+        body = json.loads(base64.b64decode(e["body"]))
+    except Exception:
+        continue
+    if "*" in (body.get("declared_scopes") or []):
+        print(1)
+        raise SystemExit
+print(0)
+PYDECL
+}
+held_owner_only="$(declared_owner_only "$work/run1.log" "$held_root")"
+# 🔴 THE CROSS-INSTANCE SESSION IS PLACED, NOT HELD: it reaches the default instance and declares `*`,
+# which is what makes the pod store it owner-only. It used to reach NEITHER instance and log `held`.
+assert h-cross-instance-session-ships-owner-only eval '[[ $held_requests -gt 0 && $held_owner_only == 1 ]] && ! grep -qF "held $held_root" "$work/home1/run.log"'
+# Both sessions in this world ship now (the secrets one to the default, the cross-instance one there
+# too, owner-only) — it was `shipped=1` while the second was held.
+assert h-the-unheld-session-in-the-same-run-shipped eval '[[ $naming1 -gt 0 ]] && grep -qF " shipped=2 " "$work/home1/run.log"'
 
 # The POSITIVE CONTROL: the redaction-off build, a relay that answers everything itself.
 start_relay control --answer-self
