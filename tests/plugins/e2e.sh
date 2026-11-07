@@ -105,7 +105,9 @@
 # Everything is synthetic: scopes (`alpha-notes`, `beta-notes`), the host (`host-a`), session ids,
 # the identity, and the year-2000 dates. Secrets and tokens are generated per run and never leave the
 # run's temp directory. No real opencode binary is needed: the opencode leg runs a stub that
-# answers `session list` and `export` from files this script writes.
+# answers `session list` and `session export` from files this script writes — and those files are
+# in the v2 SHAPE (`messages[]` flat, parts under `content`), because a v1-shaped fixture parses
+# on the v1 path and therefore cannot see a document-shape regression at all.
 set -uo pipefail
 
 repo="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -1220,15 +1222,39 @@ oc_root="ses_e2e000000000000000000000a"
 python3 - "$world3" "$oc_root" <<'PY' || couldnt "the opencode world could not be written"
 import hashlib, json, os, sys
 root, sid = sys.argv[1], sys.argv[2]
+
+def canon(obj):
+    """Canonical JSON, byte-for-byte what Go's `json.Marshal` writes: compact, keys sorted.
+
+    🔴 THE FIXTURE TEXT MUST STAY ASCII WITH NO `<`, `>` OR `&`, AND NO U+2028/U+2029. Go's
+    marshal HTML-escapes those (and Python's does not), and a unit's shipped BYTES ARE its
+    VERSION — one escaping difference and every digest here is wrong for the wrong reason.
+    """
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
 def export(name, texts):
-    # Assembled BY HAND from each unit's own JSON text, so a unit's raw bytes here are the bytes the
-    # agent digests.
-    info = json.dumps({"id": sid, "title": "synthetic", "time": {"updated": len(texts)}})
-    msg = json.dumps({"id": "msg_e2e0001", "role": "assistant"})
-    parts = [json.dumps({"id": "prt_e2e%04d" % i, "type": "text", "text": t}) for i, t in enumerate(texts)]
+    # 🔴 THE v2 SHAPE, WHICH IS WHAT opencode 2.x ACTUALLY EMITS: `messages[]` is FLAT — the
+    # message object itself, its parts under `content`, and NO `{info, parts}` wrapper. The
+    # previous fixture here was v1-shaped, so it could not see the document bug at all (a v1
+    # document still parses on the v1 path), which is how `#304` shipped and left capture
+    # refusing every real session.
+    #
+    # The fixture also omits `role` on the message and `messageID` on each part ON PURPOSE:
+    # the capture must ADD them, so the expectation below is the NORMALIZED bytes, not the
+    # bytes written into the document.
+    info = canon({"id": sid, "title": "synthetic", "time": {"updated": len(texts)}})
+    msg_id = "msg_e2e0001"
+    parts = [{"id": "prt_e2e%04d" % i, "text": t, "type": "text"} for i, t in enumerate(texts)]
+    body = {"id": msg_id, "type": "assistant", "agent": "build", "time": {"created": 1},
+            "content": parts}
     with open(os.path.join(root, name + ".json"), "w") as f:
-        f.write('{"info":' + info + ',"messages":[{"info":' + msg + ',"parts":[' + ",".join(parts) + "]}]}")
-    units = [("info", info), ("msg:msg_e2e0001", msg)] + [("prt:prt_e2e%04d" % i, p) for i, p in enumerate(parts)]
+        f.write('{"info":' + info + ',"messages":[' + canon(body) + "]}")
+    msg_unit = canon({"id": msg_id, "type": "assistant", "agent": "build",
+                      "time": {"created": 1}, "role": "assistant"})
+    prt_units = [canon({"id": p["id"], "text": p["text"], "type": "text",
+                        "messageID": msg_id}) for p in parts]
+    units = [("info", info), ("msg:" + msg_id, msg_unit)] + \
+            [("prt:" + p["id"], u) for p, u in zip(parts, prt_units)]
     with open(os.path.join(root, name + ".units.json"), "w") as f:
         json.dump([[k, k + "@" + hashlib.sha256(raw.encode()).hexdigest()[:12]] for k, raw in units], f)
 v1 = [("part %d " % i) + "lorem ipsum dolor sit amet " * 760 for i in range(60)]
