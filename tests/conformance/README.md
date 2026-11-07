@@ -1003,3 +1003,19 @@ by `git status` shows that golden plus the four new files and nothing else.
 is the corpus carrying the population the design exists to protect: every read row over
 `tagged-set` is a live demonstration that an entry whose tags predate the closure still loads,
 still resolves by ref, still narrows under `?tag=` and still accepts an append.
+
+## What a GREEN corpus does not tell you
+
+Moved out of `AGENTS.md` during a headroom eviction (the ceiling lives in
+`tests/test_agent_instructions_weight.py`). The rules stay in `AGENTS.md`; what follows is
+the record of the rounds that produced them.
+
+🔴 **A GREEN CORPUS IS NOT A GREEN PORT, AND THAT IS MEASURED RATHER THAN CAUTIONARY** — two
+defects shipped in the first Go commit with all four CI jobs green, both DECODING
+differences, both found by reading the port against `server.py` function by function rather
+than by the suite. **When the corpus is green, the question left is "what does it not
+send", and DECODING differences are the answer.**
+
+A printed caveat was tried first and **measured insufficient** — it annotates a PASS rather than withholding one.
+
+Per-implementation result, for the record: the corpus is GREEN for both implementations the Go server with four rows skipped as oracle-specific, the oracle with none skipped and no failures.
