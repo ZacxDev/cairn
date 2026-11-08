@@ -36,25 +36,34 @@ type wireRecord struct {
 }
 
 type wireRecords struct {
-	Schema   *int          `json:"schema"`
-	Runtime  *string       `json:"runtime"`
-	Host     *string       `json:"host"`
-	From     *string       `json:"from"`
-	To       *string       `json:"to"`
-	Declared *[]string     `json:"declared_scopes"`
-	Records  *[]wireRecord `json:"records"`
-	Frames   *wireFrames   `json:"frames"`
+	Schema   *int      `json:"schema"`
+	Runtime  *string   `json:"runtime"`
+	Host     *string   `json:"host"`
+	From     *string   `json:"from"`
+	To       *string   `json:"to"`
+	Declared *[]string `json:"declared_scopes"`
+	// NamesProgram is OPTIONAL (absent is false): the agent's F1 evidence, OR'd into the stored
+	// session's grow-only `names_program` ([archive.Upload.NamesProgram]).
+	//
+	// ⚠ DEPLOY ORDER: a pod built before this field refuses it as an unknown key (400, `decodeStrict`)
+	// and nothing in the protocol advertises it. The agent sends it only when true, so on such a pod
+	// only F1-evidence sessions are refused — retried every run, nothing stored, not held — until the
+	// pod is upgraded. Upgrade pods FIRST.
+	NamesProgram *bool         `json:"names_program"`
+	Records      *[]wireRecord `json:"records"`
+	Frames       *wireFrames   `json:"frames"`
 }
 
 type wireBlob struct {
-	Schema   *int        `json:"schema"`
-	Runtime  *string     `json:"runtime"`
-	Host     *string     `json:"host"`
-	From     *string     `json:"from"`
-	To       *string     `json:"to"`
-	Declared *[]string   `json:"declared_scopes"`
-	Data     *string     `json:"data"`
-	Frames   *wireFrames `json:"frames"`
+	Schema       *int        `json:"schema"`
+	Runtime      *string     `json:"runtime"`
+	Host         *string     `json:"host"`
+	From         *string     `json:"from"`
+	To           *string     `json:"to"`
+	Declared     *[]string   `json:"declared_scopes"`
+	NamesProgram *bool       `json:"names_program"` // as [wireRecords.NamesProgram]
+	Data         *string     `json:"data"`
+	Frames       *wireFrames `json:"frames"`
 }
 
 type recordsRequest struct {
@@ -91,14 +100,15 @@ func frame(f *wireFrames) (*archive.Frame, error) {
 	return &archive.Frame{Index: *f.Index, Count: *f.Count}, nil
 }
 
-func common(schema *int, runtime, host, from, to *string, declared *[]string) (archive.Upload, string, error) {
+func common(schema *int, runtime, host, from, to *string, declared *[]string, namesProgram *bool) (archive.Upload, string, error) {
 	if schema == nil || runtime == nil || host == nil || from == nil || to == nil || declared == nil {
 		return archive.Upload{}, "", errors.New("an upload carries schema, runtime, host, from, to and declared_scopes; one is missing or null")
 	}
 	if *schema != Schema {
 		return archive.Upload{}, "", fmt.Errorf("schema %d is not %d", *schema, Schema)
 	}
-	return archive.Upload{Runtime: *runtime, From: *from, To: *to, Declared: *declared}, *host, nil
+	return archive.Upload{Runtime: *runtime, From: *from, To: *to, Declared: *declared,
+		NamesProgram: namesProgram != nil && *namesProgram}, *host, nil
 }
 
 func decodeRecords(body io.Reader) (recordsRequest, error) {
@@ -106,7 +116,7 @@ func decodeRecords(body io.Reader) (recordsRequest, error) {
 	if err := decodeStrict(body, &w); err != nil {
 		return recordsRequest{}, err
 	}
-	u, host, err := common(w.Schema, w.Runtime, w.Host, w.From, w.To, w.Declared)
+	u, host, err := common(w.Schema, w.Runtime, w.Host, w.From, w.To, w.Declared, w.NamesProgram)
 	if err != nil {
 		return recordsRequest{}, err
 	}
@@ -144,7 +154,7 @@ func decodeBlob(body io.Reader) (blobRequest, error) {
 	if err := decodeStrict(body, &w); err != nil {
 		return blobRequest{}, err
 	}
-	u, host, err := common(w.Schema, w.Runtime, w.Host, w.From, w.To, w.Declared)
+	u, host, err := common(w.Schema, w.Runtime, w.Host, w.From, w.To, w.Declared, w.NamesProgram)
 	if err != nil {
 		return blobRequest{}, err
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -492,5 +493,76 @@ func TestTheOwnerIsCheckedOnEveryRequest(t *testing.T) {
 	g.unheld.Store(false)
 	if rec := g.do(http.MethodPost, recordsPath, captureA, recordsBody("host-a", "100", "200", "turn two")); rec.Code != http.StatusOK {
 		t.Fatalf("the refusal was counted toward the lockout: the held owner now answers %d", rec.Code)
+	}
+}
+
+// TestNamesProgramIsGrowOnly: the wire's optional `names_program` (#312 round 1) is the agent's F1
+// evidence, and the pod ORs it into the stored session — on a records upload and on a blob upload —
+// and NEVER clears it: a later upload that sends `false`, or omits the key, leaves a stored true.
+// The pod can take the agent's word because the field can only RESTRICT who reads the session.
+func TestNamesProgramIsGrowOnly(t *testing.T) {
+	with := func(body, v string) string {
+		return strings.Replace(body, `"declared_scopes":[],`, `"declared_scopes":[],"names_program":`+v+`,`, 1)
+	}
+	// from is the cursor step i resumes from: "" for the first upload, then the previous step's `to`.
+	from := func(prefix string, i int) string {
+		if i == 0 {
+			return ""
+		}
+		return prefix + strconv.Itoa(i)
+	}
+	for _, tc := range []struct {
+		name string
+		path string
+		body func(i int) string
+	}{
+		{"records", recordsPath,
+			func(i int) string { return recordsBody("host-a", from("", i), strconv.Itoa(i+1), "synthetic text") }},
+		{"blob", blobPath,
+			func(i int) string {
+				return blobBody("host-a", from("v", i), "v"+strconv.Itoa(i+1), []byte("synthetic blob "+strconv.Itoa(i)))
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newRig(t, true, nil)
+			names := func() bool {
+				m, err := g.arc.ReadMeta("s-0001")
+				if err != nil || m == nil {
+					t.Fatalf("meta %v %v", m, err)
+				}
+				return m.NamesProgram
+			}
+			// Absent first: the field is optional, and the pod's own derivation finds nothing here.
+			steps := []struct {
+				v, why string
+				want   bool
+			}{
+				{"", "absent", false},
+				{"true", "true", true},
+				{"false", "an explicit false after a true", true},
+				{"", "absent after a true", true},
+			}
+			for i, st := range steps {
+				body := tc.body(i)
+				if st.v != "" {
+					body = with(body, st.v)
+				}
+				if rec := g.do(http.MethodPost, tc.path, captureA, body); rec.Code != http.StatusOK {
+					t.Fatalf("step %d (%s) answered %d %q", i, st.why, rec.Code, rec.Body.String())
+				}
+				if got := names(); got != st.want {
+					t.Fatalf("step %d (%s): stored names_program %v, want %v", i, st.why, got, st.want)
+				}
+			}
+		})
+	}
+	// The wire stays strict around it: a non-boolean is refused, and nothing is stored.
+	g := newRig(t, true, nil)
+	if rec := g.do(http.MethodPost, recordsPath, captureA,
+		with(recordsBody("host-a", "", "1", "t"), `"yes"`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a string names_program answered %d, want 400", rec.Code)
+	}
+	if roots, _ := g.arc.Roots(); len(roots) != 0 {
+		t.Fatalf("a refused body stored %v", roots)
 	}
 }

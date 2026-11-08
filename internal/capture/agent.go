@@ -826,7 +826,11 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 			failed = err
 		}
 	}
-	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.Declared}
+	// 🔴 `NamesProgram` ON EVERY WRITE (#312 round 1): the pod derives F1's evidence only from the
+	// tool inputs it STORES, so if the stream holding the call fails while a blob ships, the pod
+	// would hold the session with no F1 and serve it by its headers alone.
+	up := Upload{Instance: ss.Instance, Root: cs.Root, Runtime: "claude", Declared: ss.Declared,
+		NamesProgram: ss.Evidence.NamesProgram}
 	shippedAny, err := a.shipLedger(up, []string{cs.Root}, ss, sum)
 	fail(err)
 	for _, p := range pend {
@@ -1121,7 +1125,9 @@ func (a *Agent) runOpencode(lr listedRoot, sum *Summary) (err error) {
 	}
 	defer func() { completed = err == nil && ss.opencodeComplete(streams) }()
 	var failed error
-	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.Declared}
+	// `NamesProgram` on every write, as at the Claude Code site (#312 round 1).
+	up := Upload{Instance: ss.Instance, Root: root, Runtime: "opencode", Declared: ss.Declared,
+		NamesProgram: ss.Evidence.NamesProgram}
 	shippedAny, failed := a.shipLedger(up, append([]string{root}, children...), ss, sum)
 	for _, s := range streams {
 		st := ss.stream(s.name)

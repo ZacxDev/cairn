@@ -25,7 +25,12 @@ type Record struct {
 type Upload struct {
 	Instance, Root, Runtime string
 	Declared                []string
-	From                    string
+	// NamesProgram is the session's F1 evidence ([scopeuse.Evidence]'s NamesProgram: some tool input
+	// names the program), sent on EVERY write of the session as the wire's `names_program` so that
+	// whichever upload lands first carries it — the pod derives it only from the stored records, and
+	// the record that names the program may be in a stream whose upload failed (#312 round 1).
+	NamesProgram bool
+	From         string
 	// Rechecked names what the pod's re-check ALREADY refused, by record `src` ("" is the blob of
 	// a Blob write): the sink sends its placeholder at once and never its bytes.
 	Rechecked map[string]bool

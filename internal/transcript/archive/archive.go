@@ -24,7 +24,9 @@
 // empty") is NOT derived into that set: since S11 (#266) the pod holds the uploaded client read
 // LEDGER and decides F1 at view time from it ([Meta.LedgerScopes]), and the agent does not declare F1
 // either — so a session that names `cairn` is `*` (owner-only, decision 4) only until its ledger
-// arrives. See [derive].
+// arrives. See [derive]. F1's EVIDENCE ("a tool input names the program") is the pod's own derivation
+// OR'd with the agent's `names_program` on any upload ([Upload.NamesProgram], #312), because the
+// derivation sees tool inputs only in the records that actually landed.
 //
 // Layout under the configured directory (decision 15, with one deviation stated):
 //
@@ -203,7 +205,17 @@ type Upload struct {
 	Runtime  string
 	From, To string
 	Declared []string
-	Frame    *Frame
+	// NamesProgram is the AGENT's F1 evidence for the session (the wire's optional `names_program`):
+	// some tool input of the session names the program. [Archive.commit] ORs it into
+	// [Meta.NamesProgram], grow-only — a false never clears a stored true.
+	//
+	// 🔴 WHY THE POD TAKES THE AGENT'S WORD HERE (#312 round 1): it can only RESTRICT. True makes
+	// [Meta.LedgerScopes] add `*` while the ledger is empty; false adds nothing. And the pod's own
+	// derivation cannot be relied on for it: it reads tool inputs only from stored RECORDS, so when
+	// the stream holding the call failed to upload while a blob or another stream shipped, the pod
+	// stored a session whose `V` was only its headers, readable by a non-owner.
+	NamesProgram bool
+	Frame        *Frame
 }
 
 // Stored is a successful upload's answer.
@@ -599,7 +611,8 @@ type Meta struct {
 	Ledger        []string `json:"ledger_scopes,omitempty"`
 	LedgerRecords int      `json:"ledger_records,omitempty"`
 	// NamesProgram is F1's evidence: some stored tool input names `cairn` or `subsystem-recall`
-	// (`scopeuse`). Grow-only; F1 itself is [Meta.LedgerScopes]'s question.
+	// (`scopeuse`), OR some upload of the session carried the agent's `names_program`
+	// ([Upload.NamesProgram], #312). Grow-only; F1 itself is [Meta.LedgerScopes]'s question.
 	NamesProgram bool `json:"names_program,omitempty"`
 	// Children is every opencode child id uploaded as a `child:` stream (decision 7: trailers
 	// naming the child count toward the root's `V`).
@@ -1173,7 +1186,8 @@ func (a *Archive) ensureSession(m *Meta, who Uploader, u Upload) (string, *Meta,
 func (a *Archive) commit(dir string, m *Meta, u Upload, found derived) error {
 	m.Declared = union(m.Declared, u.Declared)
 	m.Derived = union(m.Derived, found.Scopes)
-	m.NamesProgram = m.NamesProgram || found.NamesProgram
+	// Grow-only from BOTH sources: the pod's own derivation and the agent's word ([Upload.NamesProgram]).
+	m.NamesProgram = m.NamesProgram || found.NamesProgram || u.NamesProgram
 	m.UpdatedAt = a.cfg.Now().UTC()
 	before := fileSize(filepath.Join(dir, metaName))
 	if err := writeMeta(dir, m); err != nil {

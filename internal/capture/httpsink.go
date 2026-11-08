@@ -477,11 +477,16 @@ func (s *HTTPSink) header(u Upload, from, to string) []byte {
 		From     string   `json:"from"`
 		To       string   `json:"to"`
 		Declared []string `json:"declared_scopes"`
+		// 🔴 OMITTED WHEN FALSE: a pod older than the field refuses it as an unknown key (400), and
+		// nothing in capture/v1 advertises it — so only a session with F1 evidence is refused by such
+		// a pod (400, retried next run, nothing stored, not held), never every session. Upgrade pods first.
+		NamesProgram bool `json:"names_program,omitempty"`
 	}
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
-	_ = enc.Encode(head{Schema: WireSchema, Runtime: u.Runtime, Host: s.Host, From: from, To: to, Declared: declared(u.Declared)})
+	_ = enc.Encode(head{Schema: WireSchema, Runtime: u.Runtime, Host: s.Host, From: from, To: to, Declared: declared(u.Declared),
+		NamesProgram: u.NamesProgram})
 	out := bytes.TrimSpace(b.Bytes())
 	return out[:len(out)-1] // drop the closing brace
 }
