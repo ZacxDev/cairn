@@ -105,14 +105,18 @@ type SessionState struct {
 	// Deleted names the instance that answered 410 for this session: its transcript was deleted
 	// there (by its owner, a withdrawal or retention), which is FINAL — nothing of the session is
 	// read, derived or sent again. "" when no instance has said so.
-	Deleted string   `json:"deleted,omitempty"`
-	V       []string `json:"v,omitempty"`
-	// Declared is what the agent DECLARES to the pod: `V` without F1's `*` ([scopeuse.Result]'s
-	// `Declare`), grow-only. F1 asks "is the ledger EMPTY" and the pod decides it ITSELF, at view
-	// time, from the ledger it holds — a `*` declared here while this run's ledger was empty would
-	// sit in the pod's grow-only `declared_scopes` and make the session owner-only for good, after
-	// the ledger that answers F1 had landed (#266's audit). `V` keeps F1 for ROUTING, which must
-	// hold a session whose reads nothing names.
+	Deleted string `json:"deleted,omitempty"`
+	// V is what routing reads, grow-only: [scopeuse.Result]'s `Declare` accumulated, so WITHOUT F1's
+	// `*` (#309). F1 asks "is the ledger EMPTY" — a fact about ONE run — and reaches routing for that
+	// run only ([DecideRun]); persisted here, a pass that ran before the ledger line landed froze `*`
+	// for good, and every later run placed the session owner-only on the default instance and
+	// declared it so.
+	V []string `json:"v,omitempty"`
+	// Declared is what the agent DECLARES to the pod, grow-only: `V`, plus the `*` [Agent.route]
+	// adds for an owner-only decision that is not F1's alone ([Decision.DeclaresStar]). F1 the pod
+	// decides ITSELF, at view time, from the ledger it holds — a `*` declared here while this run's
+	// ledger was empty would sit in the pod's grow-only `declared_scopes` and make the session
+	// owner-only for good, after the ledger that answers F1 had landed (#266's audit, #309).
 	Declared []string `json:"declared,omitempty"`
 	// OpencodeUpdated and OpencodeExportedAt are an opencode root's export-skip record
 	// ([Agent.exportSettled]): the `updated` its `session list` row carried (epoch ms) at the last

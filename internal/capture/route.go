@@ -14,12 +14,42 @@ type Decision struct {
 	// to an instance this run has no `-worker` for, and it is bound to a DIFFERENT non-default one
 	// ([RepoRules.place]). Not final, unlike Held.
 	Deferred bool
-	// OwnerOnly is "ship this session, but declare it owner-only": it carries `*` (a visibility
-	// statement, not a scope — see [Decide]) or it read scopes on TWO instances and has been placed
-	// on the default one anyway. [Agent.route] adds `*` to the session's `Declared` set so the pod
-	// stores it owner-only.
-	OwnerOnly bool
-	Reason    string
+	// OwnerOnly is "ship this session to the default instance, owner-only": it carries `*` (a
+	// visibility statement, not a scope — see [Decide]) or it read scopes on TWO instances and has
+	// been placed on the default one anyway. OwnerOnlyBy says which, and so whether [Agent.route]
+	// adds `*` to the session's `Declared` set ([Decision.DeclaresStar]).
+	OwnerOnly   bool
+	OwnerOnlyBy OwnerOnlyCause
+	Reason      string
+}
+
+// OwnerOnlyCause is WHY a [Decision] is owner-only. The causes differ in one thing that matters:
+// whether the owner-only statement is a fact about the session that holds for good, and so belongs
+// in the grow-only `Declared` set the pod keeps, or a fact about THIS RUN only.
+type OwnerOnlyCause int
+
+const (
+	// NotOwnerOnly is the zero value: the decision is not owner-only.
+	NotOwnerOnly OwnerOnlyCause = iota
+	// OwnerOnlyUnledgered: the only `*` is F1's — the session's inputs name the program and its read
+	// ledger is EMPTY on this run ([scopeuse.Result]'s F1). 🔴 NOT DECLARED (#309): the ledger line
+	// that answers F1 lands later, and the pod applies F1 ITSELF at view time from the ledger it
+	// holds, so it needs no `*` from here. Declared, `*` sat in the pod's grow-only
+	// `declared_scopes` and kept the session owner-only after its ledger landed.
+	OwnerOnlyUnledgered
+	// OwnerOnlyStar: a `*` the session's own evidence records — a ledger record, a header, F2.
+	// Declared.
+	OwnerOnlyStar
+	// OwnerOnlyCrossInstance: the session's recorded scopes route to two instances (#308). Declared:
+	// it is the only thing keeping the other instance's bytes from a reader who could not see them
+	// there.
+	OwnerOnlyCrossInstance
+)
+
+// DeclaresStar is whether this decision's owner-only statement must be written into the session's
+// grow-only `Declared` set — every owner-only cause but F1's ([OwnerOnlyUnledgered]).
+func (d Decision) DeclaresStar() bool {
+	return d.OwnerOnly && d.OwnerOnlyBy != OwnerOnlyUnledgered
 }
 
 // Decide is decision 16: the instance that routes EVERY scope in V — writes AND reads.
@@ -57,25 +87,31 @@ type Decision struct {
 //
 // It uses `internal/client`'s routing (`Routing.AliasFor`), the same resolver every `cairn` write
 // uses — never a second spelling of the table.
+//
+// Every `*` in `v` is the session's own (a ledger record, a header, F2); this run's F1 is
+// [DecideRun]'s `f1`.
 func Decide(v []string, repo Repo, routing client.Routing, rules RepoRules) Decision {
-	if len(v) == 0 {
+	return DecideRun(v, false, repo, routing, rules)
+}
+
+// DecideRun is [Decide] over `v` plus, when `f1` holds, F1's `*` for THIS RUN — the session's inputs
+// name the program and its read ledger is empty now ([scopeuse.Result]'s F1). It routes exactly as
+// `v ∪ {*}` would; the one difference is the decision's [OwnerOnlyCause]: when F1's is the ONLY `*`
+// and no two recorded scopes disagree, it is [OwnerOnlyUnledgered], which is not declared (#309).
+//
+// 🔴 TWO RECORDED SCOPES DISAGREE ONLY WHEN THEY ROUTE TO DIFFERENT INSTANCES THEMSELVES. A `*`
+// forcing the default instance does not make a session whose only scope routes elsewhere
+// "cross-instance": that answer would declare `*` for good on the strength of F1's one-run `*`.
+func DecideRun(v []string, f1 bool, repo Repo, routing client.Routing, rules RepoRules) Decision {
+	if len(v) == 0 && !f1 {
 		return decideByRepo(repo, routing, rules)
 	}
 	multi := routing.MultiInstance()
 	target := ""
-	ownerOnly, ownerOnlyWhy := false, ""
+	recordedStar, cross, crossWhy := false, false, ""
 	for _, scope := range v {
 		if scope == scopeuse.Star {
-			if multi {
-				// See the doc comment: `*` narrows who may READ the session; it does not decide
-				// where the session lives, and it does not "vote" for the instance its other scopes
-				// name either — it forces the DEFAULT one. Otherwise the answer would depend on the
-				// ORDER of V (`{*, beta-notes}` → personal, `{beta-notes, *}` → client), and the
-				// conservative direction is the one that keeps content that may belong to either
-				// instance off the non-default one.
-				ownerOnly, ownerOnlyWhy = true, "an unknown scope (*)"
-				target = client.DefaultAlias
-			}
+			recordedStar = true
 			continue
 		}
 		alias, err := routing.AliasFor(scope)
@@ -93,22 +129,34 @@ func Decide(v []string, repo Repo, routing client.Routing, rules RepoRules) Deci
 			}
 			continue
 		}
-		if target == "" {
+		switch {
+		case target == "":
 			target = alias
-			continue
-		}
-		if alias != target {
+		case alias != target && !cross:
 			// Two instances, one session: place it on the default one, owner-only.
-			ownerOnly, ownerOnlyWhy = true, "its scopes route to two instances ("+target+", "+alias+")"
-			target = client.DefaultAlias
+			cross, crossWhy = true, "its scopes route to two instances ("+target+", "+alias+")"
 		}
 	}
-	if target == "" {
+	why, by := "", NotOwnerOnly
+	switch {
+	case cross:
+		why, by = crossWhy, OwnerOnlyCrossInstance
+	case multi && recordedStar:
+		// See the doc comment: `*` narrows who may READ the session; it does not decide where the
+		// session lives, and it does not "vote" for the instance its other scopes name either — it
+		// forces the DEFAULT one. Otherwise the answer would depend on the ORDER of V
+		// (`{*, beta-notes}` → personal, `{beta-notes, *}` → client), and the conservative direction
+		// is the one that keeps content that may belong to either instance off the non-default one.
+		why, by = "an unknown scope (*)", OwnerOnlyStar
+	case multi && f1:
+		why, by = "its inputs name the program and its read ledger is empty (F1's *, not declared)", OwnerOnlyUnledgered
+	}
+	if by != NotOwnerOnly || target == "" {
 		target = client.DefaultAlias
 	}
-	if ownerOnly {
-		return Decision{Instance: target, OwnerOnly: true,
-			Reason: ownerOnlyWhy + ": shipped to " + target + ", owner-only"}
+	if by != NotOwnerOnly {
+		return Decision{Instance: target, OwnerOnly: true, OwnerOnlyBy: by,
+			Reason: why + ": shipped to " + target + ", owner-only"}
 	}
 	return Decision{Instance: target, Reason: "every scope routes to " + target}
 }

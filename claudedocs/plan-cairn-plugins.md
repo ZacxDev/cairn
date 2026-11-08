@@ -959,6 +959,11 @@ script that prints only counts.
      capture agent DECLARES `V` without F1's `*` (it keeps F1 for its own routing and hold
      decision). The cost is the one T3 already accepts: the ledger is self-reported, so a forged
      record lifts F1 — as a forged or deleted one already shrinks `L`.
+     *As built (#312):* the EVIDENCE is the pod's own derivation OR'd with the agent's
+     `names_program` on any upload of the session. The pod reads tool inputs only in the records
+     that landed, so a session whose program-naming stream failed while a blob or another stream
+     shipped was stored with no F1 and served by its headers alone; the agent's flag can only
+     restrict, so the pod takes it.
    - **Cost.** `R_header`, `L`, `F` and `D` are computed once per upload and stored in
      `meta.json` (grow-only — except F1's `*`, above). `W_trailer` changes whenever anyone writes a trailer, so it is a
      whole-store walk at view time — unmeasured for this design. S4 benchmarks it beside
@@ -1569,6 +1574,9 @@ POST {worker}/capture/v1/sessions/{root}/streams/{stream}/records
   body: {"schema":1, "runtime":"claude|opencode", "host":"host-a",
          "from":"<offset or version cursor>", "to":"<…>",
          "declared_scopes":["alpha-notes"],          # grows only
+         "names_program":true?,                      # (#312) optional, absent = false; OR'd into
+                                                     # the session's grow-only names_program; the
+                                                     # agent sends it only when true. Blobs too.
          "records":[{"src":"<offset|part-id@ms>", "rec":{…redacted raw record…}}],
          "frames":{"index":i, "count":n}?}          # only for a record split across requests
   200 {"stored_to":"<…>", "seq_to":N}

@@ -31,10 +31,14 @@ operator's act.
 2. **Derives `V`'s read half** with `internal/transcript/scopeuse` over the new records, the
    persisted evidence of earlier runs, and the client read ledgers of the root and every child —
    a UNION with the stored `V`, so a deleted ledger cannot shrink it.
-3. **Routes** (`Decide`, decision 16) over `V` *including* the records about to ship. `*` in `V` is a
-   VISIBILITY statement, not a scope: on a host with more than one instance it forces the DEFAULT
-   instance and the session is shipped OWNER-ONLY (`OwnerOnly`, which `Agent.route` writes into
-   `Declared`, so the pod stores it owner-only). A session whose scopes name TWO instances is placed
+3. **Routes** (`DecideRun`, decision 16) over `V` *including* the records about to ship, plus this
+   run's F1. `*` in `V` is a VISIBILITY statement, not a scope: on a host with more than one instance
+   it forces the DEFAULT instance and the session is shipped OWNER-ONLY (`OwnerOnly`). `Agent.route`
+   writes that `*` into `Declared` — so the pod stores it owner-only — for every cause EXCEPT F1
+   alone (`OwnerOnlyUnledgered`, #309): F1's `*` is a fact about one run, and the pod decides F1
+   itself from the ledger it holds and the session's `names_program`, which EVERY upload of the
+   session carries when its evidence says a tool input names the program (#312 — so the pod has it
+   even when the stream holding that tool input failed to upload). A session whose scopes name TWO instances is placed
    on the default instance OWNER-ONLY for the same reason — the trade the operator accepted on
    and the reason a cross-instance session is no longer held. A scope the routing table
    explicitly sends to an unconfigured alias is still HELD at any instance count: the table says it
