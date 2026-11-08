@@ -81,8 +81,8 @@ func TestParseExportAcceptsTheV2MessageShape(t *testing.T) {
 	    {"id":"msg_2","type":"assistant","time":{"created":2},
 	     "content":[
 	       {"type":"reasoning","text":"thinking"},
-	       {"type":"tool","id":"call_1","name":"task",
-	        "state":{"status":"completed","input":{},"metadata":{"sessionId":"ses_child"}}},
+	       {"type":"tool","id":"call_1","name":"subagent",
+	        "state":{"status":"completed","input":{},"metadata":{"sessionID":"ses_child"}}},
 	       {"type":"text","text":"done"}
 	     ]}
 	  ]}`
@@ -129,8 +129,8 @@ func TestParseExportAcceptsTheV2MessageShape(t *testing.T) {
 		if got["messageID"] != "msg_2" {
 			t.Fatalf("prt:call_1 messageID = %v, want msg_2", got["messageID"])
 		}
-		if got["tool"] != "task" {
-			t.Fatalf("prt:call_1 tool = %v, want task (v2 names it `name`)", got["tool"])
+		if got["tool"] != "subagent" {
+			t.Fatalf("prt:call_1 tool = %v, want subagent (v2 names it `name`)", got["tool"])
 		}
 	}
 	var textPart bool
@@ -143,11 +143,107 @@ func TestParseExportAcceptsTheV2MessageShape(t *testing.T) {
 		t.Fatalf("the id-less `content` parts were dropped; keys=%v", order)
 	}
 	if len(children) != 1 || children[0] != "ses_child" {
-		t.Fatalf("children = %v, want [ses_child] from the `task` part", children)
+		t.Fatalf("children = %v, want [ses_child] from the `subagent` part", children)
 	}
 
 	// Still FAIL-CLOSED: a message with no id is not a document this can vouch for.
 	if _, _, err := parseExport([]byte(`{"info":{"id":"s"},"messages":[{"type":"user"}]}`)); err == nil {
 		t.Fatal("a v2 message with no id must refuse, not ship")
+	}
+}
+
+// v2SubagentExport is the STRUCTURE of a real opencode v2 (2.0.32) `session export` of a root that
+// ran subagents: every key and nesting level as opencode wrote it, every value a placeholder. It
+// carries the three subagent part shapes measured in real output:
+//
+//   - a first call: `name:"subagent"`, the child id in `state.metadata.sessionID`, none in `input`;
+//   - a second call naming a DIFFERENT child;
+//   - a RESUMED call: the child id repeated in `state.input.sessionID` AND `state.metadata.sessionID`.
+//
+// plus a `shell` tool part, whose real metadata (`exit`/`status`/`truncated`) names no session.
+const v2SubagentExport = `{
+ "info":{"id":"ses_root","projectID":"P","agent":"A","model":{"id":"M","providerID":"P","variant":"V"},
+   "cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},
+   "outcome":"O","time":{"created":1,"updated":1,"idle":1,"viewed":1},"title":"T","location":{"directory":"D"}},
+ "messages":[
+  {"id":"msg_u1","time":{"created":1},"text":"PLACEHOLDER","files":[],"agents":[],"type":"user"},
+  {"id":"msg_a1","time":{"created":2,"streamed":2,"completed":2},"type":"assistant","agent":"A",
+   "model":{"id":"M","providerID":"P","variant":"V"},
+   "content":[
+    {"type":"reasoning","text":"PLACEHOLDER","state":{"reasoningField":"R","reasoningDetails":[{"type":"R","text":"PLACEHOLDER","format":"F","index":0}]},"time":{"created":2,"completed":2}},
+    {"type":"tool","id":"call_shell","name":"shell","executed":false,
+     "state":{"status":"completed","input":{"command":"PLACEHOLDER"},"content":[{"type":"text","text":"PLACEHOLDER"}],
+       "metadata":{"exit":0,"status":"completed","truncated":false}},
+     "time":{"created":2,"ran":2,"completed":2}},
+    {"type":"tool","id":"call_sub_a","name":"subagent","executed":false,
+     "state":{"status":"completed","input":{"description":"PLACEHOLDER","agent":"general","prompt":"PLACEHOLDER"},
+       "content":[{"type":"text","text":"PLACEHOLDER"}],
+       "metadata":{"sessionID":"ses_child_a","status":"completed","truncated":false}},
+     "time":{"created":2,"ran":2,"completed":2}},
+    {"type":"tool","id":"call_sub_b","name":"subagent","executed":false,
+     "state":{"status":"completed","input":{"description":"PLACEHOLDER","agent":"general","prompt":"PLACEHOLDER"},
+       "content":[{"type":"text","text":"PLACEHOLDER"}],
+       "metadata":{"sessionID":"ses_child_b","status":"completed","truncated":false}},
+     "time":{"created":2,"ran":2,"completed":2}},
+    {"type":"text","text":"PLACEHOLDER"}
+   ],
+   "snapshot":{"start":"S","end":"S","files":[]},"finish":"F","rawFinish":"F","cost":0,
+   "tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}},
+  {"id":"msg_a2","time":{"created":3,"streamed":3,"completed":3},"type":"assistant","agent":"A",
+   "model":{"id":"M","providerID":"P","variant":"V"},
+   "content":[
+    {"type":"tool","id":"call_sub_a_resumed","name":"subagent","executed":false,
+     "state":{"status":"completed","input":{"agent":"general","description":"PLACEHOLDER","sessionID":"ses_child_a","prompt":"PLACEHOLDER"},
+       "content":[{"type":"text","text":"PLACEHOLDER"}],
+       "metadata":{"sessionID":"ses_child_a","status":"completed","truncated":false}},
+     "time":{"created":3,"ran":3,"completed":3}}
+   ],
+   "snapshot":{"start":"S","end":"S","files":[]},"finish":"F","rawFinish":"F","cost":0,
+   "tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}
+ ]}`
+
+// TestParseExportFindsTheChildrenOfARealV2Root is the regression test for opencode v2's subagent
+// rename: v2 calls the tool `subagent` (v1: `task`) and keeps the child id in
+// `state.metadata.sessionID` (v1: `sessionId`). The predicate still asked for the v1 spellings, so
+// EVERY v2 root shipped with zero children — no child stream was ever captured.
+func TestParseExportFindsTheChildrenOfARealV2Root(t *testing.T) {
+	units, children, err := parseExport([]byte(v2SubagentExport))
+	if err != nil {
+		t.Fatalf("the real v2 shape must parse, got %v", err)
+	}
+	if len(units) == 0 {
+		t.Fatal("no units from the real v2 shape")
+	}
+	if len(children) == 0 {
+		t.Fatalf("children = %v: a v2 root with two subagent children yielded NONE "+
+			"(the `subagent` part or its `state.metadata.sessionID` was not recognized)", children)
+	}
+	// Two distinct children; the resumed call repeats ses_child_a and must not double it.
+	if len(children) != 2 || children[0] != "ses_child_a" || children[1] != "ses_child_b" {
+		t.Fatalf("children = %v, want [ses_child_a ses_child_b] (the resumed call deduped, the shell part ignored)", children)
+	}
+}
+
+// TestTaskChildReadsBothSpellings pins the ONE predicate across both opencode generations, so the
+// v1 path the synthetic world exercises and the v2 path above stay one rule.
+func TestTaskChildReadsBothSpellings(t *testing.T) {
+	part := func(tool string, md map[string]any) map[string]any {
+		return map[string]any{"type": "tool", "tool": tool, "state": map[string]any{"metadata": md}}
+	}
+	for _, c := range []struct {
+		name string
+		part map[string]any
+		want string
+	}{
+		{"v1 task/sessionId", part("task", map[string]any{"sessionId": "ses_v1"}), "ses_v1"},
+		{"v2 subagent/sessionID", part("subagent", map[string]any{"sessionID": "ses_v2"}), "ses_v2"},
+		{"other tool with a session id", part("shell", map[string]any{"sessionID": "ses_no"}), ""},
+		{"subagent with no id yet", part("subagent", map[string]any{"status": "running"}), ""},
+		{"not a tool part", map[string]any{"type": "text", "tool": "subagent",
+			"state": map[string]any{"metadata": map[string]any{"sessionID": "ses_no"}}}, ""},
+	} {
+		if got := taskChild(c.part); got != c.want {
+			t.Errorf("%s: taskChild = %q, want %q", c.name, got, c.want)
+		}
 	}
 }

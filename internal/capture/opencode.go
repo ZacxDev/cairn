@@ -223,16 +223,23 @@ func decodePart(raw json.RawMessage) (map[string]any, error) {
 	return part, nil
 }
 
-// taskChild is the child session a `task` tool part names, or "". ONE predicate, shared by both
+// taskChild is the child session a subagent tool part names, or "". ONE predicate, shared by both
 // shapes — the tool's own name field is `tool` on v1 and `name` on v2, normalized by v2Part.
+//
+// 🔴 v2 RENAMED BOTH HALVES (measured on opencode 2.0.32): the tool is `subagent` (v1: `task`) and
+// the child id is `state.metadata.sessionID` (v1: `sessionId`). Asking for the v1 spellings alone
+// found zero children on every v2 root. A RESUMED v2 call repeats the id (also in
+// `state.input.sessionID`); [dedupe] collapses the repeat.
 func taskChild(part map[string]any) string {
-	if part["type"] != "tool" || part["tool"] != "task" {
+	if part["type"] != "tool" || (part["tool"] != "task" && part["tool"] != "subagent") {
 		return ""
 	}
 	state, _ := part["state"].(map[string]any)
 	md, _ := state["metadata"].(map[string]any)
-	if child, ok := md["sessionId"].(string); ok {
-		return child
+	for _, key := range []string{"sessionID", "sessionId"} {
+		if child, ok := md[key].(string); ok && child != "" {
+			return child
+		}
 	}
 	return ""
 }
