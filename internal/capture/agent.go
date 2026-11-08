@@ -538,13 +538,15 @@ func union(a, b []string) []string {
 // state that still said "nowhere", so when the routing answer later changed there was no instance
 // to withdraw from and the prefix stayed where the rule says it must not be. Every change of
 // `Instance` or `Held` made here is checkpointed AT ONCE, and a save that fails sends nothing.
-func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, reset bool, err error) {
+//
+// `f1` is this run's F1 ([scopeuse.Result]): routed on, never persisted ([DecideRun]).
+func (a *Agent) route(root string, ss *SessionState, f1 bool, sum *Summary) (ship bool, reset bool, err error) {
 	// 🔴 THE REPO ARM GOES THROUGH THIS SAME PATH, AND THAT IS HOW AN ALREADY-SHIPPED SESSION MOVES.
 	// A session with no recorded scope that an earlier version bound to the default instance gets a
 	// different answer here once its repo routes elsewhere — and a changed answer for a bound
 	// session is a MOVE like any other: destination probed, prefix withdrawn, whole session
 	// re-shipped from offset 0. Nothing about the repo arm bypasses the withdrawal.
-	dec := Decide(ss.V, a.sessionRepo(ss), a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: ss.Instance})
+	dec := DecideRun(ss.V, f1, a.sessionRepo(ss), a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: ss.Instance})
 	if dec.Deferred {
 		// Before ANY request: no probe, no withdrawal, nothing shipped; the session's refusal for this
 		// run, retried on the next ([RepoRules.place]).
@@ -614,7 +616,11 @@ func (a *Agent) route(root string, ss *SessionState, sum *Summary) (ship bool, r
 	// a placed cross-instance session from anyone but its owner; nothing later can take it back,
 	// which is the point. V only grows, so the decision itself is stable — but it must not depend on
 	// re-deriving it after the bytes have already landed, which is why it is saved BEFORE the ship.
-	if dec.OwnerOnly {
+	//
+	// 🔴 EXCEPT AN OWNER-ONLY THAT IS F1's ALONE (#309, [OwnerOnlyUnledgered]): that one is a fact
+	// about this run, the pod applies F1 itself from the ledger it holds, and a `*` written here
+	// would outlive the ledger line that answers it.
+	if dec.DeclaresStar() {
 		// `union` is the package's one spelling of a grow-only union (sorted, deduped), so this is
 		// "add `*` if it is not already there" without a second membership predicate.
 		if merged := union(ss.Declared, []string{scopeuse.Star}); len(merged) != len(ss.Declared) {
@@ -783,13 +789,16 @@ func (a *Agent) runClaude(cs claudeSession, sum *Summary) error {
 	a.foldLedger(d, cs.Root)
 	res := d.Result()
 	ss.Evidence = d.Evidence()
-	ss.V = union(ss.V, res.V)
+	// 🔴 `V` PERSISTS `Declare`, NOT `res.V` (#309): F1's `*` is a fact about THIS RUN ("the ledger is
+	// empty now"), and `V` is grow-only, so persisting it froze `*` for good once a pass ran before the
+	// ledger line landed. F1 reaches routing as `res.F1`, for this run only ([DecideRun]).
+	ss.V = union(ss.V, res.Declare)
 	ss.Declared = union(ss.Declared, res.Declare)
 	if len(ss.V) == 0 && ss.Dir == "" {
 		ss.Dir = claudeCwd(cs.Streams["main"])
 	}
 
-	ship, reset, err := a.route(cs.Root, ss, sum)
+	ship, reset, err := a.route(cs.Root, ss, res.F1, sum)
 	if err != nil || !ship {
 		return err
 	}
@@ -1088,13 +1097,16 @@ func (a *Agent) runOpencode(lr listedRoot, sum *Summary) (err error) {
 	}
 	res := d.Result()
 	ss.Evidence = d.Evidence()
-	ss.V = union(ss.V, res.V)
+	// 🔴 `V` PERSISTS `Declare`, NOT `res.V` (#309): F1's `*` is a fact about THIS RUN ("the ledger is
+	// empty now"), and `V` is grow-only, so persisting it froze `*` for good once a pass ran before the
+	// ledger line landed. F1 reaches routing as `res.F1`, for this run only ([DecideRun]).
+	ss.V = union(ss.V, res.Declare)
 	ss.Declared = union(ss.Declared, res.Declare)
 	if len(ss.V) == 0 && ss.Dir == "" {
 		ss.Dir = lr.Directory
 	}
 
-	ship, reset, err := a.route(root, ss, sum)
+	ship, reset, err := a.route(root, ss, res.F1, sum)
 	if err != nil || !ship {
 		return err
 	}

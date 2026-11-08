@@ -234,8 +234,8 @@ func TestARewritePastTheFingerprintIsRefused(t *testing.T) {
 }
 
 // TestTheAgentDoesNotDeclareF1 (#266's audit): F1's `*` — inputs name the program and the ledger is
-// EMPTY — stays in the agent's own `V` (routing must still treat the session as unknown) but is NOT
-// DECLARED to the pod, which decides F1 itself at view time from the ledger it holds. Declared, it
+// EMPTY — is routed on for the run it holds (routing must still treat the session as unknown) but is
+// NOT DECLARED to the pod, which decides F1 itself at view time from the ledger it holds. Declared, it
 // would sit in the pod's grow-only `declared_scopes` and keep the session owner-only after its
 // ledger landed. The control: what the session's headers name IS declared.
 //
@@ -249,8 +249,10 @@ func TestTheAgentDoesNotDeclareF1(t *testing.T) {
 	a.OpencodeDirs = []string{"/work/alpha"}
 	mustRun(t, a)
 	root := w.Sessions["oc-root"].ID
-	if got := a.State.Sessions[root].V; !slices.Contains(got, "*") {
-		t.Fatalf("the fixture: with no ledger the program-naming inputs must trip F1 in V, got %v", got)
+	// F1 is a property of one run and is not persisted in V (#309): the fixture check is its input,
+	// a program-naming input recorded with no ledger on disk.
+	if !a.State.Sessions[root].Evidence.NamesProgram {
+		t.Fatal("the fixture: with no ledger the program-naming inputs must trip F1")
 	}
 	if got := e.sink.declared["personal/"+root]; !slices.Equal(got, []string{"alpha-notes"}) {
 		t.Fatalf("declared %v, want [alpha-notes] — the header's scope, and never F1's `*`", got)
@@ -259,8 +261,8 @@ func TestTheAgentDoesNotDeclareF1(t *testing.T) {
 
 // TestTheAgentDoesNotDeclareF1ForAClaudeCodeSession — the Claude Code half of the rule above, which
 // is a separate upload site (`Declared:` is spelled once per runtime in `agent.go`): a session whose
-// tool input names the program and whose ledger is EMPTY carries F1's `*` in its own `V` and does NOT
-// declare it. The control is that the session SHIPPED — the sink holds its declaration, so an empty
+// tool input names the program and whose ledger is EMPTY is routed on F1's `*` and does NOT declare
+// it. The control is that the session SHIPPED — the sink holds its declaration, so an empty
 // one below is the agent's choice, not an upload that never happened.
 //
 // RED with the Claude Code upload declaring `ss.V`: #266's audit measured that mutation leaving the
@@ -271,15 +273,15 @@ func TestTheAgentDoesNotDeclareF1ForAClaudeCodeSession(t *testing.T) {
 	a := newAgent(t, e, oneInstance, &fakeRunner{}, &bytes.Buffer{})
 	mustRun(t, a)
 	id := w.Sessions["cc-f1-empty-ledger"].ID
-	if got := a.State.Sessions[id].V; !slices.Contains(got, "*") {
-		t.Fatalf("the fixture: a program-naming input with an empty ledger must trip F1 in V, got %v", got)
+	if !a.State.Sessions[id].Evidence.NamesProgram {
+		t.Fatal("the fixture: a program-naming input with an empty ledger must trip F1")
 	}
 	declared, shipped := e.sink.declared["personal/"+id]
 	if !shipped || len(e.sink.records["personal/"+id+"/main"]) == 0 {
 		t.Fatalf("the control: the session did not ship (declared=%v), so its declaration below says nothing", declared)
 	}
 	if slices.Contains(declared, "*") {
-		t.Fatalf("declared %v — F1's `*` must stay in the agent's own V and never reach the pod", declared)
+		t.Fatalf("declared %v — F1's `*` must never reach the pod", declared)
 	}
 }
 
