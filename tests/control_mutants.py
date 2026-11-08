@@ -5271,8 +5271,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="capture-v-not-a-union",
         pkgs=PKGS + ("./internal/capture/",),
         path="internal/capture/agent.go",
-        old="\tss.V = union(ss.V, res.V)\n",
-        new="\tss.V = res.V\n",
+        old="\tss.V = union(ss.V, res.Declare)\n",
+        new="\tss.V = res.Declare\n",
         occurrences=2,
         killer="TestVOnlyGrowsWhenTheLedgerShrinks",
         why="'V is what this run derived' is the natural assignment; anything on the host can delete "
