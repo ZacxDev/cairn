@@ -4,9 +4,10 @@
 //
 // 🔴 ONE FUNCTION, TWO CALLERS, THE SAME ANSWER. `cmd/cairn-capture` computes it for ROUTING
 // (decision 16) and `cairn-ui` will re-derive it over the STORED records (S3), so an old or lying
-// agent cannot shrink `V`. Neither caller resolves a working directory or parses a shell line: a
-// command line is read for one substring (F1) and for cache-root PATHS (F2) — never decomposed
-// into commands, and never resolved against a working directory or a variable.
+// agent cannot shrink `V`. Nothing here resolves a working directory or a variable, or runs a
+// shell: a command line is read for one substring (F1), and for cache-root PATHS checked against a
+// small allowlist grammar that only ever turns a named read into `*` (F2) — never for what a
+// command it does not allow would do.
 //
 // 🔴 EVERYTHING HERE ONLY ADDS. A header quoted in prose, a spurious ledger record, an
 // over-matching F1 or F2 — each adds a scope or `*`, which hides the session from MORE people. The
@@ -30,38 +31,48 @@
 //   - F2 (named scopes folded into R_header): a tool input naming a path INTO the client cache
 //     (`<…cache…>/subsystem-store/<scope>/…`) adds that scope, because a file read from the cache
 //     never passes through the client and is never ledgered, so the path is the only record of it.
-//     A cache path it cannot attribute to ONE default-instance scope adds `*`: the bare root
-//     (`S=~/.cache/subsystem-store;`, `ls ~/.cache/subsystem-store`), a component that is not a
-//     valid scope (a glob, `$VAR`, `{a,b}`, `.sync-stamp`), ANOTHER instance's root
-//     (`subsystem-store-<alias>` — derived scopes carry no instance), a sync staging sibling
-//     (`subsystem-store.new-…`), a relative `subsystem-store/…`, a root whose parent component is
-//     a spelling this cannot read (`$C/subsystem-store/…`). 🔴 It is decided over ONE TOOL INPUT
-//     WHOLE — every string of it together (a command AND its `workdir`, a pattern AND its `path`),
-//     never string by string: an input naming a cache read adds `*` instead when ANY of its
-//     strings holds a `..` component, a cd-family word (`cd`, `pushd`, `popd`, `dirname`,
-//     `realpath`, `readlink`, in any quoting), an argument that is an ancestor of the cache root
-//     (`~/.cache`, `~`, `/`, `$HOME` …), a cache path spelled with bytes the shell rewrites
-//     (quotes, `\`, `$`, braces, a backtick, glob brackets), or a string that is nothing but a
-//     scope DIRECTORY (a working directory or a recursive root); and any input with the client's
-//     `--cache` flag adds `*`. `subsystem-store` that is NOT a cache path — a
-//     namespace (`-n subsystem-store`), a repo path (`apps/subsystem-store/…`), the config dir
-//     (`~/.config/subsystem-store/`), a file name (`check-subsystem-store.sh`), the `.lock`
-//     sibling — adds nothing ([eachCacheRead] has the exact rule).
+//     A cache path it cannot attribute to ONE default-instance scope adds `*`: the bare root, a
+//     component that is not a valid scope (a glob, `$VAR`, `{a,b}`, `.sync-stamp`), ANOTHER
+//     instance's root (`subsystem-store-<alias>`), a sync staging sibling (`subsystem-store.new-…`),
+//     a relative `subsystem-store/…`, a root whose parent component is a spelling this cannot read
+//     (`$C/subsystem-store/…`); and any input with the client's `--cache` flag adds `*`.
+//     🔴 A NAMED SCOPE IS DERIVED ONLY WHEN IT IS PROVABLE — an ALLOWLIST over ONE TOOL INPUT
+//     WHOLE, every string of it together (a command AND its `workdir`), and a failure anywhere
+//     makes the input `*`. Each string is read by its key: a bash tool's `description` is skipped;
+//     a `workdir`/`path`/`cwd`/`dir`/`directory` must be a clean absolute path that is not the
+//     cache, under it, or an ancestor of it; a `file_path`/`filePath` must be one clean cache file
+//     path; every other string is a shell line that must lex with spaces, tabs, `|`, `||`, `&&`,
+//     `;` and newlines only (no other metacharacter outside single quotes; no `/` or `..` inside
+//     them), run only `cat`/`cut`/`echo`/`grep`/`head`/`ls`/`nl`/`printf`/`tail`/`tr`/`uniq`/`wc`,
+//     have no `.`/`..` word, and have every word holding `/` be one clean, unquoted
+//     `~/`-, `/home/<u>/`- or `/root/`-`.cache/subsystem-store/<scope>/<file>` path
+//     ([shellLineProvable], [cleanCachePath], [safeDir]). So `cat`, `grep` or `head` of named
+//     cache files stays named, and almost every other shape that names the cache — a `$HOME`
+//     spelling, a redirect, `sed`, a glob, a second non-cache path — is `*`. `subsystem-store`
+//     that is NOT a cache path — a namespace (`-n subsystem-store`), a repo path
+//     (`apps/subsystem-store/…`), the config dir (`~/.config/subsystem-store/`), a file name
+//     (`check-subsystem-store.sh`), the `.lock` sibling — adds nothing ([eachCacheRead] has the
+//     exact rule).
 //
 // ⚠ WHAT IT CANNOT SEE (threat T3): a session mixing a ledger-writing client with one that writes
 // nothing (non-empty ledger, so F1 is silent); a file read of a store copy whose path lacks
 // `subsystem-store`, or lacks a `cache`-named parent component — including an explicit `--cache`
 // root under a non-cache parent read DIRECTLY (`cat /tmp/x/subsystem-store/<scope>/a.md` adds
-// nothing; only the call carrying `--cache` is `*`); an ancestor of the cache root spelled as a
-// relative path or a glob (`grep -r x .` from the home directory, `~/.c*`); a read through a variable or a
-// working directory set in an EARLIER call (`$S/notes1/x.md` after `S=~/.cache/subsystem-store`,
-// or a relative path after `cd ~/.cache/subsystem-store/notes1`) — the call that SETS a bare root
-// or `cd`s into the cache is itself `*`, so such a session is still owner-only, but one that sets
-// `S=~/.cache/subsystem-store/notes1` adds only `notes1`, and a later `$S/../alpha/x.md` is
-// unseen; a bare relative `subsystem-store` with no `/` after it (indistinguishable from the
-// namespace); a symlink into the cache; a read that bypasses the client entirely; a memo shown by
-// any path that does not print the renderer's block (a memo's text quoted without its fence, or
-// the browser tab).
+// nothing; only the call carrying `--cache` is `*`); any read that names no cache path at all,
+// such as an ancestor of the cache root spelled relatively (`grep -r x .cache` or `grep -r x` from
+// the home directory) — and the same RELATIVE word beside a named read: a word with no `/` is
+// allowed by the grammar, and resolves against a working directory the input does not fix
+// (Claude Code's, carried over from earlier calls), or against a `workdir` that is an ancestor of a
+// home directory outside `/home/<u>`, `/root` and `/Users/<u>`, so `cat ~/.cache/subsystem-store/
+// <scope>/a.md; grep -r x .cache` from the home directory adds only `<scope>`; a read through a
+// variable or a working directory set in an EARLIER call whose text names no cache path
+// (`cd ~/.cache`, then `grep -r x subsystem-store`) — a call that names one while setting a
+// variable or changing directory (`S=~/.cache/subsystem-store/notes1`, `cd …/notes1`) is itself
+// `*`, since no assignment or `cd` passes the grammar; a function or alias defined in an earlier
+// call under an allowed command's name; a bare relative `subsystem-store` with no `/` after
+// it (indistinguishable from the namespace); a symlink into the cache; a read that bypasses the
+// client entirely; a memo shown by any path that does not print the renderer's block (a memo's
+// text quoted without its fence, or the browser tab).
 package scopeuse
 
 import (
@@ -437,10 +448,32 @@ func eachJSONString(t string, emit func(string)) {
 // opencode bash input `{"command":"cat ../bb/x.md","workdir":"…/subsystem-store/aa"}` reads `bb`,
 // and neither string alone says so — the command has no cache path, the workdir no `..`. Fed one
 // string at a time it derived `[aa]` (#314 round 1).
-func (d *Deriver) ToolInputValue(v any) {
+//
+// The tool is not known here, so no string is read as free text ([role]); [Deriver.ClaudeRecord]
+// and [Deriver.OpencodePart] pass the tool's name.
+func (d *Deriver) ToolInputValue(v any) { d.toolInput("", v) }
+
+// toolInput is [Deriver.ToolInputValue] for the named tool: each TOP-LEVEL string member of the
+// input gets the role its key gives it ([keyRole]); every other string, at any depth, is a shell
+// line.
+func (d *Deriver) toolInput(tool string, v any) {
 	var ss []string
-	eachString(v, func(s string) { ss = append(ss, s) })
-	d.ToolInputStrings(ss)
+	var roles []role
+	add := func(r role) func(string) {
+		return func(s string) { ss, roles = append(ss, s), append(roles, r) }
+	}
+	if m, ok := v.(map[string]any); ok {
+		for k, e := range m {
+			if s, ok := e.(string); ok {
+				add(keyRole(tool, k))(s)
+			} else {
+				eachString(e, add(shellRole))
+			}
+		}
+	} else {
+		eachString(v, add(shellRole))
+	}
+	d.toolInputStrings(ss, roles)
 }
 
 // ToolInput records one tool input that IS one string (a raw command line). It is the
@@ -448,9 +481,46 @@ func (d *Deriver) ToolInputValue(v any) {
 func (d *Deriver) ToolInput(s string) { d.ToolInputStrings([]string{s}) }
 
 // ToolInputStrings records ONE tool input given as all its strings (a command line, a file path,
-// a working directory, an argument). Inputs are content too, so the header scan runs on each
-// string; F1 asks of each string; F2 decides over the strings TOGETHER ([eachCacheRead]).
-func (d *Deriver) ToolInputStrings(ss []string) {
+// a working directory, an argument), every one of them read as a shell line ([role]). Inputs are
+// content too, so the header scan runs on each string; F1 asks of each string; F2 decides over
+// the strings TOGETHER ([eachCacheRead]).
+func (d *Deriver) ToolInputStrings(ss []string) { d.toolInputStrings(ss, nil) }
+
+// role is what F2's grammar ([provable]) reads one string of a tool input as.
+type role int
+
+const (
+	// shellRole: a shell line, held to [shellLineProvable]. Every string whose key is not below.
+	shellRole role = iota
+	// freeRole: a bash tool's `description` — free text that is never run, so the grammar skips it
+	// (it is still scanned for the cache name, and is still content).
+	freeRole
+	// dirRole: a working directory or a search root (`workdir`, `path`, `cwd`, `dir`,
+	// `directory`), held to [safeDir].
+	dirRole
+	// fileRole: a file a file tool opens (`file_path`, `filePath`), held to [cleanCachePath].
+	fileRole
+)
+
+// keyRole is the role of a top-level member key of tool's input. Only a bash tool's
+// `description` (Claude Code's `Bash`, opencode's `bash`) is free text; no other key of any tool is
+// skipped. The directory keys are read the same way for every tool: [safeDir] admits only an
+// absolute path that cannot reach the cache, which is safe whatever the tool does with it.
+func keyRole(tool, key string) role {
+	switch key {
+	case "description":
+		if strings.EqualFold(tool, "bash") {
+			return freeRole
+		}
+	case "workdir", "path", "cwd", "dir", "directory":
+		return dirRole
+	case "file_path", "filePath":
+		return fileRole
+	}
+	return shellRole
+}
+
+func (d *Deriver) toolInputStrings(ss []string, roles []role) {
 	lowers := make([]string, len(ss))
 	for k, s := range ss {
 		d.Content(s)
@@ -459,7 +529,7 @@ func (d *Deriver) ToolInputStrings(ss []string) {
 			d.namesProgram = true
 		}
 	}
-	eachCacheRead(ss, lowers, func(sc string) {
+	eachCacheRead(ss, lowers, roles, func(sc string) {
 		if sc == Star {
 			d.namesCache = true
 		} else {
@@ -480,24 +550,25 @@ const CacheRootName = "subsystem-store"
 // not a store, so naming it is not a read.
 const lockSuffix = ".lock"
 
-// CacheScopes returns what F2 adds for ONE tool input given as its strings: the scope of every
-// cache-root READ it names, `*` for one it cannot attribute to a single default-instance scope. See
-// [eachCacheRead].
+// CacheScopes returns what F2 adds for ONE tool input given as its strings, every one read as a
+// shell line: the scope of every cache-root READ it names, `*` for one it cannot attribute to a
+// single default-instance scope. See [eachCacheRead].
 func CacheScopes(ss ...string) []string {
 	lowers := make([]string, len(ss))
 	for k, s := range ss {
 		lowers[k] = asciiLower(s)
 	}
 	var out []string
-	eachCacheRead(ss, lowers, func(v string) { out = append(out, v) })
+	eachCacheRead(ss, lowers, nil, func(v string) { out = append(out, v) })
 	return out
 }
 
 // eachCacheRead is F2, over ONE tool input: ss is every string it holds, lowers their asciiLower
-// (passed in so the one copy [Deriver.ToolInputStrings] makes serves F1 and F2). A file read from
-// the client cache never passes through the client and is never ledgered, so the PATH is the only
-// evidence of what was read. It finds every `subsystem-store` (case-insensitive) in every string
-// and classifies it — a NAME, not a substring:
+// (passed in so the one copy [Deriver.ToolInputStrings] makes serves F1 and F2), roles what each
+// string is ([role]; nil reads every string as a shell line). A file read from the client cache
+// never passes through the client and is never ledgered, so the PATH is the only evidence of what
+// was read. It finds every `subsystem-store` (case-insensitive) in every string, of every role, and
+// classifies it — a NAME, not a substring:
 //
 //   - NOT A CACHE PATH, adds nothing: the name is part of a longer word (`test-check-subsystem-
 //     store-phase1.sh`, `subsystem-stores`); it is a path component whose parent is a plain
@@ -505,58 +576,32 @@ func CacheScopes(ss ...string) []string {
 //     `~/.config/subsystem-store/`, `deploy/subsystem-store`); it is a bare word with no `/` after it (`kubectl -n
 //     subsystem-store`); or it is the sync lock `subsystem-store[-alias].lock` and nothing more.
 //   - A CACHE ROOT: the parent component contains `cache` — `~/.cache`, `/home/<u>/.cache`,
-//     `$HOME/.cache`, `"${HOME}/.cache"`, `$XDG_CACHE_HOME`, `${XDG_CACHE_HOME:-~/.cache}`, and any
-//     other spelling that ends in a component naming a cache (the client resolves only
-//     `$HOME/.cache`, so the XDG spellings are caught to fail closed, not because they are real).
-//     A RELATIVE `subsystem-store/…` (preceded by whitespace, punctuation, `./` or `../`) is `*`:
-//     the working directory is unknown. So is one whose parent component is neither a cache nor a
-//     plain literal word (`$C/subsystem-store`, `"$C"/subsystem-store/…`, `~/subsystem-store`):
-//     an unrecognised spelling of the root is `*`, never "not a cache" ([rootContext]).
+//     `$HOME/.cache`, `$XDG_CACHE_HOME`, and any other spelling that ends in a component naming a
+//     cache. A RELATIVE `subsystem-store/…` (preceded by whitespace, punctuation, `./` or `../`) is
+//     `*`: the working directory is unknown. So is one whose parent component is neither a cache
+//     nor a plain literal word (`$C/subsystem-store`, `"$C"/subsystem-store/…`,
+//     `~/subsystem-store`): an unrecognised spelling of the root is `*`, never "not a cache"
+//     ([rootContext]).
 //   - A cache root is `*` unless it is the default instance (no `-<alias>` suffix: derived scopes
-//     carry no instance, so a scope read from ANOTHER instance's cache cannot be attributed —
-//     routing would send it by name to whatever instance the table says), a `/` follows it, and the
-//     next component, up to `/` or a shell separator, passes [ValidScope] (a bare root, `*`, `$S`,
-//     `{a,b}`, a quoted or empty component all fail). Anything else after the root name — `-*`,
-//     `.new-…`, `_old` — is `*`. One that passes is a NAMED read of that scope.
+//     carry no instance), a `/` follows it, and the next component passes [ValidScope]. One that
+//     passes is a NAMED read of that scope.
 //
-// 🔴 THE NAMED READS ARE THEN JUDGED AS A UNIT. If the input holds any, it adds `*` INSTEAD of
-// them when ANY of its strings, not just the one naming the path, holds:
-//
-//   - a `..` path component ([hasParentComponent]): a sibling of the path it names;
-//   - a word of the cd family — `cd`, `pushd`, `popd`, `dirname`, `realpath`, `readlink`, spelled
-//     with any quotes, backslashes, `$`, braces or commas, or as a path's last component
-//     ([cdFamilyWord]): the working directory or a derived path then reaches what the text never
-//     names, here and in calls this cannot connect to it;
-//   - an ARGUMENT that is an ancestor of the cache root — `/`, `~`, `$HOME`, `/home/<u>`,
-//     `~/.cache`, `$XDG_CACHE_HOME`, any word whose last component names a cache ([ancestorWord]):
-//     `grep -r x ~/.cache/subsystem-store/aa ~/.cache` reads every scope;
-//   - a cache path whose token, after the root, holds a byte the shell rewrites — `\ ' " { } $`,
-//     a backtick, `[ ] ?`, or `/.*` — anywhere but a trailing run of closing quotes
-//     ([spelledToken]): `aa/.\./bb`, `aa/.""./bb`, `aa/.{.,}/bb`, `aa/$'\x2e\x2e'/bb` are each `..`
-//     to the shell and none of them is to [hasParentComponent];
-//   - a string that is NOTHING BUT a cache scope DIRECTORY (`…/subsystem-store/aa`, `…/aa/`), as a
-//     `workdir`, `path` or `cwd` field is ([dirOnly]): a working directory or a recursive root,
-//     which the input's other strings resolve against — not a single-file read.
-//
-// And any input with a `--cache` word (the client's explicit cache root, `internal/client`) adds
-// `*` whether or not it names `subsystem-store`: that root can be anywhere ([cacheFlag]).
-//
-// Every rule above prefers `*` to a narrower set: a false `*` hides a session from more people, a
-// missed one shows it to people who may not read what it read.
+// 🔴 A NAMED READ IS ONLY A CANDIDATE. The named scopes are emitted only when the WHOLE input is
+// [provable] — an allowlist grammar under which the input's text can read nothing under the cache
+// but files of those scopes. Any input naming a read that is not provable adds `*` instead. And
+// any input with a `--cache` word (the client's explicit cache root, `internal/client`) adds `*`
+// whether or not it names `subsystem-store`: that root can be anywhere ([cacheFlag]).
 //
 // LINEAR: every occurrence looks back over its parent component only (disjoint per occurrence)
-// and forward over its scope component; the token check resumes where the last clean one ended;
-// the unit checks are one pass each per string, and run only for an input that names a read.
-func eachCacheRead(ss, lowers []string, emit func(string)) {
+// and forward over its scope component; [provable] is one pass over each string, and runs only for
+// an input that names a read.
+func eachCacheRead(ss, lowers []string, roles []role, emit func(string)) {
 	var named []string
-	spelled := false
 	for k, s := range ss {
 		lower := lowers[k]
 		if !strings.Contains(lower, CacheRootName) {
 			continue
 		}
-		cleanUntil := 0 // s[..cleanUntil) is the tail of a token [spelledToken] passed
-		trimEnd := len(strings.TrimRight(s, " \t\n\r\f\v"))
 		for off := 0; ; {
 			j := strings.Index(lower[off:], CacheRootName)
 			if j < 0 {
@@ -614,15 +659,6 @@ func eachCacheRead(ss, lowers []string, emit func(string)) {
 				emit(Star)
 				continue
 			}
-			if !spelled && end >= cleanUntil {
-				var bad bool
-				if bad, cleanUntil = spelledToken(s, end); bad {
-					spelled = true
-				}
-			}
-			if dirOnly(s, i, stop, trimEnd) {
-				spelled = true
-			}
 			named = append(named, sc)
 		}
 	}
@@ -633,7 +669,7 @@ func eachCacheRead(ss, lowers []string, emit func(string)) {
 	if len(named) == 0 {
 		return
 	}
-	if spelled || unitPoisoned(ss, lowers) {
+	if !provable(ss, roles) {
 		emit(Star)
 		return
 	}
@@ -642,126 +678,241 @@ func eachCacheRead(ss, lowers []string, emit func(string)) {
 	}
 }
 
-// spelledToken reports whether the path token of s from i (the end of a cache root's name) holds a
-// byte the shell rewrites, and where the token ends. The token runs to the next shell separator,
-// but a backtick does NOT end it here: it is itself one of the bytes that count. A trailing run of
-// closing quotes (`"…/aa/x.md"`) does not count — it only closes a quote opened before the root.
-func spelledToken(s string, i int) (bool, int) {
-	t := i
-	for t < len(s) && (s[t] == '`' || !isShellSeparator(s[t])) {
-		t++
-	}
-	body := strings.TrimRight(s[i:t], "\"'`")
-	return strings.ContainsAny(body, "\\'\"{}$`[]?") || strings.Contains(body, "/.*"), t
-}
-
-// dirOnly reports whether s is NOTHING BUT one cache path that ends at its scope directory: the
-// root's occurrence at i, its scope component ending at stop, at most a `/` after it, and no
-// separator before it. trimEnd is len(s) without trailing whitespace, so the test of what follows
-// is O(1) per occurrence (re-trimming s from every occurrence was quadratic on a run of them).
-func dirOnly(s string, i, stop, trimEnd int) bool {
-	if stop != trimEnd && (stop != trimEnd-1 || s[stop] != '/') {
-		return false
-	}
-	return !strings.ContainsFunc(strings.TrimSpace(s[:i]), func(r rune) bool { return r < 0x80 && isShellSeparator(byte(r)) })
-}
-
-// unitPoisoned reports whether any string of one tool input holds a `..` path component, a word of
-// the cd family, or an argument that is an ancestor of the cache root.
-func unitPoisoned(ss, lowers []string) bool {
+// provable reports whether one tool input, every string of it by its role, passes F2's ALLOWLIST
+// grammar — the only case in which the cache scopes it names are derived instead of `*`:
+//
+//   - a shell line passes [shellLineProvable];
+//   - a working directory passes [safeDir];
+//   - a file path is one [cleanCachePath];
+//   - a bash tool's `description` is not read.
+//
+// 🔴 IT IS AN ALLOWLIST, NOT A LIST OF HAZARDS. Two audit rounds each found shell spellings that
+// slipped past the denylist this replaced (an empty quote pair inside `..`, `{.,}`, `$'\x2e'`, a
+// `cd` in another quoting); here a spelling this does not recognise FAILS, so the next one is
+// over-poisoned, not missed.
+func provable(ss []string, roles []role) bool {
 	for k, s := range ss {
-		if hasParentComponent(s) {
-			return true
+		r := shellRole
+		if roles != nil {
+			r = roles[k]
 		}
-		poisoned := false
-		eachWord(lowers[k], func(w string) {
-			if !poisoned && (cdFamilyWord(w) || ancestorWord(w)) {
-				poisoned = true
-			}
-		})
-		if poisoned {
-			return true
+		var ok bool
+		switch r {
+		case freeRole:
+			ok = true
+		case dirRole:
+			ok = safeDir(s)
+		case fileRole:
+			ok = cleanCachePath(s)
+		default:
+			ok = shellLineProvable(s)
+		}
+		if !ok {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
-// eachWord hands f every maximal run of s between shell separators.
-func eachWord(s string, f func(string)) {
-	start := -1
-	for i := 0; i <= len(s); i++ {
-		if i == len(s) || isShellSeparator(s[i]) {
-			if start >= 0 {
-				f(s[start:i])
-				start = -1
+// provableCommands are the only commands a provable shell line may run: each reads the files its
+// arguments name (or stdin) and nothing else, and none runs another program, changes the working
+// directory, or takes a path it derives from its input. Not here, so `*`: `cd`/`pushd`/`popd`
+// (bare `cd` is `$HOME`), `xargs`, `find`, `sed` (`e`, `r`, `w`), `awk` (`system`), `sort`
+// (`--compress-program`), any shell or interpreter — one of them turns text into a path this cannot
+// read (`… | sed s,a.x.md,, | xargs grep -r t` is the cache root).
+var provableCommands = map[string]bool{
+	"cat": true, "cut": true, "echo": true, "grep": true, "head": true, "ls": true, "nl": true,
+	"printf": true, "tail": true, "tr": true, "uniq": true, "wc": true,
+}
+
+// shellLineProvable is the grammar for one shell line, read by a strict lexer in one pass:
+//
+//   - Words are separated by spaces and tabs; `|`, `||`, `&&`, `;` and a newline separate
+//     commands. ANY other shell metacharacter outside single quotes — `$` a backtick `\ " { } * ?
+//     [ ] ( ) < > & ~ ! # ^`, and any other control byte — fails; `~` is allowed only as the
+//     leading `~/` of a word that is a [cleanCachePath].
+//   - A single-quoted segment is literal text, but one holding `/` or `..` fails (it could be a
+//     path), and an unterminated quote fails.
+//   - The first word of every command must be one of [provableCommands], by its unquoted text.
+//   - Every word holding `/` must be ONE [cleanCachePath], unquoted: no other path is provable.
+//   - A word that is `.` or `..` once unquoted fails (with `/` it has already failed above).
+//
+// ⚠ A word with no `/` is an argument, and if it is a file name it resolves against a working
+// directory this does not know — that is T3 (the package doc), not something this proves.
+func shellLineProvable(s string) bool {
+	cmd := true                // the next word is a command's first
+	start, quoted := -1, false // the current word's first byte, and whether it holds a quote
+	var val []byte             // the current word unquoted, built only once it holds a quote
+	endWord := func(i int) bool {
+		if start < 0 {
+			return true
+		}
+		raw := s[start:i]
+		v := raw
+		if quoted {
+			v = string(val)
+		}
+		ok := true
+		switch {
+		case strings.IndexByte(raw, '/') >= 0:
+			ok = !quoted && cleanCachePath(raw)
+		case v == "." || v == "..":
+			ok = false
+		}
+		if cmd {
+			ok = ok && provableCommands[v]
+			cmd = false
+		}
+		start, quoted, val = -1, false, val[:0]
+		return ok
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t':
+			if !endWord(i) {
+				return false
 			}
-		} else if start < 0 {
+		case c == '\n' || c == ';' || c == '|':
+			if !endWord(i) {
+				return false
+			}
+			if c == '|' && i+1 < len(s) && s[i+1] == '|' {
+				i++
+			}
+			cmd = true
+		case c == '&':
+			if i+1 >= len(s) || s[i+1] != '&' || !endWord(i) {
+				return false
+			}
+			i++
+			cmd = true
+		case c == '\'':
+			j := strings.IndexByte(s[i+1:], '\'')
+			if j < 0 {
+				return false
+			}
+			body := s[i+1 : i+1+j]
+			if strings.IndexByte(body, '/') >= 0 || strings.Contains(body, "..") {
+				return false
+			}
+			if start < 0 {
+				start = i
+			}
+			if !quoted {
+				val = append(val[:0], s[start:i]...)
+				quoted = true
+			}
+			val = append(val, body...)
+			i += j + 1
+		case c == '~':
+			if start >= 0 || i+1 >= len(s) || s[i+1] != '/' {
+				return false
+			}
 			start = i
+		case c < 0x20 || c == 0x7f || strings.IndexByte("$`\\\"{}*?[]()<>!#^", c) >= 0:
+			return false
+		default:
+			if start < 0 {
+				start = i
+			}
+			if quoted {
+				val = append(val, c)
+			}
 		}
 	}
+	return endWord(len(s))
 }
 
-// cdFamily is every command that changes, or derives, a directory a later path resolves against.
-var cdFamily = map[string]bool{"cd": true, "pushd": true, "popd": true, "dirname": true, "realpath": true, "readlink": true}
-
-// cdFamilyWord reports whether the (lowered) word w is a cd-family command in ANY spelling: every
-// quote, backslash, `$`, brace and comma removed (`\cd`, `"cd"`, `c""d`, `$'cd'`, `{cd,}`), and
-// only its last path component kept (`/usr/bin/realpath`). `builtin cd` and `command cd` hold `cd`
-// as a word of their own.
-func cdFamilyWord(w string) bool {
-	if j := strings.LastIndexByte(w, '/'); j >= 0 {
-		w = w[j+1:]
-	}
-	var b strings.Builder
-	for i := 0; i < len(w); i++ {
-		if strings.IndexByte("\\'\"${},", w[i]) < 0 {
-			b.WriteByte(w[i])
+// cleanCachePath reports whether w is exactly one file path under the default cache root as the
+// client resolves it (`$HOME/.cache/subsystem-store`, [CacheRootName]), spelled `~/`, `/home/<u>/`
+// or `/root/` + `.cache/subsystem-store/<scope>/<name>[/<name>…]`: a [ValidScope] scope, at least
+// one component after it (a file, not the scope directory), and every component a [plainSegment].
+// Exact bytes, case included — a spelling it does not match is not provable, never "probably it".
+func cleanCachePath(w string) bool {
+	var rest string
+	switch {
+	case strings.HasPrefix(w, "~/"):
+		rest = w[2:]
+	case strings.HasPrefix(w, "/root/"):
+		rest = w[len("/root/"):]
+	case strings.HasPrefix(w, "/home/"):
+		u, r, ok := strings.Cut(w[len("/home/"):], "/")
+		if !ok || !plainSegment(u) {
+			return false
 		}
-	}
-	return cdFamily[b.String()]
-}
-
-// ancestorWord reports whether the (lowered) word w, read as an argument, names a directory the
-// cache root lies under: `/`, `~`, `~<u>`, `$HOME`, `${HOME}`, `/home`, `/home/<u>`, `/root`,
-// `/users/<u>`, or any PATH-LIKE word (one starting `/`, `~`, `$` or `.`) not naming
-// [CacheRootName] whose last component names a cache (`~/.cache`, `$HOME/.cache`, `/home/u1/.cache`,
-// `$XDG_CACHE_HOME`, `.cache`). Quotes and backslashes are dropped, and only the part after the
-// last `=` is read (`--dir=/home/u1`, `HOME=/home/u1`). A flag with no `=` (`--cached`, `-cache`)
-// and a plain word (`cached`, as a Bash input's `description` says it) are not paths.
-func ancestorWord(w string) bool {
-	if strings.ContainsAny(w, "\"'\\") {
-		w = strings.NewReplacer(`"`, "", "'", "", `\`, "").Replace(w)
-	}
-	if j := strings.LastIndexByte(w, '='); j >= 0 {
-		w = w[j+1:]
-	}
-	if w == "" || strings.IndexByte("/~$.", w[0]) < 0 {
+		rest = r
+	default:
 		return false
 	}
-	t := strings.TrimRight(w, "/")
-	if t == "" {
-		return true // `/`
+	rest, ok := strings.CutPrefix(rest, ".cache/"+CacheRootName+"/")
+	if !ok {
+		return false
 	}
-	switch t {
-	case "~", "$home", "${home}", "/home", "/root", "/users":
-		return true
+	sc, rest, ok := strings.Cut(rest, "/")
+	if !ok || !ValidScope(sc) {
+		return false
 	}
-	if t[0] == '~' && !strings.Contains(t, "/") {
-		return true // `~<u>`
+	return eachSegment(rest, plainSegment)
+}
+
+// safeDir reports whether a working directory w is an absolute path the cache cannot be reached
+// from by a relative word: every component a [plainSegment] (no `.`, `..` or empty component, no
+// metacharacter, no trailing `/`), no component naming `cache` (so it is not a cache root's
+// parent, the root, or under it — every cache root F2 recognises sits under one, [rootContext]),
+// and not an ancestor of a home directory a cache path can be spelled under — `/`, `/home`,
+// `/home/<u>`, `/root`, `/Users`, `/Users/<u>`.
+func safeDir(w string) bool {
+	if len(w) < 2 || w[0] != '/' {
+		return false
 	}
-	for _, h := range []string{"/home/", "/users/"} {
-		if rest, ok := strings.CutPrefix(t, h); ok && rest != "" && !strings.Contains(rest, "/") {
+	n, first := 0, ""
+	ok := eachSegment(w[1:], func(seg string) bool {
+		if n == 0 {
+			first = seg
+		}
+		n++
+		return plainSegment(seg) && !strings.Contains(asciiLower(seg), "cache")
+	})
+	if !ok {
+		return false
+	}
+	switch first {
+	case "root":
+		return n > 1
+	case "home", "Users":
+		return n > 2
+	}
+	return true
+}
+
+// eachSegment reports whether f holds for every `/`-separated component of p (an empty p is one
+// empty component).
+func eachSegment(p string, f func(string) bool) bool {
+	for {
+		seg, rest, more := strings.Cut(p, "/")
+		if !f(seg) {
+			return false
+		}
+		if !more {
 			return true
 		}
+		p = rest
 	}
-	if strings.Contains(t, CacheRootName) {
+}
+
+// plainSegment is one path component of plain name bytes `[A-Za-z0-9._@+-]`, not empty and not
+// `.` or `..`. A hidden name (`.notes`) passes: it is a file, not a step out of the directory.
+func plainSegment(seg string) bool {
+	if seg == "" || seg == "." || seg == ".." {
 		return false
 	}
-	last := t
-	if j := strings.LastIndexByte(t, '/'); j >= 0 {
-		last = t[j+1:]
+	for i := 0; i < len(seg); i++ {
+		if c := seg[i]; !isAlnum(c) && strings.IndexByte("._@+-", c) < 0 {
+			return false
+		}
 	}
-	return strings.Contains(last, "cache")
+	return true
 }
 
 // cacheFlag reports whether any (lowered) string of one input holds the client's `--cache` flag as
@@ -826,24 +977,6 @@ func rootContext(lower string, i int) rootKind {
 		return notRoot // inside a longer word
 	}
 	return relativeRoot // after whitespace, a quote, `=`, `(` …
-}
-
-// hasParentComponent reports whether s holds a `..` path component: `..` with a path boundary on
-// both sides (`/`, a shell separator, a quote, `{`, `,`, `=` or the end), so `a/../b`, `$S/..`
-// and `".."` count and a git range `main..HEAD` does not.
-func hasParentComponent(s string) bool {
-	boundary := func(c byte) bool { return c == '/' || isShellSeparator(c) || strings.IndexByte(`"'{},=`, c) >= 0 }
-	for off := 0; ; {
-		j := strings.Index(s[off:], "..")
-		if j < 0 {
-			return false
-		}
-		i := off + j
-		off = i + 1
-		if (i == 0 || boundary(s[i-1])) && (i+2 == len(s) || boundary(s[i+2])) {
-			return true
-		}
-	}
 }
 
 // isShellSeparator ends a path token: whitespace and the shell's control and redirection bytes.
@@ -996,7 +1129,8 @@ func (d *Deriver) ClaudeRecord(rec map[string]any) {
 	for i, b := range blocks {
 		if bm, ok := b.(map[string]any); ok && bm["type"] == "tool_use" {
 			inputs[i] = true
-			d.ToolInputValue(bm["input"])
+			name, _ := bm["name"].(string)
+			d.toolInput(name, bm["input"])
 		}
 	}
 	for k, v := range rec {
@@ -1032,7 +1166,8 @@ func (d *Deriver) ClaudeRecord(rec map[string]any) {
 func (d *Deriver) OpencodePart(part map[string]any) {
 	state, _ := part["state"].(map[string]any)
 	if part["type"] == "tool" && state != nil {
-		d.ToolInputValue(state["input"])
+		tool, _ := part["tool"].(string)
+		d.toolInput(tool, state["input"])
 		for k, v := range state {
 			if k != "input" {
 				eachString(v, d.Content)

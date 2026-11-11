@@ -14,28 +14,18 @@ import (
 // from every constant the code names (`subsystem-store`, `cache`, `personal`, `lock`, `*`), so a
 // mutant that hardcodes a literal, or returns another case's answer, cannot pass.
 
-// TestF2NamedCacheReadAddsThatScope: case 1 — a path INTO the default cache root, `/<scope>/…`
-// with a valid scope, is a NAMED read in every spelling of the root, and adds that scope, not `*`.
+// TestF2NamedCacheReadAddsThatScope: case 1 — a PROVABLE read of a file under the default cache
+// root, `<home>/.cache/subsystem-store/<scope>/…` with a valid scope, is a NAMED read and adds that
+// scope, not `*`.
 func TestF2NamedCacheReadAddsThatScope(t *testing.T) {
 	cases := map[string][]string{
-		"grep -n rate ~/.cache/subsystem-store/quartz-lantern/prom-s.md":          {"quartz-lantern"},
-		"sed -n 1,40p /home/u1/.cache/subsystem-store/ember_7/nix.md":             {"ember_7"},
-		`F=/home/u1/.cache/subsystem-store/Velvet-Fox/civ-dp.md; cat "$F"`:        {"Velvet-Fox"},
-		"cat $HOME/.cache/subsystem-store/oak9/x.md":                              {"oak9"},
-		`cat "${HOME}/.cache/subsystem-store/moss-ridge/a.md"`:                    {"moss-ridge"},
-		"cat ${XDG_CACHE_HOME:-$HOME/.cache}/subsystem-store/tern-a/b.md":         {"tern-a"},
-		"cat $XDG_CACHE_HOME/subsystem-store/tern-b/x.md":                         {"tern-b"},
-		"cat ~/.CACHE/SUBSYSTEM-STORE/Kite3/x.md":                                 {"Kite3"},
-		"ls ~/.cache/subsystem-store/heron-2":                                     {"heron-2"},
-		"/tmp/h1/.cache/subsystem-store/plover/x.md":                              {"plover"},
-		"cat ~/.cache/subsystem-store/wren/*.md":                                  {"wren"},
-		"$(cat ~/.cache/subsystem-store/gull4/a.md)":                              {"gull4"},
-		"cat ~/.cache/subsystem-store/stilt/a.md ~/.cache/subsystem-store/curlew": {"stilt", "curlew"},
-		// Controls for the fail-closed checks: a git range is not a `..` component, a flag naming a
-		// cache is not an ancestor path, and a closing quote is not a rewritten spelling.
-		"git log main..HEAD; cat ~/.cache/subsystem-store/sanderling/x.md":   {"sanderling"},
-		"git diff --cached; cat ~/.cache/subsystem-store/knot5/x.md":         {"knot5"},
-		`cat '/home/u1/.cache/subsystem-store/godwit-q/x.md' > /tmp/out.txt`: {"godwit-q"},
+		"grep -n rate ~/.cache/subsystem-store/quartz-lantern/prom-s.md":               {"quartz-lantern"},
+		"head -n 40 /home/u1/.cache/subsystem-store/ember_7/nix.md":                    {"ember_7"},
+		"cat /root/.cache/subsystem-store/oak9/x.md":                                   {"oak9"},
+		"cat ~/.cache/subsystem-store/stilt/a.md ~/.cache/subsystem-store/curlew/b.md": {"stilt", "curlew"},
+		// Controls: a git range is not a `..` word, a flag naming a cache is not a path.
+		"grep -c main..HEAD ~/.cache/subsystem-store/sanderling/x.md": {"sanderling"},
+		"grep --cached x ~/.cache/subsystem-store/knot5/x.md":         {"knot5"},
 		// The name inside the scope's own path is not a second root.
 		"cat ~/.cache/subsystem-store/dunlin/subsystem-store-notes.md": {"dunlin"},
 	}
@@ -46,7 +36,7 @@ func TestF2NamedCacheReadAddsThatScope(t *testing.T) {
 	}
 	// Through the Deriver: the scope reaches V and Declare, and F2 contributes no `*`.
 	d := NewDeriver()
-	d.ToolInput("sed -n 1,40p /home/u1/.cache/subsystem-store/ember_7/nix.md")
+	d.ToolInput("head -n 40 /home/u1/.cache/subsystem-store/ember_7/nix.md")
 	r := d.Result()
 	if r.F2 || !slices.Equal(r.V, []string{"ember_7"}) || !slices.Equal(r.Declare, []string{"ember_7"}) {
 		t.Fatalf("F2=%v V=%v Declare=%v, want no F2 and [ember_7] in both", r.F2, r.V, r.Declare)
@@ -95,6 +85,16 @@ func TestF2UnattributableCacheReadAddsStar(t *testing.T) {
 			t.Errorf("CacheScopes(%q) = %v, want %v", in, got, want)
 		}
 	}
+	// The same checks where NOTHING ELSE re-checks them: a bash `description` is skipped by the
+	// grammar ([provable]) but still scanned for the cache name, so an unattributable path there is
+	// decided by this detection alone. Each row beside a provable command, so `*` sits beside that
+	// command's scope (`*` makes the session owner-only whatever else is in the set).
+	checkUnits(t, []unitCase{
+		{"invalid component in a description", "bash", map[string]any{
+			"command": "cat ~/.cache/subsystem-store/rowan-c1/x.md", "description": "~/.cache/subsystem-store/$SC2/x.md"}, []string{Star, "rowan-c1"}},
+		{"another instance in a description", "bash", map[string]any{
+			"command": "cat ~/.cache/subsystem-store/rowan-c2/x.md", "description": "~/.cache/subsystem-store-client/pipit2/x.md"}, []string{Star, "rowan-c2"}},
+	})
 	d := NewDeriver()
 	d.ToolInput("S=/home/u1/.cache/subsystem-store; grep -l x $S/*/y.md")
 	if r := d.Result(); !r.F2 || !slices.Equal(r.V, star) || !slices.Equal(r.Declare, star) {
@@ -136,14 +136,14 @@ func TestCacheScopesMatchesTheClientsCacheRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := CacheScopes(filepath.Join(def, "sandpiper", "a.md")); !slices.Equal(got, []string{"sandpiper"}) {
+	if got := CacheScopes("cat " + filepath.Join(def, "sandpiper", "a.md")); !slices.Equal(got, []string{"sandpiper"}) {
 		t.Fatalf("a read under the client's default root %s: %v, want [sandpiper]", def, got)
 	}
 	other, err := client.CacheRootFor("client")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := CacheScopes(filepath.Join(other, "sandpiper", "a.md")); !slices.Equal(got, []string{Star}) {
+	if got := CacheScopes("cat " + filepath.Join(other, "sandpiper", "a.md")); !slices.Equal(got, []string{Star}) {
 		t.Fatalf("a read under the client instance's root %s: %v, want [*]", other, got)
 	}
 }
@@ -156,25 +156,28 @@ func TestCacheScopesMatchesTheClientsCacheRoot(t *testing.T) {
 func TestCacheScopesIsLinear(t *testing.T) {
 	const small, large = 256 << 10, 2 << 20
 	for _, tc := range []struct {
-		name, unit string
-		want       []string
+		name, prefix, unit string
+		want               []string
 	}{
-		{"alias run", CacheRootName + "-", nil},
-		{"cache roots", "/.cache/" + CacheRootName, []string{Star}},
-		{"quoted relative roots", `"` + CacheRootName + "/", []string{Star}},
-		// #314 round 1: NAMED reads reach the token check, the directory check and the unit checks.
-		{"named reads in one word", "/.cache/" + CacheRootName + "/aa/x", []string{"aa"}},
-		{"named reads as words", "~/.cache/" + CacheRootName + "/aa/x.md ", []string{"aa"}},
+		{"alias run", "", CacheRootName + "-", nil},
+		{"cache roots", "", "/.cache/" + CacheRootName, []string{Star}},
+		{"quoted relative roots", "", `"` + CacheRootName + "/", []string{Star}},
+		// #314: NAMED reads reach the grammar ([provable]): one word it rejects, and words it
+		// accepts, single-quoted segments and commands, each run to the end of the input.
+		{"named reads in one word", "", "/.cache/" + CacheRootName + "/aa/x", []string{Star}},
+		{"named reads as words", "cat ", "~/.cache/" + CacheRootName + "/aa/x.md ", []string{"aa"}},
+		{"quoted words", "cat ~/.cache/" + CacheRootName + "/aa/x.md ", "'a|b' ", []string{"aa"}},
+		{"commands", "cat ~/.cache/" + CacheRootName + "/aa/x.md", " | wc", []string{"aa"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			best := func(size int) time.Duration {
-				in := strings.Repeat(tc.unit, size/len(tc.unit))
+				in := tc.prefix + strings.Repeat(tc.unit, size/len(tc.unit))
 				lower := asciiLower(in)
 				var min time.Duration
 				for run := 0; run < 5; run++ {
 					seen := map[string]bool{}
 					start := time.Now()
-					eachCacheRead([]string{in}, []string{lower}, func(v string) { seen[v] = true })
+					eachCacheRead([]string{in}, []string{lower}, nil, func(v string) { seen[v] = true })
 					took := time.Since(start)
 					if took > 5*time.Second {
 						t.Fatalf("one %d-byte input of %q took %v", size, tc.unit, took)

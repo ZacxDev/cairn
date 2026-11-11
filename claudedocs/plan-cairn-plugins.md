@@ -925,6 +925,12 @@ script that prints only counts.
        a `cd` into the cache) still adds `*`; a non-cache mention (a namespace, a repo path,
        `~/.config/subsystem-store/`) adds nothing. The exact rule is
        `internal/transcript/scopeuse`'s `eachCacheRead`.*
+       *#314 round 3, superseding the list of poisoning spellings: after two audit rounds each found
+       a shell spelling past that DENYLIST, the operator chose an ALLOWLIST. A named scope is now
+       derived only when the whole tool input passes a small grammar (`provable`: a strict lexer,
+       an allowed-command list, every `/` word one clean cache file path, a working directory
+       outside the cache and not an ancestor of it); anything else naming the cache is `*`. This
+       is the one place a shell line is lexed, and it can only turn a named read into `*`.*
      A call is never matched to "its" ledger record: the rules ask only "is the ledger empty" and
      "does any input name the cache", which is what keeps the shell grammar out of the design.
    - *DELETED in revision 13 (O11), with the ledger in its place:* the shell-command-line parser

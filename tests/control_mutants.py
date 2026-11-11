@@ -5248,8 +5248,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-cache-path-read-ignored",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\teachCacheRead(ss, lowers, func(sc string) {",
-        new="\teachCacheRead(nil, nil, func(sc string) {",
+        old="\teachCacheRead(ss, lowers, roles, func(sc string) {",
+        new="\teachCacheRead(nil, nil, nil, func(sc string) {",
         killer="TestF2CacheReadAddsItsScope",
         extra_killers=("TestF2NamedCacheReadAddsThatScope", "TestF2UnattributableCacheReadAddsStar"),
         why="a file-tool read of the cache never passes through the client, so it is never ledgered; "
@@ -5262,9 +5262,9 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-f2-bare-substring",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\teachCacheRead(ss, lowers, func(sc string) {\n\t\tif sc == Star {",
+        old="\teachCacheRead(ss, lowers, roles, func(sc string) {\n\t\tif sc == Star {",
         new="\tfor _, l := range lowers {\n\t\tif strings.Contains(l, CacheRootName) {\n\t\t\td.namesCache = true\n\t\t}\n\t}\n"
-        "\teachCacheRead(ss, lowers, func(sc string) {\n\t\tif sc == Star {",
+        "\teachCacheRead(ss, lowers, roles, func(sc string) {\n\t\tif sc == Star {",
         killer="TestF2NamedCacheReadAddsThatScope",
         extra_killers=("TestF2CacheReadAddsItsScope", "TestF2NonCachePathsAddNothing"),
         why="\"any mention of the store is `*`\" is the rule this replaced, and it reads as the safer "
@@ -5313,62 +5313,118 @@ MUTANTS: tuple[Mutant, ...] = (
         why="\"a parent that does not say `cache` is not the cache\" is one line shorter, and "
         "`C=~/.cache; cat $C/subsystem-store/…` then falls silently into \"not a cache path\".",
     ),
-    # #314 round 1: F2 decides over one tool input WHOLE, and its fail-closed checks are structural.
-    # Each row removes ONE rule and is killed by the test pinning that rule alone.
+    # #314: F2 decides over one tool input WHOLE, and (round 3) by an ALLOWLIST grammar. Each row
+    # below removes ONE rule of it and is killed by the test pinning that rule alone.
     Mutant(
-        name="scopeuse-f2-poisoned-per-string",
+        name='scopeuse-f2-poisoned-per-string',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\td.ToolInputStrings(ss)\n}",
-        new="\tfor _, s := range ss {\n\t\td.ToolInputStrings([]string{s})\n\t}\n}",
-        killer="TestF2DecidesOverTheWholeInput",
+        old="\td.toolInputStrings(ss, roles)\n}",
+        new="\tfor k, s := range ss {\n\t\td.toolInputStrings([]string{s}, roles[k:k+1])\n\t}\n}",
+        killer='TestF2DecidesOverTheWholeInput',
         why="`eachString(input, d.ToolInput)` — one call per string — is how every other input scan here "
-        "is fed, and it is how F2 was fed: a `..` in a command then cannot poison the cache path in the "
-        "same input's `workdir`, and the read of the sibling scope derives the workdir's.",
+        "is fed, and it is how F2 was fed: an ancestor `workdir` then cannot poison the cache path in "
+        "the same input's command, which derives its scope.",
     ),
     Mutant(
-        name="scopeuse-f2-dir-only-dropped",
+        name='scopeuse-f2-metachar-accepted',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tif dirOnly(s, i, stop, trimEnd) {",
-        new="\t\t\tif false && dirOnly(s, i, stop, trimEnd) {",
-        killer="TestF2ScopeDirectoryStringAddsStar",
-        why="a path ending at a valid scope directory names exactly one scope, so attributing it reads as "
-        "correct — but as a `workdir` or a Glob `path` it is what the input's OTHER strings resolve "
-        "against, not a file that was read.",
+        old="\t\tcase c < 0x20 || c == 0x7f || strings.IndexByte(\"$`\\\\\\\"{}*?[]()<>!#^\", c) >= 0:",
+        new="\t\tcase c < 0x20 || c == 0x7f:",
+        killer='TestF2GrammarRejectsMetacharacters',
+        extra_killers=('TestF2AllowlistRejectsTheRoundTwoShapes',),
+        why="the separators are already handled and the paths are checked word by word, so a list of "
+        "every other metacharacter reads as belt and braces — and `$X`, a glob, `{a,b}` or a redirect "
+        "then make a word the shell rewrites into a path this never checked.",
     ),
     Mutant(
-        name="scopeuse-f2-spelled-token-dropped",
+        name='scopeuse-f2-quoted-path-accepted',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\t\tif bad, cleanUntil = spelledToken(s, end); bad {",
-        new="\t\t\t\tif bad, cleanUntil = spelledToken(s, end); bad && false {",
-        killer="TestF2ShellRewrittenPathAddsStar",
-        why="the `..` check already exists, so a second check of the path's bytes reads as redundant — "
-        "and `aa/.\\./bb`, `aa/.{.,}/bb` and `aa/$'\\x2e\\x2e'/bb` are each `..` to the shell and "
-        "none of them is a `..` component as written.",
+        old="\t\t\tif strings.IndexByte(body, '/') >= 0 || strings.Contains(body, \"..\") {",
+        new="\t\t\tif false && (strings.IndexByte(body, '/') >= 0 || strings.Contains(body, \"..\")) {",
+        killer='TestF2GrammarRejectsQuotedPaths',
+        why="single quotes make their text inert, so checking inside them reads as a false positive on "
+        "every quoted pattern — and `'/tmp'`, `a'/'b` and `'..'` are then path arguments no other rule "
+        "looks at.",
     ),
     Mutant(
-        name="scopeuse-f2-cd-family-dropped",
+        name='scopeuse-f2-other-path-accepted',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="cdFamilyWord(w) || ancestorWord(w)",
-        new="ancestorWord(w)",
-        killer="TestF2CdFamilyWordAddsStar",
-        extra_killers=("TestF2UnattributableCacheReadAddsStar",),
-        why="a cd elsewhere does not change what an absolute path names, so dropping the word check reads "
-        "as removing a false positive — and `\\cd`, `\"cd\"`, `cd \"$(dirname …)\"` then move the "
-        "working directory into the cache with nothing left to notice.",
+        old="\t\t\tok = !quoted && cleanCachePath(raw)",
+        new="\t\t\tok = !quoted",
+        killer='TestF2GrammarRejectsOtherPaths',
+        extra_killers=('TestF2AllowlistRejectsTheRoundTwoShapes',),
+        why="a path that is not under the cache cannot read the cache, so requiring every `/` word to be a "
+        "cache file reads as over-strict — and `~/.cache/.`, `/home//u1`, a scope directory or a "
+        "`..` path is exactly such a word.",
     ),
     Mutant(
-        name="scopeuse-f2-ancestor-dropped",
+        name='scopeuse-f2-dot-word-accepted',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="cdFamilyWord(w) || ancestorWord(w)",
-        new="cdFamilyWord(w)",
-        killer="TestF2AncestorArgumentAddsStar",
-        why="`~/.cache` does not name `subsystem-store`, so it reads as not a cache path at all — and "
-        "`grep -r x ~/.cache/subsystem-store/aa ~/.cache` reads every scope under it.",
+        old="\t\tcase v == \".\" || v == \"..\":",
+        new="\t\tcase false:",
+        killer='TestF2GrammarRejectsDotWords',
+        why="a word with no `/` is never a cache path, so `.` reads as one more harmless argument — and "
+        "`grep -r x … .` reads the whole working directory, which can be the home directory.",
+    ),
+    Mutant(
+        name='scopeuse-f2-command-not-allowlisted',
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\tok = ok && provableCommands[v]",
+        new="\t\t\tok = ok && v != \"\"",
+        killer='TestF2GrammarRejectsCommands',
+        why="the grammar already checks every path the text names, so which program runs reads as beside "
+        "the point — and `… | sed s,a.x.md,, | xargs grep -r t`, `cd` alone, or `| bash` derive a "
+        "path, or run a program, that the text never names.",
+    ),
+    Mutant(
+        name='scopeuse-f2-workdir-under-cache-accepted',
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\treturn plainSegment(seg) && !strings.Contains(asciiLower(seg), \"cache\")",
+        new="\t\treturn plainSegment(seg)",
+        killer='TestF2WorkdirMustBeOutsideTheCache',
+        why="a clean absolute working directory reads as safe whatever it names — and one under the cache "
+        "is what the input's relative words resolve against: `grep -r t birch` from the root reads "
+        "`birch`.",
+    ),
+    Mutant(
+        name='scopeuse-f2-workdir-ancestor-accepted',
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tswitch first {",
+        new="\tswitch first + \"!\" {",
+        killer='TestF2WorkdirMustNotBeAnAncestor',
+        extra_killers=('TestF2DecidesOverTheWholeInput',),
+        why="`/home/u1` names no cache, so it reads as an ordinary working directory — and `grep -r t "
+        "u1` from `/home`, or `.cache` from `/home/u1`, reads every scope under it.",
+    ),
+    Mutant(
+        name='scopeuse-f2-free-text-every-key',
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\treturn shellRole\n}",
+        new="\treturn freeRole\n}",
+        killer='TestF2OnlyABashDescriptionIsFreeText',
+        why="a tool input's strings other than its command are mostly descriptions and options, so reading "
+        "only the obvious keys reads as removing false positives — and the command itself is then "
+        "never checked.",
+    ),
+    Mutant(
+        name='scopeuse-f2-free-text-every-tool',
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tif strings.EqualFold(tool, \"bash\") {",
+        new="\t\tif true {",
+        killer='TestF2OnlyABashDescriptionIsFreeText',
+        why="`description` is free text in every tool that has one today, so dropping the tool check reads "
+        "as tidy — and a tool whose `description` is passed on, or run, then carries an unchecked "
+        "read.",
     ),
     Mutant(
         name="scopeuse-f2-cache-flag-dropped",
@@ -5379,17 +5435,6 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestF2CacheFlagAddsStar",
         why="F2 is about paths under `subsystem-store`, and a flag is not a path — but `--cache PATH` "
         "makes any directory the store, so the read it starts is attributable to no scope.",
-    ),
-    Mutant(
-        name="scopeuse-f2-parent-component-dropped",
-        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
-        path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tif hasParentComponent(s) {\n\t\t\treturn true",
-        new="\t\tif false && hasParentComponent(s) {\n\t\t\treturn true",
-        killer="TestF2DecidesOverTheWholeInput",
-        extra_killers=("TestF2UnattributableCacheReadAddsStar",),
-        why="the scope component is validated, so a `..` AFTER it looks harmless — and "
-        "`aa/../bb/x.md` reads `bb`.",
     ),
     # S2 review round 1 (F3): four guards that each SURVIVED a mutation with no test reaching them.
     Mutant(
