@@ -5299,7 +5299,7 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\t\tif alias || next != '/' || isPoisoned() {",
         new="\t\tif _ = alias; next != '/' || isPoisoned() {",
         killer="TestF2UnattributableCacheReadAddsStar",
-        why="`subsystem-store-civitai/<scope>/…` is laid out exactly like the default cache, so "
+        why="`subsystem-store-<alias>/<scope>/…` is laid out exactly like the default cache, so "
         "parsing it the same way is natural — but derived scopes carry no instance, and routing "
         "would send that scope by NAME to whatever instance the table says.",
     ),

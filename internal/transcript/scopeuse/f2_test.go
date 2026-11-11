@@ -19,8 +19,8 @@ import (
 func TestF2NamedCacheReadAddsThatScope(t *testing.T) {
 	cases := map[string][]string{
 		"grep -n rate ~/.cache/subsystem-store/quartz-lantern/prom-s.md":          {"quartz-lantern"},
-		"sed -n 1,40p /home/zach/.cache/subsystem-store/ember_7/nix.md":           {"ember_7"},
-		`F=/home/zach/.cache/subsystem-store/Velvet-Fox/civ-dp.md; cat "$F"`:      {"Velvet-Fox"},
+		"sed -n 1,40p /home/u1/.cache/subsystem-store/ember_7/nix.md":             {"ember_7"},
+		`F=/home/u1/.cache/subsystem-store/Velvet-Fox/civ-dp.md; cat "$F"`:        {"Velvet-Fox"},
 		"cat $HOME/.cache/subsystem-store/oak9/x.md":                              {"oak9"},
 		`cat "${HOME}/.cache/subsystem-store/moss-ridge/a.md"`:                    {"moss-ridge"},
 		"cat ${XDG_CACHE_HOME:-$HOME/.cache}/subsystem-store/tern-a/b.md":         {"tern-a"},
@@ -45,7 +45,7 @@ func TestF2NamedCacheReadAddsThatScope(t *testing.T) {
 	}
 	// Through the Deriver: the scope reaches V and Declare, and F2 contributes no `*`.
 	d := NewDeriver()
-	d.ToolInput("sed -n 1,40p /home/zach/.cache/subsystem-store/ember_7/nix.md")
+	d.ToolInput("sed -n 1,40p /home/u1/.cache/subsystem-store/ember_7/nix.md")
 	r := d.Result()
 	if r.F2 || !slices.Equal(r.V, []string{"ember_7"}) || !slices.Equal(r.Declare, []string{"ember_7"}) {
 		t.Fatalf("F2=%v V=%v Declare=%v, want no F2 and [ember_7] in both", r.F2, r.V, r.Declare)
@@ -63,29 +63,29 @@ func TestF2NamedCacheReadAddsThatScope(t *testing.T) {
 func TestF2UnattributableCacheReadAddsStar(t *testing.T) {
 	star := []string{Star}
 	cases := map[string][]string{
-		"S=/home/zach/.cache/subsystem-store; for f in $S/*/x.md; do cat $f; done": star,
-		"ls ~/.cache/subsystem-store":                       star,
-		"ls ~/.cache/subsystem-store/":                      star,
-		`ls "$HOME/.cache/subsystem-store"`:                 star,
-		"cat ~/.cache/subsystem-store/*/index.md":           star,
-		"ls ~/.cache/subsystem-store*":                      star,
-		"cat ~/.cache/subsystem-store/bad.name1/x.md":       star, // fails ValidScope
-		"cat ~/.cache/subsystem-store/$SC1/x.md":            star,
-		"cat ~/.cache/subsystem-store/{alder1,birch1}/x.md": star,
-		`cat ~/.cache/subsystem-store/dev"rc1"/x.md`:        star, // the shell reads devrc1, not dev
-		"cat ~/.cache/subsystem-store//x.md":                star,
-		"cat ~/.cache/subsystem-store/.sync-stamp":          star,
-		"cat ~/.cache/subsystem-store/lark1/../finch1/x.md": star,
-		"cd ~/.cache/subsystem-store/lark2 && cat x.md":     star,
-		"cd ~/.cache && cat subsystem-store/lark3/x.md":     star, // relative: cwd unknown
-		"cat ./subsystem-store/lark4/x.md":                  star,
-		"ls ~/.cache/subsystem-store.new-abc/lark5":         star, // a sync staging sibling
-		"C=~/.cache; cat $C/subsystem-store/lark6/x.md":     star, // an unrecognised spelling
-		`cat "$C"/subsystem-store`:                          star,
+		"S=/home/u1/.cache/subsystem-store; for f in $S/*/x.md; do cat $f; done": star,
+		"ls ~/.cache/subsystem-store":                                            star,
+		"ls ~/.cache/subsystem-store/":                                           star,
+		`ls "$HOME/.cache/subsystem-store"`:                                      star,
+		"cat ~/.cache/subsystem-store/*/index.md":                                star,
+		"ls ~/.cache/subsystem-store*":                                           star,
+		"cat ~/.cache/subsystem-store/bad.name1/x.md":                            star, // fails ValidScope
+		"cat ~/.cache/subsystem-store/$SC1/x.md":                                 star,
+		"cat ~/.cache/subsystem-store/{alder1,birch1}/x.md":                      star,
+		`cat ~/.cache/subsystem-store/no"tes1"/x.md`:                             star, // the shell reads notes1, not no
+		"cat ~/.cache/subsystem-store//x.md":                                     star,
+		"cat ~/.cache/subsystem-store/.sync-stamp":                               star,
+		"cat ~/.cache/subsystem-store/lark1/../finch1/x.md":                      star,
+		"cd ~/.cache/subsystem-store/lark2 && cat x.md":                          star,
+		"cd ~/.cache && cat subsystem-store/lark3/x.md":                          star, // relative: cwd unknown
+		"cat ./subsystem-store/lark4/x.md":                                       star,
+		"ls ~/.cache/subsystem-store.new-abc/lark5":                              star, // a sync staging sibling
+		"C=~/.cache; cat $C/subsystem-store/lark6/x.md":                          star, // an unrecognised spelling
+		`cat "$C"/subsystem-store`:                                               star,
 		// Case 3: ANOTHER instance's cache root. Derived scopes carry no instance, so a named read
 		// there cannot be attributed — `*`, never its scope.
-		"S=/home/zach/.cache/subsystem-store-civitai/datapacket-x1; for f in $S/*; do :; done": star,
-		"cat ~/.cache/subsystem-store-civitai/pipit/x.md":                                      star,
+		"S=/home/u1/.cache/subsystem-store-client/ridge-x1; for f in $S/*; do :; done": star,
+		"cat ~/.cache/subsystem-store-client/pipit/x.md":                               star,
 	}
 	for in, want := range cases {
 		if got := CacheScopes(in); !slices.Equal(got, want) {
@@ -93,7 +93,7 @@ func TestF2UnattributableCacheReadAddsStar(t *testing.T) {
 		}
 	}
 	d := NewDeriver()
-	d.ToolInput("S=/home/zach/.cache/subsystem-store; grep -l x $S/*/y.md")
+	d.ToolInput("S=/home/u1/.cache/subsystem-store; grep -l x $S/*/y.md")
 	if r := d.Result(); !r.F2 || !slices.Equal(r.V, star) || !slices.Equal(r.Declare, star) {
 		t.Fatalf("bare root: F2=%v V=%v Declare=%v, want F2 and [*] in both", r.F2, r.V, r.Declare)
 	}
@@ -105,10 +105,10 @@ func TestF2NonCachePathsAddNothing(t *testing.T) {
 		"kubectl -n subsystem-store exec deploy/subsystem-store -- ls /data",
 		"kubectl --namespace=subsystem-store get pods",
 		"bash scripts/test-check-subsystem-store-phase1.sh",
-		"cat clusters/homelab/apps/subsystem-store/ui-deployment.yaml",
+		"cat clusters/lab1/apps/subsystem-store/ui-deployment.yaml",
 		"cat ~/.config/subsystem-store/env",
-		"ls /home/zach/.config/subsystem-store/instances/",
-		"ls -la ~/.cache/subsystem-store.lock ~/.cache/subsystem-store-civitai.lock",
+		"ls /home/u1/.config/subsystem-store/instances/",
+		"ls -la ~/.cache/subsystem-store.lock ~/.cache/subsystem-store-client.lock",
 		"docker pull ghcr.io/zacxdev/subsystem-stores:v1",
 		"git log main..HEAD -- internal/subsystem-store/x.go",
 	} {
@@ -134,12 +134,12 @@ func TestCacheScopesMatchesTheClientsCacheRoot(t *testing.T) {
 	if got := CacheScopes(filepath.Join(def, "sandpiper", "a.md")); !slices.Equal(got, []string{"sandpiper"}) {
 		t.Fatalf("a read under the client's default root %s: %v, want [sandpiper]", def, got)
 	}
-	other, err := client.CacheRootFor("civitai")
+	other, err := client.CacheRootFor("client")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := CacheScopes(filepath.Join(other, "sandpiper", "a.md")); !slices.Equal(got, []string{Star}) {
-		t.Fatalf("a read under the client's civitai root %s: %v, want [*]", other, got)
+		t.Fatalf("a read under the client instance's root %s: %v, want [*]", other, got)
 	}
 }
 

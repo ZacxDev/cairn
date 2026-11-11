@@ -44,10 +44,11 @@
 // ⚠ WHAT IT CANNOT SEE (threat T3): a session mixing a ledger-writing client with one that writes
 // nothing (non-empty ledger, so F1 is silent); a file read of a store copy whose path lacks
 // `subsystem-store`, or lacks a `cache`-named parent component; a read through a variable or a
-// working directory set in an EARLIER call (`$S/devrc/x.md` after `S=~/.cache/subsystem-store`,
-// or a relative path after `cd ~/.cache/subsystem-store/devrc`) — the call that SETS a bare root
+// working directory set in an EARLIER call (`$S/notes1/x.md` after `S=~/.cache/subsystem-store`,
+// or a relative path after `cd ~/.cache/subsystem-store/notes1`) — the call that SETS a bare root
 // or `cd`s into the cache is itself `*`, so such a session is still owner-only, but one that sets
-// `S=~/.cache/subsystem-store/devrc` adds only `devrc`, and a later `$S/../alpha/x.md` is unseen; a bare relative `subsystem-store` with no `/` after it (indistinguishable from the
+// `S=~/.cache/subsystem-store/notes1` adds only `notes1`, and a later `$S/../alpha/x.md` is
+// unseen; a bare relative `subsystem-store` with no `/` after it (indistinguishable from the
 // namespace); a symlink into the cache; a read that bypasses the client entirely; a memo shown by
 // any path that does not print the renderer's block (a memo's text quoted without its fence, or
 // the browser tab).
@@ -627,8 +628,8 @@ func cdsIntoCache(lower string) bool { return cdIntoCache.MatchString(lower) }
 
 // isShellSeparator ends a path token: whitespace and the shell's control and redirection bytes.
 // Quotes, `$`, `{`, `*` and `\` are NOT separators, so a component holding them fails
-// [ValidScope] instead of being cut short into a valid-looking prefix (`dev"rc"` is `devrc` to
-// the shell, and must not read as `dev`).
+// [ValidScope] instead of being cut short into a valid-looking prefix (`al"pha"` is `alpha` to
+// the shell, and must not read as `al`).
 func isShellSeparator(c byte) bool {
 	return strings.IndexByte(" \t\n\r\f\v;&|<>()`", c) >= 0
 }
