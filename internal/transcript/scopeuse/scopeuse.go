@@ -44,8 +44,10 @@
 //     path; every other string is a shell line that must lex with spaces, tabs, `|`, `||`, `&&`,
 //     `;` and newlines only (no other metacharacter outside single quotes; no `/` or `..` inside
 //     them), run only `cat`/`cut`/`echo`/`grep`/`head`/`ls`/`nl`/`printf`/`tail`/`tr`/`uniq`/`wc`,
-//     have no `.`/`..` word, and have every word holding `/` be one clean, unquoted
-//     `~/`-, `/home/<u>/`- or `/root/`-`.cache/subsystem-store/<scope>/<file>` path
+//     have no `.`/`..` word, no other word naming `cache` or `subsystem-store` (a relative
+//     `.cache`, `subsystem-store`), no recursive or name-list flag (`grep -r`/`-R`/`-d`/`-NUM`,
+//     `ls -R`, `wc --files0-from`, [readsBeyondItsWords]), and have every word holding `/` be one
+//     clean, unquoted `~/`-, `/home/<u>/`- or `/root/`-`.cache/subsystem-store/<scope>/<file>` path
 //     ([shellLineProvable], [cleanCachePath], [safeDir]). So `cat`, `grep` or `head` of named
 //     cache files stays named, and almost every other shape that names the cache — a `$HOME`
 //     spelling, a redirect, `sed`, a glob, a second non-cache path — is `*`. `subsystem-store`
@@ -59,17 +61,29 @@
 // `subsystem-store`, or lacks a `cache`-named parent component — including an explicit `--cache`
 // root under a non-cache parent read DIRECTLY (`cat /tmp/x/subsystem-store/<scope>/a.md` adds
 // nothing; only the call carrying `--cache` is `*`); any read that names no cache path at all,
-// such as an ancestor of the cache root spelled relatively (`grep -r x .cache` or `grep -r x` from
-// the home directory) — and the same RELATIVE word beside a named read: a word with no `/` is
-// allowed by the grammar, and resolves against a working directory the input does not fix
-// (Claude Code's, carried over from earlier calls), or against a `workdir` that is an ancestor of a
-// home directory outside `/home/<u>`, `/root` and `/Users/<u>`, so `cat ~/.cache/subsystem-store/
-// <scope>/a.md; grep -r x .cache` from the home directory adds only `<scope>`; a read through a
-// variable or a working directory set in an EARLIER call whose text names no cache path
-// (`cd ~/.cache`, then `grep -r x subsystem-store`) — a call that names one while setting a
-// variable or changing directory (`S=~/.cache/subsystem-store/notes1`, `cd …/notes1`) is itself
-// `*`, since no assignment or `cd` passes the grammar; a function or alias defined in an earlier
-// call under an allowed command's name; a bare relative `subsystem-store` with no `/` after
+// such as an ancestor of the cache root spelled relatively in a call that names no cache path
+// (`grep -r x .cache` or `grep -r x` from the home directory, alone). BESIDE a named read the
+// grammar now rejects both relative shapes: a word naming `cache`/`subsystem-store` that is not a
+// clean cache path, and a recursive flag, so `cat ~/.cache/subsystem-store/<scope>/a.md; grep -r x
+// .cache` is `*` (it added only `<scope>` at #314 round 3). What a named read can still sit beside
+// unseen is a RELATIVE, NON-RECURSIVE FILE word (`cat ~/.cache/subsystem-store/<scope>/a.md x.md`):
+// it reads one file of the working directory, which the input does not fix — harmless unless that
+// directory is inside the cache. In Claude Code it is: Bash's working directory persists between
+// calls, and an EARLIER call that moved it there is `*` only when its text names a cache path
+// (`cd ~/.cache/subsystem-store/<scope>`, `cd ~/.cache/subsystem-store`); one spelled through bare
+// relative words (`cd ~/.cache`, then `cd subsystem-store`, then `cd <scope>`) names none, adds
+// nothing, and the later `cat <named path> x.md` adds only the named scope. In opencode a bash
+// call's `workdir` is part of its input, which [safeDir] checks; with none it runs in "the current
+// working directory" (the tool's own schema text, opencode 2.0.32), which no input names — so the
+// same gap holds there for that default directory, and whether an earlier call's `cd` can move
+// it is NOT established here (opencode 2.0 keeps shell ids; not read from its source). The
+// same earlier-call gap covers a read through a variable set earlier, and a later `ls <scope>` or
+// `grep x <file>` (one directory's names, one file); a call that names a cache path while setting
+// a variable or changing directory (`S=~/.cache/subsystem-store/notes1`, `cd …/notes1`) is itself
+// `*`, since no assignment or `cd` passes the grammar. Also unseen: a function or alias under an
+// allowed command's name, defined in an earlier call or by the HOST (Claude Code's own `grep` is
+// one, its embedded ugrep: the flags [readsBeyondItsWords] knows are GNU's plus ugrep's `-NUM` and
+// `--depth`, and a host wrapper with any other mode is unseen); a bare relative `subsystem-store` with no `/` after
 // it (indistinguishable from the namespace); a symlink into the cache; a read that bypasses the
 // client entirely; a memo shown by any path that does not print the renderer's block (a memo's
 // text quoted without its fence, or the browser tab).
@@ -736,11 +750,18 @@ var provableCommands = map[string]bool{
 //   - The first word of every command must be one of [provableCommands], by its unquoted text.
 //   - Every word holding `/` must be ONE [cleanCachePath], unquoted: no other path is provable.
 //   - A word that is `.` or `..` once unquoted fails (with `/` it has already failed above).
+//   - A word that, once unquoted, holds `cache` or [CacheRootName] (any case) and is not a
+//     [cleanCachePath] fails: with no `/` it is RELATIVE (`.cache`, `subsystem-store`,
+//     `--cached`), and from the home directory or `~/.cache` it is an ancestor of every scope.
+//   - A flag putting an allowed command into a mode that reads more than the files its words
+//     name fails ([readsBeyondItsWords]): `grep`'s recursion, `ls -R`, `wc --files0-from`.
 //
-// ⚠ A word with no `/` is an argument, and if it is a file name it resolves against a working
-// directory this does not know — that is T3 (the package doc), not something this proves.
+// ⚠ A word with no `/` that passes is a FILE argument read non-recursively, and it resolves
+// against a working directory this does not know — that is T3 (the package doc), not something
+// this proves.
 func shellLineProvable(s string) bool {
 	cmd := true                // the next word is a command's first
+	prog := ""                 // the current command's first word, unquoted
 	start, quoted := -1, false // the current word's first byte, and whether it holds a quote
 	var val []byte             // the current word unquoted, built only once it holds a quote
 	endWord := func(i int) bool {
@@ -753,15 +774,20 @@ func shellLineProvable(s string) bool {
 			v = string(val)
 		}
 		ok := true
-		switch {
+		switch lv := asciiLower(v); {
 		case strings.IndexByte(raw, '/') >= 0:
 			ok = !quoted && cleanCachePath(raw)
 		case v == "." || v == "..":
 			ok = false
+		case strings.Contains(lv, "cache") || strings.Contains(lv, CacheRootName):
+			ok = false // a cache-named word that is not a clean cache path: relative, so `*`
 		}
 		if cmd {
 			ok = ok && provableCommands[v]
+			prog = v
 			cmd = false
+		} else if readsBeyondItsWords(prog, v) {
+			ok = false
 		}
 		start, quoted, val = -1, false, val[:0]
 		return ok
@@ -822,6 +848,61 @@ func shellLineProvable(s string) bool {
 		}
 	}
 	return endWord(len(s))
+}
+
+// readsBeyondItsWords reports whether w, an argument word of prog (both unquoted), is a flag that
+// makes prog read files its words do not name: a directory tree, or a list of names read from a
+// file. Of [provableCommands], only three have such a mode (each one's `--help`, GNU coreutils
+// 9.11 and grep 3.12):
+//
+//   - `grep`: `-r`, `-R`, `--recursive`, `--dereference-recursive`, `-d recurse` and
+//     `--directories=recurse`. Every short-flag cluster holding `r`, `R` or `d` fails, so
+//     `-rn`, `-nR` and `-drecurse` do — and so does `-d skip`, and a cluster whose attached
+//     argument happens to hold one of them (`-erate`): over-poisoned, never missed.
+//     🔴 `grep` IS NOT ALWAYS GNU grep: Claude Code's Bash shadows it with a shell function
+//     that runs its embedded ugrep, where `-NUM` and `--depth=…` RECURSE (measured: `grep -n2
+//     needle sub` finds `sub/deep/f.txt`; GNU reads `-2` as `-C 2`). So a cluster holding a
+//     digit fails too (`-m1`, `-A3` over-poisoned), and so does `--depth`.
+//   - `ls`: `-R` and `--recursive`; every cluster holding `R` (`-laR`).
+//   - `wc`: `--files0-from=F` reads the names of the files to count from F (or stdin, which
+//     `printf '\057…'` can fill with a path no word spells).
+//
+// A long flag fails when its name (before any `=`) is a PREFIX of one of those, whole or
+// abbreviated (`--rec`, `--direc=recurse`, `--files0`), because getopt_long accepts an
+// abbreviation; an ambiguous one (`--re`, `--d`) fails too.
+// The rest read only their words or stdin: `cat`, `cut`, `head`, `nl`, `tail`, `tr`, `uniq`
+// have no recursive or name-list mode, and `echo`/`printf` read nothing. (`uniq IN OUT` WRITES
+// `OUT`; that is not a read.)
+func readsBeyondItsWords(prog, w string) bool {
+	if len(w) < 2 || w[0] != '-' {
+		return false
+	}
+	var short string
+	var long []string
+	switch prog {
+	case "grep":
+		short = "rRd0123456789"
+		long = []string{"--recursive", "--dereference-recursive", "--directories", "--depth"}
+	case "ls":
+		short, long = "R", []string{"--recursive"}
+	case "wc":
+		long = []string{"--files0-from"}
+	default:
+		return false
+	}
+	if w[1] != '-' {
+		return strings.ContainsAny(w[1:], short)
+	}
+	name, _, _ := strings.Cut(w, "=")
+	if len(name) <= 2 {
+		return false // `--`, the end of the flags
+	}
+	for _, l := range long {
+		if strings.HasPrefix(l, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanCachePath reports whether w is exactly one file path under the default cache root as the

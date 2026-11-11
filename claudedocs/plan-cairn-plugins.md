@@ -931,6 +931,15 @@ script that prints only counts.
        an allowed-command list, every `/` word one clean cache file path, a working directory
        outside the cache and not an ancestor of it); anything else naming the cache is `*`. This
        is the one place a shell line is lexed, and it can only turn a named read into `*`.*
+       *#314 round 4: the grammar let a RELATIVE word through beside a named read, so
+       `cat ~/.cache/subsystem-store/<scope>/x.md; grep -r x .cache` from the home directory
+       derived `<scope>` while reading every scope (`*` under the bare-substring rule — a fail-open
+       regression). Now a word naming `cache`/`subsystem-store` that is not a clean cache path
+       fails, and so does a flag reading beyond the line's words (`grep -r/-R/-d/--recursive`,
+       ugrep's `-NUM`/`--depth` since Claude Code's `grep` is its embedded ugrep, `ls -R`,
+       `wc --files0-from`). T3 keeps a relative NON-recursive file word read from a working
+       directory an EARLIER call moved into the cache by bare relative `cd`s (Claude Code; for
+       opencode only its default directory, `workdir` being checked) — the package doc has it.*
      A call is never matched to "its" ledger record: the rules ask only "is the ledger empty" and
      "does any input name the cache", which is what keeps the shell grammar out of the design.
    - *DELETED in revision 13 (O11), with the ledger in its place:* the shell-command-line parser

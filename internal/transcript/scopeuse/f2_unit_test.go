@@ -84,7 +84,7 @@ func TestF2DecidesOverTheWholeInput(t *testing.T) {
 		{"grep path + .. glob", "Grep", map[string]any{
 			"pattern": "secret", "path": testCacheRoot + "alder-h/entries", "glob": "../../birch-h/*.md"}, star},
 		{"named read + ancestor workdir", "bash", map[string]any{
-			"command": "grep -r token ~/.cache/subsystem-store/alder-a/x.md", "workdir": "/home/u1"}, star},
+			"command": "grep -n token ~/.cache/subsystem-store/alder-a/x.md", "workdir": "/home/u1"}, star},
 		// Positive controls: a named read stays named when nothing else in its input poisons it.
 		{"file read", "Read", map[string]any{"file_path": testCacheRoot + "alder-r/x.md"}, []string{"alder-r"}},
 		{"named read + repo workdir", "bash", map[string]any{
@@ -155,18 +155,19 @@ func TestF2CdFamilyWordAddsStar(t *testing.T) {
 func TestF2AncestorArgumentAddsStar(t *testing.T) {
 	star := []string{Star}
 	checkStrings(t, map[string][]string{
-		"grep -r secret ~/.cache/subsystem-store/alder-a1 ~/.cache":         star,
-		"grep -r secret ~/.cache/subsystem-store/alder-a2 $HOME/.cache":     star,
-		"grep -r secret ~/.cache/subsystem-store/alder-a3 /home/u1/.cache/": star,
-		"grep -r secret ~/.cache/subsystem-store/alder-a4 ~":                star,
-		"grep -r secret ~/.cache/subsystem-store/alder-a5 /home/u1":         star,
-		"grep -r secret ~/.cache/subsystem-store/alder-a6 /":                star,
-		`grep -r secret ~/.cache/subsystem-store/alder-a7 "$HOME"`:          star,
-		"grep -r secret ~/.cache/subsystem-store/alder-a8 $XDG_CACHE_HOME":  star,
-		"grep -r secret ~/.cache/subsystem-store/alder-a9 ${HOME}":          star,
-		// Controls: a flag, or a word, that says "cache" is not an ancestor.
-		"grep -r --no-cache x ~/.cache/subsystem-store/alder-b0/x.md": {"alder-b0"},
-		"echo cached; cat ~/.cache/subsystem-store/alder-b1/x.md":     {"alder-b1"},
+		"grep -c secret ~/.cache/subsystem-store/alder-a1 ~/.cache":         star,
+		"grep -c secret ~/.cache/subsystem-store/alder-a2 $HOME/.cache":     star,
+		"grep -c secret ~/.cache/subsystem-store/alder-a3 /home/u1/.cache/": star,
+		"grep -c secret ~/.cache/subsystem-store/alder-a4 ~":                star,
+		"grep -c secret ~/.cache/subsystem-store/alder-a5 /home/u1":         star,
+		"grep -c secret ~/.cache/subsystem-store/alder-a6 /":                star,
+		`grep -c secret ~/.cache/subsystem-store/alder-a7 "$HOME"`:          star,
+		"grep -c secret ~/.cache/subsystem-store/alder-a8 $XDG_CACHE_HOME":  star,
+		"grep -c secret ~/.cache/subsystem-store/alder-a9 ${HOME}":          star,
+		// Controls: a flag, or a word, that is not a path is not an ancestor. (A word that says
+		// "cache" is `*` now, whatever it is: TestF2GrammarRejectsCacheWords.)
+		"grep -c --no-color x ~/.cache/subsystem-store/alder-b0/x.md": {"alder-b0"},
+		"echo done; cat ~/.cache/subsystem-store/alder-b1/x.md":       {"alder-b1"},
 	})
 }
 
@@ -218,13 +219,13 @@ func TestF2AllowlistRejectsTheRoundTwoShapes(t *testing.T) {
 		bash("workdir ending /.", `cat .''./birch-p3/x.md`, testCacheRoot+"alder-p3/."),
 		bash("workdir ending //", `cat .''./birch-p4/x.md`, testCacheRoot+"alder-p4//"),
 		bash("workdir ending /./", `cat .''./birch-p5/x.md`, testCacheRoot+"alder-p5/./"),
-		bash("~/.cache/.", "grep -r token ~/.cache/subsystem-store/alder-p6/x.md ~/.cache/.", ""),
-		bash("cache glob", "grep -r token ~/.cache/subsystem-store/alder-p7/x.md /home/u1/.cache/*", ""),
-		bash("double slash home", "grep -r token ~/.cache/subsystem-store/alder-p8/x.md /home//u1", ""),
-		bash("~/.", "grep -r token ~/.cache/subsystem-store/alder-p9/x.md ~/.", ""),
-		bash("/.", "grep -r token ~/.cache/subsystem-store/alder-p10/x.md /.", ""),
-		bash("parameter expansion", "grep -r token ~/.cache/subsystem-store/alder-p11/x.md ${HOME:-x}", ""),
-		bash(". from a home workdir", "grep -r token "+testCacheRoot+"alder-p12/x.md .", "/home/u1/."),
+		bash("~/.cache/.", "grep -n token ~/.cache/subsystem-store/alder-p6/x.md ~/.cache/.", ""),
+		bash("cache glob", "grep -n token ~/.cache/subsystem-store/alder-p7/x.md /home/u1/.cache/*", ""),
+		bash("double slash home", "grep -n token ~/.cache/subsystem-store/alder-p8/x.md /home//u1", ""),
+		bash("~/.", "grep -n token ~/.cache/subsystem-store/alder-p9/x.md ~/.", ""),
+		bash("/.", "grep -n token ~/.cache/subsystem-store/alder-p10/x.md /.", ""),
+		bash("parameter expansion", "grep -n token ~/.cache/subsystem-store/alder-p11/x.md ${HOME:-x}", ""),
+		bash(". from a home workdir", "grep -n token "+testCacheRoot+"alder-p12/x.md .", "/home/u1/."),
 	})
 }
 
@@ -312,14 +313,14 @@ func TestF2GrammarRejectsOtherPaths(t *testing.T) {
 // command reads against an unknown working directory.
 func TestF2GrammarRejectsDotWords(t *testing.T) {
 	checkStrings(t, map[string][]string{
-		"grep -r x ~/.cache/subsystem-store/alder-d1/x.md .":    {Star},
-		"grep -r x ~/.cache/subsystem-store/alder-d2/x.md ..":   {Star}, // invariant: `*` at b842b7e
-		"grep -r x ~/.cache/subsystem-store/alder-d3/x.md '.'":  {Star},
-		"grep -r x ~/.cache/subsystem-store/alder-d4/x.md .''":  {Star},
-		"grep -r x ~/.cache/subsystem-store/alder-d5/x.md .'.'": {Star},
+		"grep -n x ~/.cache/subsystem-store/alder-d1/x.md .":    {Star},
+		"grep -n x ~/.cache/subsystem-store/alder-d2/x.md ..":   {Star}, // invariant: `*` at b842b7e
+		"grep -n x ~/.cache/subsystem-store/alder-d3/x.md '.'":  {Star},
+		"grep -n x ~/.cache/subsystem-store/alder-d4/x.md .''":  {Star},
+		"grep -n x ~/.cache/subsystem-store/alder-d5/x.md .'.'": {Star},
 		// Controls: a word that merely holds dots is an argument.
-		"grep -r x.y ~/.cache/subsystem-store/alder-d6/x.md ...": {"alder-d6"},
-		"grep -r .x ~/.cache/subsystem-store/alder-d7/x.md":      {"alder-d7"},
+		"grep -n x.y ~/.cache/subsystem-store/alder-d6/x.md ...": {"alder-d6"},
+		"grep -n .x ~/.cache/subsystem-store/alder-d7/x.md":      {"alder-d7"},
 	})
 }
 
@@ -351,7 +352,7 @@ func TestF2GrammarRejectsCommands(t *testing.T) {
 // cache is `*` — the input's relative words resolve inside it.
 func TestF2WorkdirMustBeOutsideTheCache(t *testing.T) {
 	star := []string{Star}
-	cmd := "grep -r t ~/.cache/subsystem-store/alder-w1/x.md birch-w1"
+	cmd := "grep -n t ~/.cache/subsystem-store/alder-w1/x.md birch-w1"
 	var cases []unitCase
 	// The first and the fourth to sixth rows below were already `*` at b842b7e (a scope-directory
 	// string, an ancestor word): invariant rows. The second and third were named there.
@@ -368,10 +369,13 @@ func TestF2WorkdirMustBeOutsideTheCache(t *testing.T) {
 }
 
 // TestF2WorkdirMustNotBeAnAncestor: a working directory a home directory, and so its cache, lies
-// under is `*` — `grep -r t u1` from `/home` reads every scope.
+// under is `*` — `grep -r t u1` from `/home` reads every scope. Since #314 round 4 the recursive
+// flag is `*` by itself ([readsBeyondItsWords]), so the command here is NON-recursive and only
+// this rule decides; it stays the second fence for a host `grep` whose modes the grammar does not
+// know.
 func TestF2WorkdirMustNotBeAnAncestor(t *testing.T) {
 	star := []string{Star}
-	cmd := "grep -r t ~/.cache/subsystem-store/alder-v1/x.md u1"
+	cmd := "grep -n t ~/.cache/subsystem-store/alder-v1/x.md u1"
 	var cases []unitCase
 	// Only `/home/u1/.` and `home/u1` were named at b842b7e; the rest were already `*` there (an
 	// ancestor word): invariant rows, held so the allowlist keeps them.

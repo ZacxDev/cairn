@@ -23,9 +23,10 @@ func TestF2NamedCacheReadAddsThatScope(t *testing.T) {
 		"head -n 40 /home/u1/.cache/subsystem-store/ember_7/nix.md":                    {"ember_7"},
 		"cat /root/.cache/subsystem-store/oak9/x.md":                                   {"oak9"},
 		"cat ~/.cache/subsystem-store/stilt/a.md ~/.cache/subsystem-store/curlew/b.md": {"stilt", "curlew"},
-		// Controls: a git range is not a `..` word, a flag naming a cache is not a path.
+		// Controls: a git range is not a `..` word, a long flag is not a path. (A flag naming a
+		// cache, `--cached`, is `*` since #314 round 4: TestF2GrammarRejectsCacheWords.)
 		"grep -c main..HEAD ~/.cache/subsystem-store/sanderling/x.md": {"sanderling"},
-		"grep --cached x ~/.cache/subsystem-store/knot5/x.md":         {"knot5"},
+		"grep --count x ~/.cache/subsystem-store/knot5/x.md":          {"knot5"},
 		// The name inside the scope's own path is not a second root.
 		"cat ~/.cache/subsystem-store/dunlin/subsystem-store-notes.md": {"dunlin"},
 	}

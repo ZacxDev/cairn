@@ -5371,6 +5371,29 @@ MUTANTS: tuple[Mutant, ...] = (
         why="a word with no `/` is never a cache path, so `.` reads as one more harmless argument — and "
         "`grep -r x … .` reads the whole working directory, which can be the home directory.",
     ),
+    # #314 round 4: a RELATIVE word beside a named read (fail-open vs main's bare-substring rule).
+    Mutant(
+        name='scopeuse-f2-cache-word-accepted',
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tcase strings.Contains(lv, \"cache\") || strings.Contains(lv, CacheRootName):",
+        new="\t\tcase false && lv != \"\":",
+        killer='TestF2GrammarRejectsCacheWords',
+        why="a word with no `/` is never a cache PATH, so checking it for the cache's name reads as a "
+        "false positive on `--cached` — and `.cache` or `subsystem-store` from the home directory is an "
+        "ancestor of every scope, beside a read that derives only one.",
+    ),
+    Mutant(
+        name='scopeuse-f2-recursive-flag-accepted',
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t} else if readsBeyondItsWords(prog, v) {",
+        new="\t\t} else if false && readsBeyondItsWords(prog, v) {",
+        killer='TestF2GrammarRejectsRecursiveReads',
+        extra_killers=('TestF2RelativeAndRecursiveReadsAddStar',),
+        why="every path a provable line names is already checked, so a flag reads as beside the point — "
+        "and `grep -r x foo`, `ls -R` or `wc --files0-from=-` read files no word of the line names.",
+    ),
     Mutant(
         name='scopeuse-f2-command-not-allowlisted',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
