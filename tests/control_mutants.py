@@ -5248,12 +5248,70 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-cache-path-read-ignored",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\tif strings.Contains(lower, \"subsystem-store\") {",
-        new="\tif false && strings.Contains(lower, \"subsystem-store\") {",
-        killer="TestF2CacheReadAddsStar",
+        old="\teachCacheRead(s, lower, func(sc string) {",
+        new="\teachCacheRead(s, \"\", func(sc string) {",
+        killer="TestF2CacheReadAddsItsScope",
+        extra_killers=("TestF2NamedCacheReadAddsThatScope", "TestF2UnattributableCacheReadAddsStar"),
         why="a file-tool read of the cache never passes through the client, so it is never ledgered; "
         "dropping F2 because \"the ledger covers reads now\" is the plausible simplification, and it "
         "makes every cache read invisible.",
+    ),
+    # F2 narrowed from the bare substring `subsystem-store` to the cache-root PATH: three guards
+    # of the narrowing, each of which a plausible edit removes.
+    Mutant(
+        name="scopeuse-f2-bare-substring",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\teachCacheRead(s, lower, func(sc string) {\n\t\tif sc == Star {",
+        new="\tif strings.Contains(lower, CacheRootName) {\n\t\td.namesCache = true\n\t}\n"
+        "\teachCacheRead(s, lower, func(sc string) {\n\t\tif sc == Star {",
+        killer="TestF2NamedCacheReadAddsThatScope",
+        extra_killers=("TestF2CacheReadAddsItsScope", "TestF2NonCachePathsAddNothing"),
+        why="\"any mention of the store is `*`\" is the rule this replaced, and it reads as the safer "
+        "one — it made every named cache read owner-only (13 of 13 `*` sessions in the 2026-11-11 "
+        "census came from it).",
+    ),
+    Mutant(
+        name="scopeuse-f2-bare-root-not-star",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tif alias || next != '/' || isPoisoned() {\n\t\t\temit(Star)\n",
+        new="\t\tif alias || next != '/' || isPoisoned() {\n\t\t\tif next == '/' {\n\t\t\t\temit(Star)\n\t\t\t}\n",
+        killer="TestF2UnattributableCacheReadAddsStar",
+        why="a bare root names no scope, and \"no scope component, nothing to add\" reads as tidy — "
+        "but `S=~/.cache/subsystem-store` is how a later `$S/<scope>/…` read, which this cannot "
+        "see, gets its path.",
+    ),
+    Mutant(
+        name="scopeuse-f2-component-not-validated",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tif sc := s[start:stop]; ValidScope(sc) {",
+        new="\t\tif sc := s[start:stop]; sc != \"\" {",
+        killer="TestF2UnattributableCacheReadAddsStar",
+        why="the component after the root LOOKS like the scope, so taking it as-is is the obvious "
+        "parse — and a glob, `$VAR` or `{a,b}` then reads as one scope it never was.",
+    ),
+    Mutant(
+        name="scopeuse-f2-other-instance-scope-trusted",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tif alias || next != '/' || isPoisoned() {",
+        new="\t\tif _ = alias; next != '/' || isPoisoned() {",
+        killer="TestF2UnattributableCacheReadAddsStar",
+        why="`subsystem-store-<alias>/<scope>/…` is laid out exactly like the default cache, so "
+        "parsing it the same way is natural — but derived scopes carry no instance, and routing "
+        "would send that scope by NAME to whatever instance the table says.",
+    ),
+    Mutant(
+        name="scopeuse-f2-unknown-parent-not-a-cache",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\treturn unknownRoot\n",
+        new="\t\treturn notRoot\n",
+        killer="TestF2UnattributableCacheReadAddsStar",
+        why="\"a parent that does not say `cache` is not the cache\" is one line shorter, and "
+        "`C=~/.cache; cat $C/subsystem-store/…` then falls silently into \"not a cache path\".",
     ),
     # S2 review round 1 (F3): four guards that each SURVIVED a mutation with no test reaching them.
     Mutant(
