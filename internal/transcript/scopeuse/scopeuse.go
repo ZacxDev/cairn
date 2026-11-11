@@ -35,15 +35,25 @@
 //     valid scope (a glob, `$VAR`, `{a,b}`, `.sync-stamp`), ANOTHER instance's root
 //     (`subsystem-store-<alias>` — derived scopes carry no instance), a sync staging sibling
 //     (`subsystem-store.new-…`), a relative `subsystem-store/…`, a root whose parent component is
-//     a spelling this cannot read (`$C/subsystem-store/…`), and any input that also holds a
-//     `..` component or `cd`s into the cache. `subsystem-store` that is NOT a cache path — a
+//     a spelling this cannot read (`$C/subsystem-store/…`). 🔴 It is decided over ONE TOOL INPUT
+//     WHOLE — every string of it together (a command AND its `workdir`, a pattern AND its `path`),
+//     never string by string: an input naming a cache read adds `*` instead when ANY of its
+//     strings holds a `..` component, a cd-family word (`cd`, `pushd`, `popd`, `dirname`,
+//     `realpath`, `readlink`, in any quoting), an argument that is an ancestor of the cache root
+//     (`~/.cache`, `~`, `/`, `$HOME` …), a cache path spelled with bytes the shell rewrites
+//     (quotes, `\`, `$`, braces, a backtick, glob brackets), or a string that is nothing but a
+//     scope DIRECTORY (a working directory or a recursive root); and any input with the client's
+//     `--cache` flag adds `*`. `subsystem-store` that is NOT a cache path — a
 //     namespace (`-n subsystem-store`), a repo path (`apps/subsystem-store/…`), the config dir
 //     (`~/.config/subsystem-store/`), a file name (`check-subsystem-store.sh`), the `.lock`
 //     sibling — adds nothing ([eachCacheRead] has the exact rule).
 //
 // ⚠ WHAT IT CANNOT SEE (threat T3): a session mixing a ledger-writing client with one that writes
 // nothing (non-empty ledger, so F1 is silent); a file read of a store copy whose path lacks
-// `subsystem-store`, or lacks a `cache`-named parent component; a read through a variable or a
+// `subsystem-store`, or lacks a `cache`-named parent component — including an explicit `--cache`
+// root under a non-cache parent read DIRECTLY (`cat /tmp/x/subsystem-store/<scope>/a.md` adds
+// nothing; only the call carrying `--cache` is `*`); an ancestor of the cache root spelled as a
+// relative path or a glob (`grep -r x .` from the home directory, `~/.c*`); a read through a variable or a
 // working directory set in an EARLIER call (`$S/notes1/x.md` after `S=~/.cache/subsystem-store`,
 // or a relative path after `cd ~/.cache/subsystem-store/notes1`) — the call that SETS a bare root
 // or `cd`s into the cache is itself `*`, so such a session is still owner-only, but one that sets
@@ -212,7 +222,7 @@ func lineScopes(line string, emit func(string)) {
 }
 
 // Deriver accumulates one ROOT session's evidence across every stream. Feed it every string of
-// every record ([Deriver.Content]), every tool input ([Deriver.ToolInput]) and every ledger file
+// every record ([Deriver.Content]), every tool input ([Deriver.ToolInputValue]) and every ledger file
 // ([Deriver.Ledger]); then read [Deriver.Result].
 type Deriver struct {
 	headers       map[string]bool
@@ -420,15 +430,36 @@ func eachJSONString(t string, emit func(string)) {
 	}
 }
 
-// ToolInput records one string of a tool's INPUT (a command line, a file path, an argument).
-// Inputs are content too, so the header scan runs on them as well.
-func (d *Deriver) ToolInput(s string) {
-	d.Content(s)
-	lower := asciiLower(s)
-	if strings.Contains(lower, "cairn") || strings.Contains(lower, "subsystem-recall") {
-		d.namesProgram = true
+// ToolInputValue records ONE tool's whole decoded INPUT (a `tool_use` block's `input`, an opencode
+// part's `state.input`) as ONE unit: every string it holds, at any depth, together.
+//
+// 🔴 F2 MUST SEE THE INPUT WHOLE, NOT STRING BY STRING. One input's strings act together: an
+// opencode bash input `{"command":"cat ../bb/x.md","workdir":"…/subsystem-store/aa"}` reads `bb`,
+// and neither string alone says so — the command has no cache path, the workdir no `..`. Fed one
+// string at a time it derived `[aa]` (#314 round 1).
+func (d *Deriver) ToolInputValue(v any) {
+	var ss []string
+	eachString(v, func(s string) { ss = append(ss, s) })
+	d.ToolInputStrings(ss)
+}
+
+// ToolInput records one tool input that IS one string (a raw command line). It is the
+// one-string unit of [Deriver.ToolInputStrings].
+func (d *Deriver) ToolInput(s string) { d.ToolInputStrings([]string{s}) }
+
+// ToolInputStrings records ONE tool input given as all its strings (a command line, a file path,
+// a working directory, an argument). Inputs are content too, so the header scan runs on each
+// string; F1 asks of each string; F2 decides over the strings TOGETHER ([eachCacheRead]).
+func (d *Deriver) ToolInputStrings(ss []string) {
+	lowers := make([]string, len(ss))
+	for k, s := range ss {
+		d.Content(s)
+		lowers[k] = asciiLower(s)
+		if strings.Contains(lowers[k], "cairn") || strings.Contains(lowers[k], "subsystem-recall") {
+			d.namesProgram = true
+		}
 	}
-	eachCacheRead(s, lower, func(sc string) {
+	eachCacheRead(ss, lowers, func(sc string) {
 		if sc == Star {
 			d.namesCache = true
 		} else {
@@ -449,17 +480,24 @@ const CacheRootName = "subsystem-store"
 // not a store, so naming it is not a read.
 const lockSuffix = ".lock"
 
-// CacheScopes returns what F2 adds for one tool input: the scope of every cache-root READ it names,
-// `*` for one it cannot attribute to a single default-instance scope. See [eachCacheRead].
-func CacheScopes(s string) []string {
+// CacheScopes returns what F2 adds for ONE tool input given as its strings: the scope of every
+// cache-root READ it names, `*` for one it cannot attribute to a single default-instance scope. See
+// [eachCacheRead].
+func CacheScopes(ss ...string) []string {
+	lowers := make([]string, len(ss))
+	for k, s := range ss {
+		lowers[k] = asciiLower(s)
+	}
 	var out []string
-	eachCacheRead(s, asciiLower(s), func(v string) { out = append(out, v) })
+	eachCacheRead(ss, lowers, func(v string) { out = append(out, v) })
 	return out
 }
 
-// eachCacheRead is F2. A file read from the client cache never passes through the client and is
-// never ledgered, so the PATH is the only evidence of what was read. It finds every
-// `subsystem-store` (case-insensitive) in s and classifies it — a NAME, not a substring:
+// eachCacheRead is F2, over ONE tool input: ss is every string it holds, lowers their asciiLower
+// (passed in so the one copy [Deriver.ToolInputStrings] makes serves F1 and F2). A file read from
+// the client cache never passes through the client and is never ledgered, so the PATH is the only
+// evidence of what was read. It finds every `subsystem-store` (case-insensitive) in every string
+// and classifies it — a NAME, not a substring:
 //
 //   - NOT A CACHE PATH, adds nothing: the name is part of a longer word (`test-check-subsystem-
 //     store-phase1.sh`, `subsystem-stores`); it is a path component whose parent is a plain
@@ -474,91 +512,278 @@ func CacheScopes(s string) []string {
 //     the working directory is unknown. So is one whose parent component is neither a cache nor a
 //     plain literal word (`$C/subsystem-store`, `"$C"/subsystem-store/…`, `~/subsystem-store`):
 //     an unrecognised spelling of the root is `*`, never "not a cache" ([rootContext]).
-//   - A cache root adds `*` unless EVERYTHING below holds, and then adds the scope:
-//     it is the default instance (no `-<alias>` suffix: derived scopes carry no instance, so a
-//     scope read from ANOTHER instance's cache cannot be attributed — routing would send it by name
-//     to whatever instance the table says); a `/` follows it; the next component, up to `/` or a
-//     shell separator, passes [ValidScope] (a bare root, `*`, `$S`, `{a,b}`, a quoted or empty
-//     component all fail); the input holds no `..` path component ([hasParentComponent]); and the input does not `cd`/`pushd`
-//     into a path naming the cache (the working directory then persists into calls this cannot
-//     connect to it). Anything else after the root name — `-*`, `.new-…`, `_old` — is `*`.
+//   - A cache root is `*` unless it is the default instance (no `-<alias>` suffix: derived scopes
+//     carry no instance, so a scope read from ANOTHER instance's cache cannot be attributed —
+//     routing would send it by name to whatever instance the table says), a `/` follows it, and the
+//     next component, up to `/` or a shell separator, passes [ValidScope] (a bare root, `*`, `$S`,
+//     `{a,b}`, a quoted or empty component all fail). Anything else after the root name — `-*`,
+//     `.new-…`, `_old` — is `*`. One that passes is a NAMED read of that scope.
+//
+// 🔴 THE NAMED READS ARE THEN JUDGED AS A UNIT. If the input holds any, it adds `*` INSTEAD of
+// them when ANY of its strings, not just the one naming the path, holds:
+//
+//   - a `..` path component ([hasParentComponent]): a sibling of the path it names;
+//   - a word of the cd family — `cd`, `pushd`, `popd`, `dirname`, `realpath`, `readlink`, spelled
+//     with any quotes, backslashes, `$`, braces or commas, or as a path's last component
+//     ([cdFamilyWord]): the working directory or a derived path then reaches what the text never
+//     names, here and in calls this cannot connect to it;
+//   - an ARGUMENT that is an ancestor of the cache root — `/`, `~`, `$HOME`, `/home/<u>`,
+//     `~/.cache`, `$XDG_CACHE_HOME`, any word whose last component names a cache ([ancestorWord]):
+//     `grep -r x ~/.cache/subsystem-store/aa ~/.cache` reads every scope;
+//   - a cache path whose token, after the root, holds a byte the shell rewrites — `\ ' " { } $`,
+//     a backtick, `[ ] ?`, or `/.*` — anywhere but a trailing run of closing quotes
+//     ([spelledToken]): `aa/.\./bb`, `aa/.""./bb`, `aa/.{.,}/bb`, `aa/$'\x2e\x2e'/bb` are each `..`
+//     to the shell and none of them is to [hasParentComponent];
+//   - a string that is NOTHING BUT a cache scope DIRECTORY (`…/subsystem-store/aa`, `…/aa/`), as a
+//     `workdir`, `path` or `cwd` field is ([dirOnly]): a working directory or a recursive root,
+//     which the input's other strings resolve against — not a single-file read.
+//
+// And any input with a `--cache` word (the client's explicit cache root, `internal/client`) adds
+// `*` whether or not it names `subsystem-store`: that root can be anywhere ([cacheFlag]).
+//
+// Every rule above prefers `*` to a narrower set: a false `*` hides a session from more people, a
+// missed one shows it to people who may not read what it read.
 //
 // LINEAR: every occurrence looks back over its parent component only (disjoint per occurrence)
-// and forward over its scope component; the `..` and `cd` checks are one pass each per input.
-//
-// lower is asciiLower(s), passed in so the one copy [Deriver.ToolInput] makes serves F1 and F2.
-func eachCacheRead(s, lower string, emit func(string)) {
-	if !strings.Contains(lower, CacheRootName) {
+// and forward over its scope component; the token check resumes where the last clean one ended;
+// the unit checks are one pass each per string, and run only for an input that names a read.
+func eachCacheRead(ss, lowers []string, emit func(string)) {
+	var named []string
+	spelled := false
+	for k, s := range ss {
+		lower := lowers[k]
+		if !strings.Contains(lower, CacheRootName) {
+			continue
+		}
+		cleanUntil := 0 // s[..cleanUntil) is the tail of a token [spelledToken] passed
+		trimEnd := len(strings.TrimRight(s, " \t\n\r\f\v"))
+		for off := 0; ; {
+			j := strings.Index(lower[off:], CacheRootName)
+			if j < 0 {
+				break
+			}
+			i := off + j
+			end := i + len(CacheRootName)
+			// The alias suffix, `client.ValidAlias`'s `-[a-z0-9][a-z0-9-]*`.
+			alias := false
+			if end+1 < len(lower) && lower[end] == '-' && isAlnum(lower[end+1]) {
+				alias = true
+				end++
+				for end < len(lower) && (isAlnum(lower[end]) || lower[end] == '-') {
+					end++
+				}
+			}
+			// 🔴 THE NEXT SEARCH STARTS PAST THE ALIAS, NOT PAST THE NAME: an occurrence inside it is the
+			// same word (preceded by `-`, never a root), and starting inside it re-read the alias to its
+			// end from every occurrence — quadratic, 52 s on a 2 MiB `subsystem-store-` run
+			// (`TestCacheScopesIsLinear`).
+			off = end
+			var next byte // 0 = end of input
+			if end < len(lower) {
+				next = lower[end]
+			}
+			if isAlnum(next) {
+				continue // a longer word
+			}
+			if strings.HasPrefix(lower[end:], lockSuffix) {
+				after := end + len(lockSuffix)
+				if after == len(lower) || !isPathByte(lower[after]) {
+					continue // the sync lock, a file
+				}
+			}
+			switch kind := rootContext(lower, i); {
+			case kind == notRoot:
+				continue
+			case kind == relativeRoot && next != '/':
+				continue // a bare word: a namespace, a service name
+			case kind == relativeRoot, kind == unknownRoot:
+				emit(Star)
+				continue
+			}
+			if alias || next != '/' {
+				emit(Star)
+				continue
+			}
+			start := end + 1
+			stop := start
+			for stop < len(s) && s[stop] != '/' && !isShellSeparator(s[stop]) {
+				stop++
+			}
+			sc := s[start:stop]
+			if !ValidScope(sc) {
+				emit(Star)
+				continue
+			}
+			if !spelled && end >= cleanUntil {
+				var bad bool
+				if bad, cleanUntil = spelledToken(s, end); bad {
+					spelled = true
+				}
+			}
+			if dirOnly(s, i, stop, trimEnd) {
+				spelled = true
+			}
+			named = append(named, sc)
+		}
+	}
+	if cacheFlag(lowers) {
+		emit(Star)
 		return
 	}
-	poisoned := -1 // lazily: 1 if the input holds `..` or a cd into the cache, else 0
-	isPoisoned := func() bool {
-		if poisoned < 0 {
-			poisoned = 0
-			if hasParentComponent(s) || cdsIntoCache(lower) {
-				poisoned = 1
-			}
-		}
-		return poisoned == 1
+	if len(named) == 0 {
+		return
 	}
-	for off := 0; ; {
-		j := strings.Index(lower[off:], CacheRootName)
-		if j < 0 {
-			return
+	if spelled || unitPoisoned(ss, lowers) {
+		emit(Star)
+		return
+	}
+	for _, sc := range named {
+		emit(sc)
+	}
+}
+
+// spelledToken reports whether the path token of s from i (the end of a cache root's name) holds a
+// byte the shell rewrites, and where the token ends. The token runs to the next shell separator,
+// but a backtick does NOT end it here: it is itself one of the bytes that count. A trailing run of
+// closing quotes (`"…/aa/x.md"`) does not count — it only closes a quote opened before the root.
+func spelledToken(s string, i int) (bool, int) {
+	t := i
+	for t < len(s) && (s[t] == '`' || !isShellSeparator(s[t])) {
+		t++
+	}
+	body := strings.TrimRight(s[i:t], "\"'`")
+	return strings.ContainsAny(body, "\\'\"{}$`[]?") || strings.Contains(body, "/.*"), t
+}
+
+// dirOnly reports whether s is NOTHING BUT one cache path that ends at its scope directory: the
+// root's occurrence at i, its scope component ending at stop, at most a `/` after it, and no
+// separator before it. trimEnd is len(s) without trailing whitespace, so the test of what follows
+// is O(1) per occurrence (re-trimming s from every occurrence was quadratic on a run of them).
+func dirOnly(s string, i, stop, trimEnd int) bool {
+	if stop != trimEnd && (stop != trimEnd-1 || s[stop] != '/') {
+		return false
+	}
+	return !strings.ContainsFunc(strings.TrimSpace(s[:i]), func(r rune) bool { return r < 0x80 && isShellSeparator(byte(r)) })
+}
+
+// unitPoisoned reports whether any string of one tool input holds a `..` path component, a word of
+// the cd family, or an argument that is an ancestor of the cache root.
+func unitPoisoned(ss, lowers []string) bool {
+	for k, s := range ss {
+		if hasParentComponent(s) {
+			return true
 		}
-		i := off + j
-		end := i + len(CacheRootName)
-		// The alias suffix, `client.ValidAlias`'s `-[a-z0-9][a-z0-9-]*`.
-		alias := false
-		if end+1 < len(lower) && lower[end] == '-' && isAlnum(lower[end+1]) {
-			alias = true
-			end++
-			for end < len(lower) && (isAlnum(lower[end]) || lower[end] == '-') {
-				end++
+		poisoned := false
+		eachWord(lowers[k], func(w string) {
+			if !poisoned && (cdFamilyWord(w) || ancestorWord(w)) {
+				poisoned = true
 			}
-		}
-		// 🔴 THE NEXT SEARCH STARTS PAST THE ALIAS, NOT PAST THE NAME: an occurrence inside it is the
-		// same word (preceded by `-`, never a root), and starting inside it re-read the alias to its
-		// end from every occurrence — quadratic, 52 s on a 2 MiB `subsystem-store-` run
-		// (`TestCacheScopesIsLinear`).
-		off = end
-		var next byte // 0 = end of input
-		if end < len(lower) {
-			next = lower[end]
-		}
-		if isAlnum(next) {
-			continue // a longer word
-		}
-		if strings.HasPrefix(lower[end:], lockSuffix) {
-			after := end + len(lockSuffix)
-			if after == len(lower) || !isPathByte(lower[after]) {
-				continue // the sync lock, a file
-			}
-		}
-		switch kind := rootContext(lower, i); {
-		case kind == notRoot:
-			continue
-		case kind == relativeRoot && next != '/':
-			continue // a bare word: a namespace, a service name
-		case kind == relativeRoot, kind == unknownRoot:
-			emit(Star)
-			continue
-		}
-		if alias || next != '/' || isPoisoned() {
-			emit(Star)
-			continue
-		}
-		start := end + 1
-		stop := start
-		for stop < len(s) && s[stop] != '/' && !isShellSeparator(s[stop]) {
-			stop++
-		}
-		if sc := s[start:stop]; ValidScope(sc) {
-			emit(sc)
-		} else {
-			emit(Star)
+		})
+		if poisoned {
+			return true
 		}
 	}
+	return false
+}
+
+// eachWord hands f every maximal run of s between shell separators.
+func eachWord(s string, f func(string)) {
+	start := -1
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || isShellSeparator(s[i]) {
+			if start >= 0 {
+				f(s[start:i])
+				start = -1
+			}
+		} else if start < 0 {
+			start = i
+		}
+	}
+}
+
+// cdFamily is every command that changes, or derives, a directory a later path resolves against.
+var cdFamily = map[string]bool{"cd": true, "pushd": true, "popd": true, "dirname": true, "realpath": true, "readlink": true}
+
+// cdFamilyWord reports whether the (lowered) word w is a cd-family command in ANY spelling: every
+// quote, backslash, `$`, brace and comma removed (`\cd`, `"cd"`, `c""d`, `$'cd'`, `{cd,}`), and
+// only its last path component kept (`/usr/bin/realpath`). `builtin cd` and `command cd` hold `cd`
+// as a word of their own.
+func cdFamilyWord(w string) bool {
+	if j := strings.LastIndexByte(w, '/'); j >= 0 {
+		w = w[j+1:]
+	}
+	var b strings.Builder
+	for i := 0; i < len(w); i++ {
+		if strings.IndexByte("\\'\"${},", w[i]) < 0 {
+			b.WriteByte(w[i])
+		}
+	}
+	return cdFamily[b.String()]
+}
+
+// ancestorWord reports whether the (lowered) word w, read as an argument, names a directory the
+// cache root lies under: `/`, `~`, `~<u>`, `$HOME`, `${HOME}`, `/home`, `/home/<u>`, `/root`,
+// `/users/<u>`, or any PATH-LIKE word (one starting `/`, `~`, `$` or `.`) not naming
+// [CacheRootName] whose last component names a cache (`~/.cache`, `$HOME/.cache`, `/home/u1/.cache`,
+// `$XDG_CACHE_HOME`, `.cache`). Quotes and backslashes are dropped, and only the part after the
+// last `=` is read (`--dir=/home/u1`, `HOME=/home/u1`). A flag with no `=` (`--cached`, `-cache`)
+// and a plain word (`cached`, as a Bash input's `description` says it) are not paths.
+func ancestorWord(w string) bool {
+	if strings.ContainsAny(w, "\"'\\") {
+		w = strings.NewReplacer(`"`, "", "'", "", `\`, "").Replace(w)
+	}
+	if j := strings.LastIndexByte(w, '='); j >= 0 {
+		w = w[j+1:]
+	}
+	if w == "" || strings.IndexByte("/~$.", w[0]) < 0 {
+		return false
+	}
+	t := strings.TrimRight(w, "/")
+	if t == "" {
+		return true // `/`
+	}
+	switch t {
+	case "~", "$home", "${home}", "/home", "/root", "/users":
+		return true
+	}
+	if t[0] == '~' && !strings.Contains(t, "/") {
+		return true // `~<u>`
+	}
+	for _, h := range []string{"/home/", "/users/"} {
+		if rest, ok := strings.CutPrefix(t, h); ok && rest != "" && !strings.Contains(rest, "/") {
+			return true
+		}
+	}
+	if strings.Contains(t, CacheRootName) {
+		return false
+	}
+	last := t
+	if j := strings.LastIndexByte(t, '/'); j >= 0 {
+		last = t[j+1:]
+	}
+	return strings.Contains(last, "cache")
+}
+
+// cacheFlag reports whether any (lowered) string of one input holds the client's `--cache` flag as
+// a word of its own: `--cache` or `--cache=…`, quoted or not.
+func cacheFlag(lowers []string) bool {
+	const flag = "--cache"
+	for _, lower := range lowers {
+		for off := 0; ; {
+			j := strings.Index(lower[off:], flag)
+			if j < 0 {
+				break
+			}
+			i := off + j
+			off = i + len(flag)
+			before := i == 0 || isShellSeparator(lower[i-1]) || strings.IndexByte(`"'\`, lower[i-1]) >= 0
+			after := off == len(lower) || isShellSeparator(lower[off]) || strings.IndexByte(`="'`, lower[off]) >= 0
+			if before && after {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type rootKind int
@@ -603,8 +828,6 @@ func rootContext(lower string, i int) rootKind {
 	return relativeRoot // after whitespace, a quote, `=`, `(` …
 }
 
-var cdIntoCache = regexp.MustCompile(`(?:^|[\s;&|(])(?:cd|pushd)(?:\s+-\S*)*\s+\S*` + CacheRootName)
-
 // hasParentComponent reports whether s holds a `..` path component: `..` with a path boundary on
 // both sides (`/`, a shell separator, a quote, `{`, `,`, `=` or the end), so `a/../b`, `$S/..`
 // and `".."` count and a git range `main..HEAD` does not.
@@ -622,9 +845,6 @@ func hasParentComponent(s string) bool {
 		}
 	}
 }
-
-// cdsIntoCache reports whether the (lowered) input changes directory to a path naming the cache.
-func cdsIntoCache(lower string) bool { return cdIntoCache.MatchString(lower) }
 
 // isShellSeparator ends a path token: whitespace and the shell's control and redirection bytes.
 // Quotes, `$`, `{`, `*` and `\` are NOT separators, so a component holding them fails
@@ -776,7 +996,7 @@ func (d *Deriver) ClaudeRecord(rec map[string]any) {
 	for i, b := range blocks {
 		if bm, ok := b.(map[string]any); ok && bm["type"] == "tool_use" {
 			inputs[i] = true
-			eachString(bm["input"], d.ToolInput)
+			d.ToolInputValue(bm["input"])
 		}
 	}
 	for k, v := range rec {
@@ -812,7 +1032,7 @@ func (d *Deriver) ClaudeRecord(rec map[string]any) {
 func (d *Deriver) OpencodePart(part map[string]any) {
 	state, _ := part["state"].(map[string]any)
 	if part["type"] == "tool" && state != nil {
-		eachString(state["input"], d.ToolInput)
+		d.ToolInputValue(state["input"])
 		for k, v := range state {
 			if k != "input" {
 				eachString(v, d.Content)

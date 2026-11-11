@@ -67,7 +67,7 @@ func derive(t *testing.T, w world, name string, inputsOnly bool) Result {
 		blocks, _ := msg["content"].([]any)
 		for _, b := range blocks {
 			if bm, ok := b.(map[string]any); ok && bm["type"] == "tool_use" {
-				eachString(bm["input"], d.ToolInput)
+				d.ToolInputValue(bm["input"])
 			}
 		}
 	}

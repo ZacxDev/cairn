@@ -31,10 +31,11 @@ func TestF2NamedCacheReadAddsThatScope(t *testing.T) {
 		"cat ~/.cache/subsystem-store/wren/*.md":                                  {"wren"},
 		"$(cat ~/.cache/subsystem-store/gull4/a.md)":                              {"gull4"},
 		"cat ~/.cache/subsystem-store/stilt/a.md ~/.cache/subsystem-store/curlew": {"stilt", "curlew"},
-		// Controls for the fail-closed checks: a git range is not a `..` component, and a `cd`
-		// somewhere else does not poison the read after it.
-		"git log main..HEAD; cat ~/.cache/subsystem-store/sanderling/x.md": {"sanderling"},
-		"cd /work/repo && cat ~/.cache/subsystem-store/knot5/x.md":         {"knot5"},
+		// Controls for the fail-closed checks: a git range is not a `..` component, a flag naming a
+		// cache is not an ancestor path, and a closing quote is not a rewritten spelling.
+		"git log main..HEAD; cat ~/.cache/subsystem-store/sanderling/x.md":   {"sanderling"},
+		"git diff --cached; cat ~/.cache/subsystem-store/knot5/x.md":         {"knot5"},
+		`cat '/home/u1/.cache/subsystem-store/godwit-q/x.md' > /tmp/out.txt`: {"godwit-q"},
 		// The name inside the scope's own path is not a second root.
 		"cat ~/.cache/subsystem-store/dunlin/subsystem-store-notes.md": {"dunlin"},
 	}
@@ -77,11 +78,13 @@ func TestF2UnattributableCacheReadAddsStar(t *testing.T) {
 		"cat ~/.cache/subsystem-store/.sync-stamp":                               star,
 		"cat ~/.cache/subsystem-store/lark1/../finch1/x.md":                      star,
 		"cd ~/.cache/subsystem-store/lark2 && cat x.md":                          star,
-		"cd ~/.cache && cat subsystem-store/lark3/x.md":                          star, // relative: cwd unknown
-		"cat ./subsystem-store/lark4/x.md":                                       star,
-		"ls ~/.cache/subsystem-store.new-abc/lark5":                              star, // a sync staging sibling
-		"C=~/.cache; cat $C/subsystem-store/lark6/x.md":                          star, // an unrecognised spelling
-		`cat "$C"/subsystem-store`:                                               star,
+		// #314 round 1: ANY cd-family word in an input naming the cache, wherever it goes.
+		"cd /work/repo && cat ~/.cache/subsystem-store/knot6/x.md": star,
+		"cd ~/.cache && cat subsystem-store/lark3/x.md":            star, // relative: cwd unknown
+		"cat ./subsystem-store/lark4/x.md":                         star,
+		"ls ~/.cache/subsystem-store.new-abc/lark5":                star, // a sync staging sibling
+		"C=~/.cache; cat $C/subsystem-store/lark6/x.md":            star, // an unrecognised spelling
+		`cat "$C"/subsystem-store`:                                 star,
 		// Case 3: ANOTHER instance's cache root. Derived scopes carry no instance, so a named read
 		// there cannot be attributed — `*`, never its scope.
 		"S=/home/u1/.cache/subsystem-store-client/ridge-x1; for f in $S/*; do :; done": star,
@@ -105,6 +108,8 @@ func TestF2NonCachePathsAddNothing(t *testing.T) {
 		"kubectl -n subsystem-store exec deploy/subsystem-store -- ls /data",
 		"kubectl --namespace=subsystem-store get pods",
 		"bash scripts/test-check-subsystem-store-phase1.sh",
+		// A cd-family word only poisons an input that names the cache.
+		"cd /work/repo && cat apps/subsystem-store/README.md",
 		"cat clusters/lab1/apps/subsystem-store/ui-deployment.yaml",
 		"cat ~/.config/subsystem-store/env",
 		"ls /home/u1/.config/subsystem-store/instances/",
@@ -157,6 +162,9 @@ func TestCacheScopesIsLinear(t *testing.T) {
 		{"alias run", CacheRootName + "-", nil},
 		{"cache roots", "/.cache/" + CacheRootName, []string{Star}},
 		{"quoted relative roots", `"` + CacheRootName + "/", []string{Star}},
+		// #314 round 1: NAMED reads reach the token check, the directory check and the unit checks.
+		{"named reads in one word", "/.cache/" + CacheRootName + "/aa/x", []string{"aa"}},
+		{"named reads as words", "~/.cache/" + CacheRootName + "/aa/x.md ", []string{"aa"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			best := func(size int) time.Duration {
@@ -166,7 +174,7 @@ func TestCacheScopesIsLinear(t *testing.T) {
 				for run := 0; run < 5; run++ {
 					seen := map[string]bool{}
 					start := time.Now()
-					eachCacheRead(in, lower, func(v string) { seen[v] = true })
+					eachCacheRead([]string{in}, []string{lower}, func(v string) { seen[v] = true })
 					took := time.Since(start)
 					if took > 5*time.Second {
 						t.Fatalf("one %d-byte input of %q took %v", size, tc.unit, took)

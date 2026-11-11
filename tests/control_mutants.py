@@ -5248,8 +5248,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-cache-path-read-ignored",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\teachCacheRead(s, lower, func(sc string) {",
-        new="\teachCacheRead(s, \"\", func(sc string) {",
+        old="\teachCacheRead(ss, lowers, func(sc string) {",
+        new="\teachCacheRead(nil, nil, func(sc string) {",
         killer="TestF2CacheReadAddsItsScope",
         extra_killers=("TestF2NamedCacheReadAddsThatScope", "TestF2UnattributableCacheReadAddsStar"),
         why="a file-tool read of the cache never passes through the client, so it is never ledgered; "
@@ -5262,9 +5262,9 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-f2-bare-substring",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\teachCacheRead(s, lower, func(sc string) {\n\t\tif sc == Star {",
-        new="\tif strings.Contains(lower, CacheRootName) {\n\t\td.namesCache = true\n\t}\n"
-        "\teachCacheRead(s, lower, func(sc string) {\n\t\tif sc == Star {",
+        old="\teachCacheRead(ss, lowers, func(sc string) {\n\t\tif sc == Star {",
+        new="\tfor _, l := range lowers {\n\t\tif strings.Contains(l, CacheRootName) {\n\t\t\td.namesCache = true\n\t\t}\n\t}\n"
+        "\teachCacheRead(ss, lowers, func(sc string) {\n\t\tif sc == Star {",
         killer="TestF2NamedCacheReadAddsThatScope",
         extra_killers=("TestF2CacheReadAddsItsScope", "TestF2NonCachePathsAddNothing"),
         why="\"any mention of the store is `*`\" is the rule this replaced, and it reads as the safer "
@@ -5275,8 +5275,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-f2-bare-root-not-star",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tif alias || next != '/' || isPoisoned() {\n\t\t\temit(Star)\n",
-        new="\t\tif alias || next != '/' || isPoisoned() {\n\t\t\tif next == '/' {\n\t\t\t\temit(Star)\n\t\t\t}\n",
+        old="\t\t\tif alias || next != '/' {\n\t\t\t\temit(Star)\n",
+        new="\t\t\tif alias || next != '/' {\n\t\t\t\tif next == '/' {\n\t\t\t\t\temit(Star)\n\t\t\t\t}\n",
         killer="TestF2UnattributableCacheReadAddsStar",
         why="a bare root names no scope, and \"no scope component, nothing to add\" reads as tidy — "
         "but `S=~/.cache/subsystem-store` is how a later `$S/<scope>/…` read, which this cannot "
@@ -5286,8 +5286,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-f2-component-not-validated",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tif sc := s[start:stop]; ValidScope(sc) {",
-        new="\t\tif sc := s[start:stop]; sc != \"\" {",
+        old="\t\t\tif !ValidScope(sc) {",
+        new="\t\t\tif sc == \"\" {",
         killer="TestF2UnattributableCacheReadAddsStar",
         why="the component after the root LOOKS like the scope, so taking it as-is is the obvious "
         "parse — and a glob, `$VAR` or `{a,b}` then reads as one scope it never was.",
@@ -5296,8 +5296,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name="scopeuse-f2-other-instance-scope-trusted",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tif alias || next != '/' || isPoisoned() {",
-        new="\t\tif _ = alias; next != '/' || isPoisoned() {",
+        old="\t\t\tif alias || next != '/' {",
+        new="\t\t\tif _ = alias; next != '/' {",
         killer="TestF2UnattributableCacheReadAddsStar",
         why="`subsystem-store-<alias>/<scope>/…` is laid out exactly like the default cache, so "
         "parsing it the same way is natural — but derived scopes carry no instance, and routing "
@@ -5312,6 +5312,84 @@ MUTANTS: tuple[Mutant, ...] = (
         killer="TestF2UnattributableCacheReadAddsStar",
         why="\"a parent that does not say `cache` is not the cache\" is one line shorter, and "
         "`C=~/.cache; cat $C/subsystem-store/…` then falls silently into \"not a cache path\".",
+    ),
+    # #314 round 1: F2 decides over one tool input WHOLE, and its fail-closed checks are structural.
+    # Each row removes ONE rule and is killed by the test pinning that rule alone.
+    Mutant(
+        name="scopeuse-f2-poisoned-per-string",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\td.ToolInputStrings(ss)\n}",
+        new="\tfor _, s := range ss {\n\t\td.ToolInputStrings([]string{s})\n\t}\n}",
+        killer="TestF2DecidesOverTheWholeInput",
+        why="`eachString(input, d.ToolInput)` — one call per string — is how every other input scan here "
+        "is fed, and it is how F2 was fed: a `..` in a command then cannot poison the cache path in the "
+        "same input's `workdir`, and the read of the sibling scope derives the workdir's.",
+    ),
+    Mutant(
+        name="scopeuse-f2-dir-only-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\tif dirOnly(s, i, stop, trimEnd) {",
+        new="\t\t\tif false && dirOnly(s, i, stop, trimEnd) {",
+        killer="TestF2ScopeDirectoryStringAddsStar",
+        why="a path ending at a valid scope directory names exactly one scope, so attributing it reads as "
+        "correct — but as a `workdir` or a Glob `path` it is what the input's OTHER strings resolve "
+        "against, not a file that was read.",
+    ),
+    Mutant(
+        name="scopeuse-f2-spelled-token-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\t\tif bad, cleanUntil = spelledToken(s, end); bad {",
+        new="\t\t\t\tif bad, cleanUntil = spelledToken(s, end); bad && false {",
+        killer="TestF2ShellRewrittenPathAddsStar",
+        why="the `..` check already exists, so a second check of the path's bytes reads as redundant — "
+        "and `aa/.\\./bb`, `aa/.{.,}/bb` and `aa/$'\\x2e\\x2e'/bb` are each `..` to the shell and "
+        "none of them is a `..` component as written.",
+    ),
+    Mutant(
+        name="scopeuse-f2-cd-family-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="cdFamilyWord(w) || ancestorWord(w)",
+        new="ancestorWord(w)",
+        killer="TestF2CdFamilyWordAddsStar",
+        extra_killers=("TestF2UnattributableCacheReadAddsStar",),
+        why="a cd elsewhere does not change what an absolute path names, so dropping the word check reads "
+        "as removing a false positive — and `\\cd`, `\"cd\"`, `cd \"$(dirname …)\"` then move the "
+        "working directory into the cache with nothing left to notice.",
+    ),
+    Mutant(
+        name="scopeuse-f2-ancestor-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="cdFamilyWord(w) || ancestorWord(w)",
+        new="cdFamilyWord(w)",
+        killer="TestF2AncestorArgumentAddsStar",
+        why="`~/.cache` does not name `subsystem-store`, so it reads as not a cache path at all — and "
+        "`grep -r x ~/.cache/subsystem-store/aa ~/.cache` reads every scope under it.",
+    ),
+    Mutant(
+        name="scopeuse-f2-cache-flag-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tif cacheFlag(lowers) {",
+        new="\tif false && cacheFlag(lowers) {",
+        killer="TestF2CacheFlagAddsStar",
+        why="F2 is about paths under `subsystem-store`, and a flag is not a path — but `--cache PATH` "
+        "makes any directory the store, so the read it starts is attributable to no scope.",
+    ),
+    Mutant(
+        name="scopeuse-f2-parent-component-dropped",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\tif hasParentComponent(s) {\n\t\t\treturn true",
+        new="\t\tif false && hasParentComponent(s) {\n\t\t\treturn true",
+        killer="TestF2DecidesOverTheWholeInput",
+        extra_killers=("TestF2UnattributableCacheReadAddsStar",),
+        why="the scope component is validated, so a `..` AFTER it looks harmless — and "
+        "`aa/../bb/x.md` reads `bb`.",
     ),
     # S2 review round 1 (F3): four guards that each SURVIVED a mutation with no test reaching them.
     Mutant(
