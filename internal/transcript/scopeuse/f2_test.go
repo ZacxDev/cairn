@@ -30,11 +30,7 @@ func TestF2NamedCacheReadAddsThatScope(t *testing.T) {
 		// The name inside the scope's own path is not a second root.
 		"cat ~/.cache/subsystem-store/dunlin/subsystem-store-notes.md": {"dunlin"},
 	}
-	for in, want := range cases {
-		if got := CacheScopes(in); !slices.Equal(got, want) {
-			t.Errorf("CacheScopes(%q) = %v, want %v", in, got, want)
-		}
-	}
+	checkStrings(t, cases)
 	// Through the Deriver: the scope reaches V and Declare, and F2 contributes no `*`.
 	d := NewDeriver()
 	d.ToolInput("head -n 40 /home/u1/.cache/subsystem-store/ember_7/nix.md")
@@ -81,20 +77,15 @@ func TestF2UnattributableCacheReadAddsStar(t *testing.T) {
 		"S=/home/u1/.cache/subsystem-store-client/ridge-x1; for f in $S/*; do :; done": star,
 		"cat ~/.cache/subsystem-store-client/pipit/x.md":                               star,
 	}
-	for in, want := range cases {
-		if got := CacheScopes(in); !slices.Equal(got, want) {
-			t.Errorf("CacheScopes(%q) = %v, want %v", in, got, want)
-		}
-	}
-	// The same checks where NOTHING ELSE re-checks them: a bash `description` is skipped by the
-	// grammar ([provable]) but still scanned for the cache name, so an unattributable path there is
-	// decided by this detection alone. Each row beside a provable command, so `*` sits beside that
-	// command's scope (`*` makes the session owner-only whatever else is in the set).
+	checkStrings(t, cases)
+	// The same paths in a bash `description`, which the grammar skips: a mention there is never
+	// inside an accepted path, so the input is `*` — only `*`, never `*` beside the command's scope
+	// (an input is either proven or `*`).
 	checkUnits(t, []unitCase{
 		{"invalid component in a description", "bash", map[string]any{
-			"command": "cat ~/.cache/subsystem-store/rowan-c1/x.md", "description": "~/.cache/subsystem-store/$SC2/x.md"}, []string{Star, "rowan-c1"}},
+			"command": "cat ~/.cache/subsystem-store/rowan-c1/x.md", "description": "~/.cache/subsystem-store/$SC2/x.md"}, star},
 		{"another instance in a description", "bash", map[string]any{
-			"command": "cat ~/.cache/subsystem-store/rowan-c2/x.md", "description": "~/.cache/subsystem-store-client/pipit2/x.md"}, []string{Star, "rowan-c2"}},
+			"command": "cat ~/.cache/subsystem-store/rowan-c2/x.md", "description": "~/.cache/subsystem-store-client/pipit2/x.md"}, star},
 	})
 	d := NewDeriver()
 	d.ToolInput("S=/home/u1/.cache/subsystem-store; grep -l x $S/*/y.md")
@@ -103,13 +94,14 @@ func TestF2UnattributableCacheReadAddsStar(t *testing.T) {
 	}
 }
 
-// TestF2NonCachePathsAddNothing: case 4 — `subsystem-store` that is not a cache path.
-func TestF2NonCachePathsAddNothing(t *testing.T) {
+// TestF2NonCacheMentionsAddStar: case 4 — `subsystem-store` that is NOT a cache path is `*`, as
+// it is on origin/main: no occurrence of the name lies inside a clean cache path. (Until #314 round
+// 6 these added nothing, which made F2 narrower than main for any input the grammar would accept.)
+func TestF2NonCacheMentionsAddStar(t *testing.T) {
 	for _, in := range []string{
 		"kubectl -n subsystem-store exec deploy/subsystem-store -- ls /data",
 		"kubectl --namespace=subsystem-store get pods",
 		"bash scripts/test-check-subsystem-store-phase1.sh",
-		// A cd-family word only poisons an input that names the cache.
 		"cd /work/repo && cat apps/subsystem-store/README.md",
 		"cat clusters/lab1/apps/subsystem-store/ui-deployment.yaml",
 		"cat ~/.config/subsystem-store/env",
@@ -118,13 +110,11 @@ func TestF2NonCachePathsAddNothing(t *testing.T) {
 		"docker pull ghcr.io/zacxdev/subsystem-stores:v1",
 		"git log main..HEAD -- internal/subsystem-store/x.go",
 	} {
-		if got := CacheScopes(in); len(got) != 0 {
-			t.Errorf("CacheScopes(%q) = %v, want nothing", in, got)
-		}
+		checkStrings(t, map[string][]string{in: {Star}})
 		d := NewDeriver()
 		d.ToolInput(in)
-		if r := d.Result(); r.F2 || len(r.V) != 0 {
-			t.Errorf("%q: F2=%v V=%v, want neither", in, r.F2, r.V)
+		if r := d.Result(); !r.F2 || !slices.Equal(r.V, []string{Star}) {
+			t.Errorf("%q: F2=%v V=%v, want F2 and [*]", in, r.F2, r.V)
 		}
 	}
 }
@@ -160,20 +150,20 @@ func TestCacheScopesIsLinear(t *testing.T) {
 		name, prefix, unit string
 		want               []string
 	}{
-		{"alias run", "", CacheRootName + "-", nil},
+		{"alias run", "", CacheRootName + "-", []string{Star}},
 		{"cache roots", "", "/.cache/" + CacheRootName, []string{Star}},
 		{"quoted relative roots", "", `"` + CacheRootName + "/", []string{Star}},
-		// #314: NAMED reads reach the grammar ([provable]): one word it rejects, and words it
+		// #314: NAMED reads reach the grammar ([provenScopes]): one word it rejects, and words it
 		// accepts, single-quoted segments and commands, each run to the end of the input.
 		{"named reads in one word", "", "/.cache/" + CacheRootName + "/aa/x", []string{Star}},
 		{"named reads as words", "cat ", "~/.cache/" + CacheRootName + "/aa/x.md ", []string{"aa"}},
 		{"quoted words", "cat ~/.cache/" + CacheRootName + "/aa/x.md ", "'a|b' ", []string{"aa"}},
 		{"commands", "cat ~/.cache/" + CacheRootName + "/aa/x.md", " | wc", []string{"aa"}},
-		// #314 round 5: the directory-change lexer ([changesDirUnseen]) runs over EVERY input:
-		// plain `cd`s, a run of prefix words, and quoted arguments, each to the end of the input.
-		{"plain cds", "", "cd src && ", nil},
-		{"prefix words", "", "builtin command ", nil},
-		{"quoted cd arguments", "", `pushd "a"'b' ; `, nil},
+		// #314 round 6: the flag allowlist ([flagSet.flag]) on a run of flags and of flag
+		// arguments, and an input with no mention at all (main's predicate alone).
+		{"flags", "cat ~/.cache/" + CacheRootName + "/aa/x.md", " -n", []string{"aa"}},
+		{"flag arguments", "grep x ~/.cache/" + CacheRootName + "/aa/x.md", " -m 5", []string{"aa"}},
+		{"no mention", "", "cd src && ", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			best := func(size int) time.Duration {

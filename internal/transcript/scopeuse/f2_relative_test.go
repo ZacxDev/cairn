@@ -5,10 +5,10 @@ import "testing"
 // #314 round 4: a RELATIVE word beside a named read. The grammar let a word with no `/` through as
 // an argument, so `cat <named path>; grep -r x .cache` from the home directory derived the named
 // scope while reading every scope — `*` on origin/main (the bare-substring rule), so a fail-open
-// regression. Two rules close it: a word naming `cache`/`subsystem-store` that is not a clean cache
-// path fails, and a recursive or name-list flag fails ([readsBeyondItsWords]). Every case uses only
-// the API that predates the round (`CacheScopes`, `checkUnits`), so this file runs against ed3d8b3
-// and shows each non-invariant row RED there. Scope names are distinct per row.
+// regression. Since #314 round 6 three rules close it: a word naming `cache` fails, an occurrence of
+// `subsystem-store` outside every accepted clean cache path makes the input `*`
+// ([provenScopes]), and a flag not on its command's allowlist fails ([commandFlags]). Scope names
+// are distinct per row.
 
 // TestF2RelativeAndRecursiveReadsAddStar (🔴): the review's shapes through BOTH runtimes, each beside
 // a named read, and the positive controls that must stay named.
@@ -34,8 +34,8 @@ func TestF2RelativeAndRecursiveReadsAddStar(t *testing.T) {
 }
 
 // TestF2GrammarRejectsCacheWords: a word that, unquoted, names `cache` or `subsystem-store` (any case)
-// and is not a clean cache path is `*`. No row carries a recursive flag or a dot word, so only this
-// rule decides them.
+// and is not a clean cache path is `*` — the `cache` rows by the cache-word rule, the
+// `subsystem-store` rows by the occurrence count. No row carries a disallowed flag or a dot word.
 func TestF2GrammarRejectsCacheWords(t *testing.T) {
 	const p = " ~/.cache/subsystem-store/alder-c/x.md"
 	cases := map[string][]string{}
@@ -63,31 +63,49 @@ func TestF2GrammarRejectsCacheWords(t *testing.T) {
 	checkStrings(t, cases)
 }
 
-// TestF2GrammarRejectsRecursiveReads: a flag putting `grep`, `ls` or `wc` into a mode that reads
-// files its words do not name is `*`, whole or abbreviated, quoted or not. No row names a cache word
-// or a dot word, so only this rule decides them.
-func TestF2GrammarRejectsRecursiveReads(t *testing.T) {
+// TestF2FlagAllowlist: every flag of an allowed command must be on THAT command's allowlist
+// ([commandFlags]); an unknown one is `*`, whole, abbreviated or quoted. The recursive and name-list
+// modes are the reason (`grep -r`, ugrep's `-NUM`/`--depth`/`--index`, `ls -R`, `wc
+// --files0-from`), but the rule is the list, not those. No row names a cache word or a dot word.
+func TestF2FlagAllowlist(t *testing.T) {
 	const p = " ~/.cache/subsystem-store/alder-r/x.md"
 	cases := map[string][]string{}
 	for _, f := range []string{
 		"-r", "-R", "-rn", "-nR", "--recursive", "--rec", "--dereference-recursive", "--der",
 		"-d recurse", "-drecurse", "--directories=recurse", "--direc=recurse", "'-r'", "-'R'n",
-		// Claude Code's `grep` is its embedded ugrep, where these recurse.
-		"-2", "-n2", "--depth=3",
+		// Claude Code's `grep` is its embedded ugrep, where these recurse or index.
+		"-2", "-n2", "--depth=3", "--index",
+		// Attached digits fail, so does a non-numeric count, and so does a flag left waiting.
+		"-m1", "-A3", "-B2", "-C1", "-m x", "-ie", "-f pats", "--color=never", "-z", "--", "-",
 	} {
 		cases["grep "+f+" x"+p+" foo"] = []string{Star}
 	}
-	for _, f := range []string{"-R", "-laR", "--recursive", "--recursiv"} {
+	cases["grep x"+p+" -e"] = []string{Star}
+	for _, f := range []string{"-R", "-laR", "-lR", "--recursive", "--recursiv", "--color"} {
 		cases["ls "+f+p+" foo"] = []string{Star}
 	}
-	for _, f := range []string{"--files0-from=-", "--files0-from list", "--files0=list"} {
+	for _, f := range []string{"--files0-from=-", "--files0-from list", "--files0=list", "--files0-from"} {
 		cases["wc "+f+p] = []string{Star}
 	}
-	// Controls: the same commands' other flags, and the letters that are recursion for ONE command
+	for _, in := range []string{
+		"cat -x" + p, "tail -f" + p, "head --follow" + p, "printf -v v" + p, "echo -x" + p,
+		"cut --output-delimiter=, -f1" + p, "uniq --zero-terminated" + p, "nl -x" + p, "tr -x a b" + p,
+	} {
+		cases[in] = []string{Star}
+	}
+	// Controls: each command's allowed flags, and the letters that are recursion for ONE command
 	// only (`ls -r` reverses, `cut -d` is a delimiter).
 	for _, in := range []string{
-		"grep -c foo" + p, "grep -n 'a|b'" + p + " | cut -c1-80", "grep -i -e x" + p, "grep --color=never x" + p,
-		"ls -la" + p, "ls -r" + p, "ls --reverse" + p, "wc -l" + p, "cut -d, -f1" + p, "tail -n 2" + p,
+		"grep -c foo" + p, "grep -n 'a|b'" + p + " | cut -c1-80", "grep -i -e x" + p, "grep -m 5 -n foo" + p,
+		"grep -A 3 -B 2 -C 1 foo" + p, "grep -inwx foo" + p, "grep -lLhHoEFsqvc foo" + p,
+		"grep --count --line-number --ignore-case --invert-match --word-regexp --line-regexp " +
+			"--only-matching --no-filename --with-filename --extended-regexp --fixed-strings " +
+			"--files-with-matches --files-without-match --quiet --silent --no-messages foo" + p,
+		"ls -la" + p, "ls -r" + p, "ls --reverse" + p, "ls -1aAdFhilnrSt" + p, "wc -l" + p, "wc -lwcmL" + p,
+		"wc --lines --words --bytes --chars --max-line-length" + p, "cut -d, -f1" + p, "cut -c 1-9" + p,
+		"tail -n 2" + p, "tail -5" + p, "head -20" + p, "head --lines=3" + p, "head -n5" + p,
+		"cat -nA" + p, "cat --number" + p, "echo -n x; cat" + p, "nl -ba" + p, "uniq -c" + p,
+		"cat" + p + " | tr -d a",
 	} {
 		cases[in] = []string{"alder-r"}
 	}

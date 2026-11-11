@@ -940,6 +940,24 @@ script that prints only counts.
        `wc --files0-from`). T3 keeps a relative NON-recursive file word read from a working
        directory an EARLIER call moved into the cache by bare relative `cd`s (Claude Code; for
        opencode only its default directory, `workdir` being checked) — the package doc has it.*
+       *#314 round 6, superseding rounds 1–5's "non-cache mentions add nothing" and round 5's
+       directory-change rule: the operator chose MAIN + ALLOWLIST, so F2 is never narrower than
+       the bare-substring rule above, by construction. That rule decides first, unchanged: a tool
+       input none of whose strings contains `subsystem-store` (any case) adds NOTHING — no other F2
+       rule exists — and one that does adds `*`, UNLESS the whole input passes the allowlist
+       grammar AND every occurrence of the name lies inside a clean
+       `~/`/`/home/<u>/`/`/root/` + `.cache/subsystem-store/<scope>/<file>` path it accepted; then
+       exactly those scopes. So a namespace, a repo path, `~/.config/subsystem-store/`, a
+       description or workdir naming it, another instance's root, `tar`/`find`/`cd` lines are `*`
+       again, and a `cd`, `grep -r x .` or `ls -R` that never names the cache adds nothing again
+       (main's blind spots, kept in T3). Every allowed command now has its own FLAG ALLOWLIST
+       (`commandFlags`; grep: `-n -c -l -L -i -v -w -x -o -h -H -E -F -s -q`, `-e PAT`,
+       `-m/-A/-B/-C` with a separate numeric word, sixteen long forms) instead of the
+       recursive-flag denylist; an unknown flag is `*`. `TestF2NeverNarrowerThanMain` pins the
+       invariant against an inline copy of main's predicate over every F2 test row plus a seeded
+       random corpus. The one gap the exception adds over main: a named read beside a RELATIVE
+       file word, read from a working directory an earlier call moved into the cache without
+       naming it (the package doc's T3).*
      A call is never matched to "its" ledger record: the rules ask only "is the ledger empty" and
      "does any input name the cache", which is what keeps the shell grammar out of the design.
    - *DELETED in revision 13 (O11), with the ledger in its place:* the shell-command-line parser

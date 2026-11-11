@@ -6,8 +6,8 @@
 // (decision 16) and `cairn-ui` will re-derive it over the STORED records (S3), so an old or lying
 // agent cannot shrink `V`. Nothing here resolves a working directory or a variable, or runs a
 // shell: a command line is read for one substring (F1), and for cache-root PATHS checked against a
-// small allowlist grammar that only ever turns a named read into `*` (F2) — never for what a
-// command it does not allow would do.
+// small allowlist grammar that can only replace F2's `*` with the scopes those paths name — never
+// for what a command it does not allow would do.
 //
 // 🔴 EVERYTHING HERE ONLY ADDS. A header quoted in prose, a spurious ledger record, an
 // over-matching F1 or F2 — each adds a scope or `*`, which hides the session from MORE people. The
@@ -28,77 +28,53 @@
 //     or names an invalid scope, contributes `*`.
 //   - F1: a tool INPUT names `cairn` or `subsystem-recall` (case-insensitive) AND the ledger holds
 //     ZERO records → `*`. It asks "is the ledger empty", never "which record is this call's".
-//   - F2 (named scopes folded into R_header): a tool input naming a path INTO the client cache
-//     (`<…cache…>/subsystem-store/<scope>/…`) adds that scope, because a file read from the cache
-//     never passes through the client and is never ledgered, so the path is the only record of it.
-//     A cache path it cannot attribute to ONE default-instance scope adds `*`: the bare root, a
-//     component that is not a valid scope (a glob, `$VAR`, `{a,b}`, `.sync-stamp`), ANOTHER
-//     instance's root (`subsystem-store-<alias>`), a sync staging sibling (`subsystem-store.new-…`),
-//     a relative `subsystem-store/…`, a root whose parent component is a spelling this cannot read
-//     (`$C/subsystem-store/…`); and any input with the client's `--cache` flag adds `*`.
-//     🔴 A NAMED SCOPE IS DERIVED ONLY WHEN IT IS PROVABLE — an ALLOWLIST over ONE TOOL INPUT
-//     WHOLE, every string of it together (a command AND its `workdir`), and a failure anywhere
-//     makes the input `*`. Each string is read by its key: a bash tool's `description` is skipped;
-//     a `workdir`/`path`/`cwd`/`dir`/`directory` must be a clean absolute path that is not the
-//     cache, under it, or an ancestor of it; a `file_path`/`filePath` must be one clean cache file
-//     path; every other string is a shell line that must lex with spaces, tabs, `|`, `||`, `&&`,
-//     `;` and newlines only (no other metacharacter outside single quotes; no `/` or `..` inside
-//     them), run only `cat`/`cut`/`echo`/`grep`/`head`/`ls`/`nl`/`printf`/`tail`/`tr`/`uniq`/`wc`,
-//     have no `.`/`..` word, no other word naming `cache` or `subsystem-store` (a relative
-//     `.cache`, `subsystem-store`), no recursive or name-list flag (`grep -r`/`-R`/`-d`/`-NUM`,
-//     `ls -R`, `wc --files0-from`, [readsBeyondItsWords]), and have every word holding `/` be one
-//     clean, unquoted `~/`-, `/home/<u>/`- or `/root/`-`.cache/subsystem-store/<scope>/<file>` path
-//     ([shellLineProvable], [cleanCachePath], [safeDir]). So `cat`, `grep` or `head` of named
-//     cache files stays named, and almost every other shape that names the cache — a `$HOME`
-//     spelling, a redirect, `sed`, a glob, a second non-cache path — is `*`. `subsystem-store`
-//     that is NOT a cache path — a namespace (`-n subsystem-store`), a repo path
-//     (`apps/subsystem-store/…`), the config dir (`~/.config/subsystem-store/`), a file name
-//     (`check-subsystem-store.sh`), the `.lock` sibling — adds nothing ([eachCacheRead] has the
-//     exact rule). And an input whose shell line changes directory to anywhere this cannot show
-//     is outside the cache (`cd subsystem-store`, `cd ~`, `cd "$D"`) adds `*` whether or not it
-//     names a read ([movesIntoUnseen]): the next call's relative words resolve there.
+//   - F2 (named scopes folded into R_header). 🔴 NEVER NARROWER THAN THE RULE IT REPLACED, BY
+//     CONSTRUCTION ([eachCacheRead]). Before #314 F2 was one predicate: a tool input any string of
+//     which contains `subsystem-store` (the client cache root's directory name, any case) → `*`.
+//     That predicate still decides first, unchanged. An input that does not satisfy it adds
+//     NOTHING to F2 — there is no other F2 rule. One that does adds `*`, with ONE exception, which
+//     exists because a file read from the cache never passes through the client and is never
+//     ledgered, so the path is the only record of it: when the WHOLE input passes an allowlist
+//     grammar AND every occurrence of `subsystem-store` in it lies inside a clean cache path that
+//     grammar accepted, it adds exactly those paths' scopes instead, and no `*` ([provenScopes]).
+//     The grammar reads each top-level string of the input by its key: a bash tool's
+//     `description` is skipped (so a mention there is never inside an accepted path); a
+//     `workdir`/`path`/`cwd`/`dir`/`directory` must be a clean absolute path with no component
+//     naming `cache` that is not `/`, `/home`, `/home/<u>`, `/root`, `/Users` or `/Users/<u>`
+//     ([safeDir]); a `file_path`/`filePath` must be one clean cache path; every other string is a
+//     shell line ([shellLineProvable]) that lexes with spaces, tabs, `|`, `||`, `&&`, `;` and
+//     newlines only (no other metacharacter outside single quotes; no `/` or `..` inside them),
+//     runs only `cat`/`cut`/`echo`/`grep`/`head`/`ls`/`nl`/`printf`/`tail`/`tr`/`uniq`/`wc`, gives
+//     each only flags on that command's own allowlist ([commandFlags]; for `grep`: `-n -c -l -L -i
+//     -v -w -x -o -h -H -E -F -s -q` and clusters of them, `-e PAT`, `-m`/`-A`/`-B`/`-C` with a
+//     SEPARATE all-digit word, and `--count --line-number --ignore-case --invert-match
+//     --word-regexp --line-regexp --only-matching --no-filename --with-filename --extended-regexp
+//     --fixed-strings --files-with-matches --files-without-match --quiet --silent --no-messages`;
+//     no recursion for any command, no `wc --files0-from`; an unknown flag fails), has no `.`/`..`
+//     word and no other word naming `cache`, and has every word holding `/` be one unquoted
+//     `~/`-, `/home/<u>/`- or `/root/`-`.cache/subsystem-store/<scope>/<file>` path with a
+//     [ValidScope] scope and plain components ([cleanCachePath]). So `cat`, `grep -n` or `head`
+//     of named cache files stays named, and EVERYTHING else naming `subsystem-store` is `*` as it
+//     was before #314: a namespace (`-n subsystem-store`), a repo path, `~/.config/subsystem-store/`,
+//     a longer word, the `.lock` sibling, another instance's `subsystem-store-<alias>`, the bare
+//     root, a `$HOME` spelling, a glob, a redirect, `sed`, `cd`, `find`, `tar`, an unknown flag.
 //
 // ⚠ WHAT IT CANNOT SEE (threat T3): a session mixing a ledger-writing client with one that writes
-// nothing (non-empty ledger, so F1 is silent); a file read of a store copy whose path lacks
-// `subsystem-store`, or lacks a `cache`-named parent component — including an explicit `--cache`
-// root under a non-cache parent read DIRECTLY (`cat /tmp/x/subsystem-store/<scope>/a.md` adds
-// nothing; only the call carrying `--cache` is `*`); any read that names no cache path at all,
-// such as an ancestor of the cache root spelled relatively in a call that names no cache path
-// (`grep -r x .cache` or `grep -r x` from the home directory, alone). BESIDE a named read the
-// grammar now rejects both relative shapes: a word naming `cache`/`subsystem-store` that is not a
-// clean cache path, and a recursive flag, so `cat ~/.cache/subsystem-store/<scope>/a.md; grep -r x
-// .cache` is `*` (it added only `<scope>` at #314 round 3). What a named read can still sit beside
-// unseen is a RELATIVE, NON-RECURSIVE FILE word (`cat ~/.cache/subsystem-store/<scope>/a.md x.md`):
-// it reads one file of the working directory, which the input does not fix — harmless unless that
-// directory is inside the cache. In Claude Code it can be: Bash's working directory persists
-// between calls, and an earlier call can step there through bare relative words that name no cache
-// PATH (`cd ~/.cache`, then `cd subsystem-store`, then `cd <scope>`). So ANY input, named read or
-// not, whose shell line runs `cd`/`pushd` (also as `builtin cd`, `command pushd`, after `&&`, `;`,
-// `|` or a newline, inside `$(…)`) with an argument naming `cache`/`subsystem-store` (any case,
-// quotes removed), or one that is not a plain relative path, a clean absolute path or a clean
-// `~/…` path outside every home ancestor — `$D`, `"$D"`, `-`, `~`, `..`, nothing, a glob, `$(…)`,
-// a flag — is `*` ([movesIntoUnseen]); `cd /work/repo`, `cd src`, `pushd /tmp/build` add nothing.
-// What that still cannot see: a directory change it does not parse as one — through `eval`,
-// `bash -c '…'`, `sudo`/`env`/`command -p` before `cd`, a function or alias wrapping it, `CDPATH`
-// (a plain `cd <scope>` resolved against a `CDPATH` entry inside the cache), or a `popd` back to
-// a directory pushed by a spelling it missed; a plain path that IS the cache through a symlink
-// outside it (`cd /work/link` where `link` points into the cache); and a session that STARTS with
-// its working directory inside the cache. In opencode a bash call's `workdir` is part of its
-// input, which [safeDir] checks; with none it runs in "the current working directory" (the tool's
-// own schema text, opencode 2.0.32), which no input names — the same `cd` rule applies to its
-// commands, but whether an earlier call's `cd` can move that default directory at all is NOT
-// established here (opencode 2.0 keeps shell ids; not read from its source). The same
-// earlier-call gap covers a read through a variable set earlier, and a later `ls <scope>` or
-// `grep x <file>` (one directory's names, one file); a call that names a cache path while setting
-// a variable (`S=~/.cache/subsystem-store/notes1`) is itself `*`, since no assignment passes the
-// grammar. Also unseen: a function or alias under an
-// allowed command's name, defined in an earlier call or by the HOST (Claude Code's own `grep` is
-// one, its embedded ugrep: the flags [readsBeyondItsWords] knows are GNU's plus ugrep's `-NUM` and
-// `--depth`, and a host wrapper with any other mode is unseen); a bare relative `subsystem-store` with no `/` after
-// it outside a `cd`/`pushd` argument (indistinguishable from the namespace); a symlink into the
-// cache; a read that bypasses the
-// client entirely; a memo shown by any path that does not print the renderer's block (a memo's
-// text quoted without its fence, or the browser tab).
+// nothing (non-empty ledger, so F1 is silent); and every read of the cache through tool inputs
+// none of which contains `subsystem-store` — the bare-substring rule's own blind spots, kept as
+// they were: a store copy at a path without the name (a `--cache <dir>` root, a mirror) read by
+// file tools; a relative spelling that never writes the name (`grep -r x .cache` from the home
+// directory, `cat */a.md` from inside the root); a working directory moved into the cache by
+// calls that never write the name (`cd ~/.cache`, then `cd s*`), and a session that starts inside
+// it; a read through a variable, function or alias set in an earlier call; a symlink into the
+// cache; a read that bypasses the client entirely. The named-scope exception adds one gap the
+// bare-substring rule did not have: a named read beside a RELATIVE file word
+// (`cat ~/.cache/subsystem-store/<scope>/a.md x.md`) derives `<scope>`, but `x.md` resolves
+// against a working directory the input does not fix — harmless unless an earlier call moved it
+// into the cache by a spelling without the name (one WITH it is `*` for the session). Not
+// established here: whether the host's `grep` (Claude Code's embedded ugrep) recurses when it is
+// given NO file word and its stdin is a terminal. Also unseen: a memo shown by any path that does
+// not print the renderer's block (a memo's text quoted without its fence, or the browser tab).
 package scopeuse
 
 import (
@@ -106,6 +82,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -483,6 +460,13 @@ func (d *Deriver) ToolInputValue(v any) { d.toolInput("", v) }
 // input gets the role its key gives it ([keyRole]); every other string, at any depth, is a shell
 // line.
 func (d *Deriver) toolInput(tool string, v any) {
+	ss, roles := inputStrings(tool, v)
+	d.toolInputStrings(ss, roles)
+}
+
+// inputStrings is every string of one tool input — the same strings [eachString] collects — each
+// with its [role].
+func inputStrings(tool string, v any) ([]string, []role) {
 	var ss []string
 	var roles []role
 	add := func(r role) func(string) {
@@ -499,7 +483,7 @@ func (d *Deriver) toolInput(tool string, v any) {
 	} else {
 		eachString(v, add(shellRole))
 	}
-	d.toolInputStrings(ss, roles)
+	return ss, roles
 }
 
 // ToolInput records one tool input that IS one string (a raw command line). It is the
@@ -512,14 +496,14 @@ func (d *Deriver) ToolInput(s string) { d.ToolInputStrings([]string{s}) }
 // the strings TOGETHER ([eachCacheRead]).
 func (d *Deriver) ToolInputStrings(ss []string) { d.toolInputStrings(ss, nil) }
 
-// role is what F2's grammar ([provable]) reads one string of a tool input as.
+// role is what F2's grammar ([provenScopes]) reads one string of a tool input as.
 type role int
 
 const (
 	// shellRole: a shell line, held to [shellLineProvable]. Every string whose key is not below.
 	shellRole role = iota
 	// freeRole: a bash tool's `description` — free text that is never run, so the grammar skips it
-	// (it is still scanned for the cache name, and is still content).
+	// (it is still content, and a mention of the cache root in it makes the input `*`).
 	freeRole
 	// dirRole: a working directory or a search root (`workdir`, `path`, `cwd`, `dir`,
 	// `directory`), held to [safeDir].
@@ -572,13 +556,8 @@ func (d *Deriver) toolInputStrings(ss []string, roles []role) {
 // root turns that test red instead of silently making F2 blind.
 const CacheRootName = "subsystem-store"
 
-// lockSuffix is the client's sync lock beside a cache root (`client/snapshot.go`): a sibling FILE,
-// not a store, so naming it is not a read.
-const lockSuffix = ".lock"
-
 // CacheScopes returns what F2 adds for ONE tool input given as its strings, every one read as a
-// shell line: the scope of every cache-root READ it names, `*` for one it cannot attribute to a
-// single default-instance scope. See [eachCacheRead].
+// shell line: nothing, `[*]`, or the named scopes of its clean cache paths. See [eachCacheRead].
 func CacheScopes(ss ...string) []string {
 	lowers := make([]string, len(ss))
 	for k, s := range ss {
@@ -591,122 +570,26 @@ func CacheScopes(ss ...string) []string {
 
 // eachCacheRead is F2, over ONE tool input: ss is every string it holds, lowers their asciiLower
 // (passed in so the one copy [Deriver.ToolInputStrings] makes serves F1 and F2), roles what each
-// string is ([role]; nil reads every string as a shell line). A file read from the client cache
-// never passes through the client and is never ledgered, so the PATH is the only evidence of what
-// was read. It finds every `subsystem-store` (case-insensitive) in every string, of every role, and
-// classifies it — a NAME, not a substring:
+// string is ([role]; nil reads every string as a shell line).
 //
-//   - NOT A CACHE PATH, adds nothing: the name is part of a longer word (`test-check-subsystem-
-//     store-phase1.sh`, `subsystem-stores`); it is a path component whose parent is a plain
-//     literal word not containing `cache` (`clusters/…/apps/subsystem-store/…`,
-//     `~/.config/subsystem-store/`, `deploy/subsystem-store`); it is a bare word with no `/` after it (`kubectl -n
-//     subsystem-store`); or it is the sync lock `subsystem-store[-alias].lock` and nothing more.
-//   - A CACHE ROOT: the parent component contains `cache` — `~/.cache`, `/home/<u>/.cache`,
-//     `$HOME/.cache`, `$XDG_CACHE_HOME`, and any other spelling that ends in a component naming a
-//     cache. A RELATIVE `subsystem-store/…` (preceded by whitespace, punctuation, `./` or `../`) is
-//     `*`: the working directory is unknown. So is one whose parent component is neither a cache
-//     nor a plain literal word (`$C/subsystem-store`, `"$C"/subsystem-store/…`,
-//     `~/subsystem-store`): an unrecognised spelling of the root is `*`, never "not a cache"
-//     ([rootContext]).
-//   - A cache root is `*` unless it is the default instance (no `-<alias>` suffix: derived scopes
-//     carry no instance), a `/` follows it, and the next component passes [ValidScope]. One that
-//     passes is a NAMED read of that scope.
+// 🔴 NEVER NARROWER THAN THE BARE-SUBSTRING RULE, BY CONSTRUCTION. That rule (F2 before #314) was
+// [namesCacheRoot] → `*`, and it is still the first test here, unchanged:
 //
-// 🔴 A NAMED READ IS ONLY A CANDIDATE. The named scopes are emitted only when the WHOLE input is
-// [provable] — an allowlist grammar under which the input's text can read nothing under the cache
-// but files of those scopes. Any input naming a read that is not provable adds `*` instead. And
-// any input with a `--cache` word (the client's explicit cache root, `internal/client`) adds `*`
-// whether or not it names `subsystem-store`: that root can be anywhere ([cacheFlag]). So does any
-// input moving the working directory somewhere unseen ([movesIntoUnseen]), named read or not.
+//   - no string of the input contains `subsystem-store` (any case) → F2 adds NOTHING. No other F2
+//     rule exists, so on such an input F2 is exactly what it was;
+//   - some string does → `*`, UNLESS [provenScopes] proves the whole input reads only files of
+//     named scopes — then exactly those scopes, and no `*`.
 //
-// LINEAR: every occurrence looks back over its parent component only (disjoint per occurrence)
-// and forward over its scope component; [provable] is one pass over each string, and runs only for
-// an input that names a read; [movesIntoUnseen] is one pass over each shell line.
+// So the one way this differs from the bare-substring rule is a `*` replaced by named scopes, and
+// only for an input the allowlist grammar accepts. `TestF2NeverNarrowerThanMain` pins it.
+//
+// LINEAR: [namesCacheRoot] and [provenScopes] are each one pass over every string.
 func eachCacheRead(ss, lowers []string, roles []role, emit func(string)) {
-	var named []string
-	starred := false // a `*` already emitted, so the directory rule below does not repeat it
-	emit = func(out func(string)) func(string) {
-		return func(v string) { starred = starred || v == Star; out(v) }
-	}(emit)
-	for k, s := range ss {
-		lower := lowers[k]
-		if !strings.Contains(lower, CacheRootName) {
-			continue
-		}
-		for off := 0; ; {
-			j := strings.Index(lower[off:], CacheRootName)
-			if j < 0 {
-				break
-			}
-			i := off + j
-			end := i + len(CacheRootName)
-			// The alias suffix, `client.ValidAlias`'s `-[a-z0-9][a-z0-9-]*`.
-			alias := false
-			if end+1 < len(lower) && lower[end] == '-' && isAlnum(lower[end+1]) {
-				alias = true
-				end++
-				for end < len(lower) && (isAlnum(lower[end]) || lower[end] == '-') {
-					end++
-				}
-			}
-			// 🔴 THE NEXT SEARCH STARTS PAST THE ALIAS, NOT PAST THE NAME: an occurrence inside it is the
-			// same word (preceded by `-`, never a root), and starting inside it re-read the alias to its
-			// end from every occurrence — quadratic, 52 s on a 2 MiB `subsystem-store-` run
-			// (`TestCacheScopesIsLinear`).
-			off = end
-			var next byte // 0 = end of input
-			if end < len(lower) {
-				next = lower[end]
-			}
-			if isAlnum(next) {
-				continue // a longer word
-			}
-			if strings.HasPrefix(lower[end:], lockSuffix) {
-				after := end + len(lockSuffix)
-				if after == len(lower) || !isPathByte(lower[after]) {
-					continue // the sync lock, a file
-				}
-			}
-			switch kind := rootContext(lower, i); {
-			case kind == notRoot:
-				continue
-			case kind == relativeRoot && next != '/':
-				continue // a bare word: a namespace, a service name
-			case kind == relativeRoot, kind == unknownRoot:
-				emit(Star)
-				continue
-			}
-			if alias || next != '/' {
-				emit(Star)
-				continue
-			}
-			start := end + 1
-			stop := start
-			for stop < len(s) && s[stop] != '/' && !isShellSeparator(s[stop]) {
-				stop++
-			}
-			sc := s[start:stop]
-			if !ValidScope(sc) {
-				emit(Star)
-				continue
-			}
-			named = append(named, sc)
-		}
-	}
-	if cacheFlag(lowers) {
-		emit(Star)
+	if !namesCacheRoot(lowers) {
 		return
 	}
-	if movesIntoUnseen(ss, roles) {
-		if !starred {
-			emit(Star)
-		}
-		return
-	}
-	if len(named) == 0 {
-		return
-	}
-	if !provable(ss, roles) {
+	named, ok := provenScopes(ss, lowers, roles)
+	if !ok {
 		emit(Star)
 		return
 	}
@@ -715,20 +598,52 @@ func eachCacheRead(ss, lowers []string, roles []role, emit func(string)) {
 	}
 }
 
-// provable reports whether one tool input, every string of it by its role, passes F2's ALLOWLIST
-// grammar — the only case in which the cache scopes it names are derived instead of `*`:
+// namesCacheRoot is the bare-substring rule: some (asciiLower'd) string of the input contains
+// [CacheRootName]. (It lowered with `strings.ToLower`; for this ASCII name the two find the same
+// occurrences, since no non-ASCII rune lowers to any of its bytes.)
+func namesCacheRoot(lowers []string) bool {
+	for _, l := range lowers {
+		if strings.Contains(l, CacheRootName) {
+			return true
+		}
+	}
+	return false
+}
+
+// provenScopes reports whether one tool input, every string of it by its role, passes F2's
+// ALLOWLIST grammar AND every occurrence of [CacheRootName] (any case) in it lies inside a clean
+// cache file path that grammar accepted — and if so, the scopes of those paths:
 //
-//   - a shell line passes [shellLineProvable];
-//   - a working directory passes [safeDir];
+//   - a bash tool's `description` is not read by the grammar, so a mention of the name there is
+//     never inside an accepted path: `*`;
+//   - a working directory passes [safeDir] — never a cache path, so one naming the name is `*`;
 //   - a file path is one [cleanCachePath];
-//   - a bash tool's `description` is not read.
+//   - every other string passes [shellLineProvable].
+//
+// 🔴 THE OCCURRENCE COUNT IS THE RULE, NOT A SECOND FENCE. The grammar accepts plenty of words that
+// hold the name without being cache paths (`kubectl`'s namespace is not one, but `echo
+// subsystem-store` lexes fine); what makes them `*` is that the count of occurrences in the input
+// exceeds the count inside accepted paths. A namespace, a repo path, `~/.config/subsystem-store`, a
+// longer word, the `.lock` sibling, another instance's `subsystem-store-<alias>`: each is an
+// occurrence no accepted path covers. ([CacheRootName] cannot overlap itself, so
+// `strings.Count` counts every occurrence.)
 //
 // 🔴 IT IS AN ALLOWLIST, NOT A LIST OF HAZARDS. Two audit rounds each found shell spellings that
-// slipped past the denylist this replaced (an empty quote pair inside `..`, `{.,}`, `$'\x2e'`, a
-// `cd` in another quoting); here a spelling this does not recognise FAILS, so the next one is
-// over-poisoned, not missed.
-func provable(ss []string, roles []role) bool {
+// slipped past the denylist this replaced; here a spelling this does not recognise FAILS, so the
+// next one is over-poisoned (`*`, as before #314), not missed.
+func provenScopes(ss, lowers []string, roles []role) ([]string, bool) {
+	var named []string
+	total, covered := 0, 0
+	accept := func(p string) bool {
+		sc, ok := cleanCachePath(p)
+		if ok {
+			named = append(named, sc)
+			covered += strings.Count(asciiLower(p), CacheRootName)
+		}
+		return ok
+	}
 	for k, s := range ss {
+		total += strings.Count(lowers[k], CacheRootName)
 		r := shellRole
 		if roles != nil {
 			r = roles[k]
@@ -740,51 +655,130 @@ func provable(ss []string, roles []role) bool {
 		case dirRole:
 			ok = safeDir(s)
 		case fileRole:
-			ok = cleanCachePath(s)
+			ok = accept(s)
 		default:
-			ok = shellLineProvable(s)
+			ok = shellLineProvable(s, accept)
 		}
 		if !ok {
-			return false
+			return nil, false
 		}
 	}
-	return true
+	return named, covered == total
 }
 
-// provableCommands are the only commands a provable shell line may run: each reads the files its
-// arguments name (or stdin) and nothing else, and none runs another program, changes the working
-// directory, or takes a path it derives from its input. Not here, so `*`: `cd`/`pushd`/`popd`
-// (bare `cd` is `$HOME`), `xargs`, `find`, `sed` (`e`, `r`, `w`), `awk` (`system`), `sort`
-// (`--compress-program`), any shell or interpreter — one of them turns text into a path this cannot
-// read (`… | sed s,a.x.md,, | xargs grep -r t` is the cache root).
-var provableCommands = map[string]bool{
-	"cat": true, "cut": true, "echo": true, "grep": true, "head": true, "ls": true, "nl": true,
-	"printf": true, "tail": true, "tr": true, "uniq": true, "wc": true,
+// flagSet is one allowed command's FLAG ALLOWLIST. Any word that starts `-` once unquoted (`-`
+// alone and `'-r'` included), and is not a listed flag's argument, is a flag, and one it does not
+// list fails; a long flag must match exactly, so an
+// abbreviation getopt_long would expand (`--rec`) fails too.
+type flagSet struct {
+	bare   string   // short flags taking no argument; a cluster of only these passes (`-in`)
+	arg    string   // short flags taking an argument: alone, then the NEXT word (`-e PAT`), or …
+	attach bool     // … attached to the letter (`-c1-180`); false: attached fails (`-m1`)
+	num    string   // of arg, the flags whose separate argument must be all digits (`-m 5`)
+	digits bool     // `-NUM` alone passes (`head -20`)
+	long   []string // long flags taking no argument
+	vals   []string // long flags taking `=VALUE` (`--lines=5`)
 }
 
-// shellLineProvable is the grammar for one shell line, read by a strict lexer in one pass:
+// commandFlags are the only commands a provable shell line may run, with each one's flags. Each
+// command reads the files its words name (or stdin) and nothing else; none runs another program,
+// changes the working directory, or takes a path it derives from its input. Not here, so `*`:
+// `cd`/`pushd`/`popd`, `xargs`, `find`, `sed` (`e`, `r`, `w`), `awk` (`system`), `sort`
+// (`--compress-program`), any shell or interpreter. And no flag here reads beyond the words:
+// no recursion (`grep -r/-R/-d/--recursive`, `ls -R/--recursive`), no name list (`wc
+// --files0-from`, `grep -f`), no ugrep-only mode — 🔴 Claude Code's `grep` is a shell function
+// running its embedded ugrep, where an attached digit RECURSES (`grep -n2 x sub` finds
+// `sub/deep/f.txt`; GNU reads it as `-C 2`), so grep's `-m`/`-A`/`-B`/`-C` pass only with a
+// separate all-digit word, and every flag not listed fails, `--index` and `--depth` included.
+var commandFlags = map[string]flagSet{
+	"cat": {bare: "AbeEnstTuv", long: []string{"--show-all", "--number-nonblank", "--show-ends",
+		"--number", "--squeeze-blank", "--show-tabs", "--show-nonprinting"}},
+	"cut":  {bare: "sz", arg: "bcdf", attach: true, long: []string{"--complement", "--only-delimited"}},
+	"echo": {bare: "neE"},
+	"grep": {bare: "nclLivwxohHEFsq", arg: "emABC", num: "mABC", long: []string{"--count",
+		"--line-number", "--ignore-case", "--invert-match", "--word-regexp", "--line-regexp",
+		"--only-matching", "--no-filename", "--with-filename", "--extended-regexp", "--fixed-strings",
+		"--files-with-matches", "--files-without-match", "--quiet", "--silent", "--no-messages"}},
+	"head":   {bare: "qv", arg: "nc", attach: true, digits: true, long: []string{"--quiet", "--silent", "--verbose"}, vals: []string{"--lines", "--bytes"}},
+	"ls":     {bare: "1aAdFhilnrSt", long: []string{"--all", "--almost-all", "--directory", "--human-readable", "--reverse"}},
+	"nl":     {arg: "bnsvw", attach: true},
+	"printf": {},
+	"tail":   {bare: "qv", arg: "nc", attach: true, digits: true, long: []string{"--quiet", "--silent", "--verbose"}, vals: []string{"--lines", "--bytes"}},
+	"tr":     {bare: "cdsCt", long: []string{"--complement", "--delete", "--squeeze-repeats", "--truncate-set1"}},
+	"uniq":   {bare: "cdDiuz", arg: "fsw", attach: true, long: []string{"--count", "--repeated", "--ignore-case", "--unique"}},
+	"wc":     {bare: "lwcmL", long: []string{"--lines", "--words", "--bytes", "--chars", "--max-line-length"}},
+}
+
+// argKind is what the word after a flag must be.
+type argKind int
+
+const (
+	noArg  argKind = iota
+	anyArg         // any word the line's other rules accept
+	numArg         // all digits
+)
+
+// flag reports whether w (unquoted, starting `-`) is on f's allowlist, and what the next word
+// must be.
+func (f flagSet) flag(w string) (argKind, bool) {
+	if len(w) < 2 {
+		return noArg, false
+	}
+	if w[1] == '-' {
+		name, _, val := strings.Cut(w, "=")
+		if val {
+			return noArg, slices.Contains(f.vals, name)
+		}
+		return noArg, slices.Contains(f.long, name)
+	}
+	if strings.IndexByte(f.arg, w[1]) >= 0 {
+		switch {
+		case len(w) > 2:
+			return noArg, f.attach
+		case strings.IndexByte(f.num, w[1]) >= 0:
+			return numArg, true
+		}
+		return anyArg, true
+	}
+	if f.digits && allDigits(w[1:]) {
+		return noArg, true
+	}
+	for i := 1; i < len(w); i++ {
+		if strings.IndexByte(f.bare, w[i]) < 0 {
+			return noArg, false
+		}
+	}
+	return noArg, true
+}
+
+func allDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// shellLineProvable is the grammar for one shell line, read by a strict lexer in one pass;
+// accept is called with every word holding `/` and must accept it:
 //
 //   - Words are separated by spaces and tabs; `|`, `||`, `&&`, `;` and a newline separate
 //     commands. ANY other shell metacharacter outside single quotes — `$` a backtick `\ " { } * ?
 //     [ ] ( ) < > & ~ ! # ^`, and any other control byte — fails; `~` is allowed only as the
-//     leading `~/` of a word that is a [cleanCachePath].
+//     leading `~/` of a word.
 //   - A single-quoted segment is literal text, but one holding `/` or `..` fails (it could be a
 //     path), and an unterminated quote fails.
-//   - The first word of every command must be one of [provableCommands], by its unquoted text.
-//   - Every word holding `/` must be ONE [cleanCachePath], unquoted: no other path is provable.
+//   - The first word of every command must be one of [commandFlags], by its unquoted text, and
+//     every word of it starting `-` must be on that command's allowlist ([flagSet.flag]); a flag's
+//     argument word follows it (and must be all digits where the flag says so). A flag left
+//     waiting for its argument at the end of a command fails.
+//   - Every word holding `/` must be one that accept takes ([cleanCachePath]), unquoted.
 //   - A word that is `.` or `..` once unquoted fails (with `/` it has already failed above).
-//   - A word that, once unquoted, holds `cache` or [CacheRootName] (any case) and is not a
-//     [cleanCachePath] fails: with no `/` it is RELATIVE (`.cache`, `subsystem-store`,
-//     `--cached`), and from the home directory or `~/.cache` it is an ancestor of every scope.
-//   - A flag putting an allowed command into a mode that reads more than the files its words
-//     name fails ([readsBeyondItsWords]): `grep`'s recursion, `ls -R`, `wc --files0-from`.
+//   - A word that, once unquoted, holds `cache` (any case) fails: with no `/` it is RELATIVE
+//     (`.cache`, `--cached`), and from the home directory it is the cache's parent.
 //
-// ⚠ A word with no `/` that passes is a FILE argument read non-recursively, and it resolves
-// against a working directory this does not know — that is T3 (the package doc), not something
-// this proves.
-func shellLineProvable(s string) bool {
+// ⚠ A word with no `/` that passes is read RELATIVE to a working directory this does not know —
+// T3 (the package doc), not something this proves.
+func shellLineProvable(s string, accept func(string) bool) bool {
 	cmd := true                // the next word is a command's first
-	prog := ""                 // the current command's first word, unquoted
+	var flags flagSet          // the current command's flag allowlist
+	want := noArg              // what the next word must be: a flag's argument, or nothing
 	start, quoted := -1, false // the current word's first byte, and whether it holds a quote
 	var val []byte             // the current word unquoted, built only once it holds a quote
 	endWord := func(i int) bool {
@@ -797,22 +791,36 @@ func shellLineProvable(s string) bool {
 			v = string(val)
 		}
 		ok := true
-		switch lv := asciiLower(v); {
+		switch {
 		case strings.IndexByte(raw, '/') >= 0:
-			ok = !quoted && cleanCachePath(raw)
+			ok = !quoted && accept(raw)
 		case v == "." || v == "..":
 			ok = false
-		case strings.Contains(lv, "cache") || strings.Contains(lv, CacheRootName):
+		case strings.Contains(asciiLower(v), "cache"):
 			ok = false // a cache-named word that is not a clean cache path: relative, so `*`
 		}
-		if cmd {
-			ok = ok && provableCommands[v]
-			prog = v
+		switch {
+		case cmd:
+			var known bool
+			flags, known = commandFlags[v]
+			ok = ok && known
 			cmd = false
-		} else if readsBeyondItsWords(prog, v) {
-			ok = false
+		case want == numArg:
+			ok = ok && allDigits(v)
+			want = noArg
+		case want == anyArg:
+			want = noArg
+		case strings.HasPrefix(v, "-"):
+			var fok bool
+			want, fok = flags.flag(v)
+			ok = ok && fok
 		}
 		start, quoted, val = -1, false, val[:0]
+		return ok
+	}
+	endCmd := func(i int) bool {
+		ok := endWord(i) && want == noArg
+		cmd = true
 		return ok
 	}
 	for i := 0; i < len(s); i++ {
@@ -823,19 +831,17 @@ func shellLineProvable(s string) bool {
 				return false
 			}
 		case c == '\n' || c == ';' || c == '|':
-			if !endWord(i) {
+			if !endCmd(i) {
 				return false
 			}
 			if c == '|' && i+1 < len(s) && s[i+1] == '|' {
 				i++
 			}
-			cmd = true
 		case c == '&':
-			if i+1 >= len(s) || s[i+1] != '&' || !endWord(i) {
+			if i+1 >= len(s) || s[i+1] != '&' || !endCmd(i) {
 				return false
 			}
 			i++
-			cmd = true
 		case c == '\'':
 			j := strings.IndexByte(s[i+1:], '\'')
 			if j < 0 {
@@ -870,70 +876,17 @@ func shellLineProvable(s string) bool {
 			}
 		}
 	}
-	return endWord(len(s))
-}
-
-// readsBeyondItsWords reports whether w, an argument word of prog (both unquoted), is a flag that
-// makes prog read files its words do not name: a directory tree, or a list of names read from a
-// file. Of [provableCommands], only three have such a mode (each one's `--help`, GNU coreutils
-// 9.11 and grep 3.12):
-//
-//   - `grep`: `-r`, `-R`, `--recursive`, `--dereference-recursive`, `-d recurse` and
-//     `--directories=recurse`. Every short-flag cluster holding `r`, `R` or `d` fails, so
-//     `-rn`, `-nR` and `-drecurse` do — and so does `-d skip`, and a cluster whose attached
-//     argument happens to hold one of them (`-erate`): over-poisoned, never missed.
-//     🔴 `grep` IS NOT ALWAYS GNU grep: Claude Code's Bash shadows it with a shell function
-//     that runs its embedded ugrep, where `-NUM` and `--depth=…` RECURSE (measured: `grep -n2
-//     needle sub` finds `sub/deep/f.txt`; GNU reads `-2` as `-C 2`). So a cluster holding a
-//     digit fails too (`-m1`, `-A3` over-poisoned), and so does `--depth`.
-//   - `ls`: `-R` and `--recursive`; every cluster holding `R` (`-laR`).
-//   - `wc`: `--files0-from=F` reads the names of the files to count from F (or stdin, which
-//     `printf '\057…'` can fill with a path no word spells).
-//
-// A long flag fails when its name (before any `=`) is a PREFIX of one of those, whole or
-// abbreviated (`--rec`, `--direc=recurse`, `--files0`), because getopt_long accepts an
-// abbreviation; an ambiguous one (`--re`, `--d`) fails too.
-// The rest read only their words or stdin: `cat`, `cut`, `head`, `nl`, `tail`, `tr`, `uniq`
-// have no recursive or name-list mode, and `echo`/`printf` read nothing. (`uniq IN OUT` WRITES
-// `OUT`; that is not a read.)
-func readsBeyondItsWords(prog, w string) bool {
-	if len(w) < 2 || w[0] != '-' {
-		return false
-	}
-	var short string
-	var long []string
-	switch prog {
-	case "grep":
-		short = "rRd0123456789"
-		long = []string{"--recursive", "--dereference-recursive", "--directories", "--depth"}
-	case "ls":
-		short, long = "R", []string{"--recursive"}
-	case "wc":
-		long = []string{"--files0-from"}
-	default:
-		return false
-	}
-	if w[1] != '-' {
-		return strings.ContainsAny(w[1:], short)
-	}
-	name, _, _ := strings.Cut(w, "=")
-	if len(name) <= 2 {
-		return false // `--`, the end of the flags
-	}
-	for _, l := range long {
-		if strings.HasPrefix(l, name) {
-			return true
-		}
-	}
-	return false
+	return endCmd(len(s))
 }
 
 // cleanCachePath reports whether w is exactly one file path under the default cache root as the
 // client resolves it (`$HOME/.cache/subsystem-store`, [CacheRootName]), spelled `~/`, `/home/<u>/`
 // or `/root/` + `.cache/subsystem-store/<scope>/<name>[/<name>…]`: a [ValidScope] scope, at least
 // one component after it (a file, not the scope directory), and every component a [plainSegment].
-// Exact bytes, case included — a spelling it does not match is not provable, never "probably it".
-func cleanCachePath(w string) bool {
+// It returns the scope. Exact bytes, case included — a spelling it does not match is not provable,
+// never "probably it". (So another instance's root, the bare root, a scope directory, a `$HOME`
+// or `.CACHE` spelling are not clean.)
+func cleanCachePath(w string) (string, bool) {
 	var rest string
 	switch {
 	case strings.HasPrefix(w, "~/"):
@@ -943,29 +896,29 @@ func cleanCachePath(w string) bool {
 	case strings.HasPrefix(w, "/home/"):
 		u, r, ok := strings.Cut(w[len("/home/"):], "/")
 		if !ok || !plainSegment(u) {
-			return false
+			return "", false
 		}
 		rest = r
 	default:
-		return false
+		return "", false
 	}
 	rest, ok := strings.CutPrefix(rest, ".cache/"+CacheRootName+"/")
 	if !ok {
-		return false
+		return "", false
 	}
 	sc, rest, ok := strings.Cut(rest, "/")
-	if !ok || !ValidScope(sc) {
-		return false
+	if !ok || !ValidScope(sc) || !eachSegment(rest, plainSegment) {
+		return "", false
 	}
-	return eachSegment(rest, plainSegment)
+	return sc, true
 }
 
 // safeDir reports whether a working directory w is an absolute path the cache cannot be reached
 // from by a relative word: every component a [plainSegment] (no `.`, `..` or empty component, no
-// metacharacter, no trailing `/`), no component naming `cache` (so it is not a cache root's
-// parent, the root, or under it — every cache root F2 recognises sits under one, [rootContext]),
-// and not an ancestor of a home directory a cache path can be spelled under — `/`, `/home`,
-// `/home/<u>`, `/root`, `/Users`, `/Users/<u>`.
+// metacharacter, no trailing `/`), no component naming `cache` (so it is not the cache root's
+// parent, the root, or under it — every clean cache path sits under a `.cache`), and not an
+// ancestor of a home directory a cache path can be spelled under — `/`, `/home`, `/home/<u>`,
+// `/root`, `/Users`, `/Users/<u>`.
 func safeDir(w string) bool {
 	if len(w) < 2 || w[0] != '/' {
 		return false
@@ -1017,231 +970,6 @@ func plainSegment(seg string) bool {
 		}
 	}
 	return true
-}
-
-// cacheFlag reports whether any (lowered) string of one input holds the client's `--cache` flag as
-// a word of its own: `--cache` or `--cache=…`, quoted or not.
-func cacheFlag(lowers []string) bool {
-	const flag = "--cache"
-	for _, lower := range lowers {
-		for off := 0; ; {
-			j := strings.Index(lower[off:], flag)
-			if j < 0 {
-				break
-			}
-			i := off + j
-			off = i + len(flag)
-			before := i == 0 || isShellSeparator(lower[i-1]) || strings.IndexByte(`"'\`, lower[i-1]) >= 0
-			after := off == len(lower) || isShellSeparator(lower[off]) || strings.IndexByte(`="'`, lower[off]) >= 0
-			if before && after {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// movesIntoUnseen reports whether any shell-line string of one input ([role]; a bash
-// `description` is not one) runs `cd` or `pushd` with an argument this cannot show stays out of
-// the cache ([cdArgUnseen]). In Claude Code the Bash working directory PERSISTS between calls, so
-// `cd ~/.cache`, then `cd subsystem-store`, then `cd alder`, then `cat x.md` reads a scope no call
-// names — and each `cd` alone names no cache path. So F2 asks of every input, named read or not.
-func movesIntoUnseen(ss []string, roles []role) bool {
-	for k, s := range ss {
-		if (roles == nil || roles[k] == shellRole) && changesDirUnseen(s) {
-			return true
-		}
-	}
-	return false
-}
-
-// cdPrefixes are command-position words after which the next word is still a command's first:
-// `builtin cd`, `command cd`, `{ cd`, `if cd`, `! cd` …
-var cdPrefixes = map[string]bool{
-	"builtin": true, "command": true, "{": true, "!": true, "if": true, "then": true, "else": true,
-	"elif": true, "do": true, "while": true, "until": true, "time": true,
-}
-
-// changesDirUnseen is [movesIntoUnseen] for one shell line, one pass. A rough lexer: words are
-// split by unquoted spaces and tabs; an unquoted newline, `;`, `|`, `&`, `(`, `)` or backtick
-// ends a command (so `$(cd …)` and `(cd …)` are read too — a subshell's `cd` does not persist,
-// which over-poisons); `'…'`, `"…"` and `\x` are unquoted. A command's first word, past any
-// [cdPrefixes] and `NAME=value` assignments, that is `cd` or `pushd` (by its unquoted text) has
-// its first argument checked by [cdArgUnseen]; one with no argument is `$HOME`, so unseen.
-func changesDirUnseen(s string) bool {
-	const (
-		atCmd = iota // the next word is a command's first
-		atArg        // the next word is a `cd`/`pushd` argument
-		inCmd        // the rest of a command: skipped
-	)
-	state := atCmd
-	var val []byte
-	for i := 0; i < len(s); {
-		c := s[i]
-		switch {
-		case c == ' ' || c == '\t' || c == '\r':
-			i++
-			continue
-		case strings.IndexByte("\n;|&()`", c) >= 0:
-			if state == atArg {
-				return true // `cd` with no argument: the home directory
-			}
-			state = atCmd
-			i++
-			continue
-		}
-		// One word, unquoted into val.
-		start := i
-		val = val[:0]
-		for i < len(s) {
-			c := s[i]
-			if c == ' ' || c == '\t' || c == '\r' || strings.IndexByte("\n;|&()`", c) >= 0 {
-				break
-			}
-			switch c {
-			case '\'':
-				j := strings.IndexByte(s[i+1:], '\'')
-				if j < 0 {
-					j = len(s) - i - 1
-				}
-				val = append(val, s[i+1:i+1+j]...)
-				i = min(i+j+2, len(s))
-			case '"':
-				i++
-				for i < len(s) && s[i] != '"' {
-					if s[i] == '\\' && i+1 < len(s) {
-						i++
-					}
-					val = append(val, s[i])
-					i++
-				}
-				i++
-			case '\\':
-				if i+1 < len(s) {
-					i++
-				}
-				val = append(val, s[i])
-				i++
-			default:
-				val = append(val, c)
-				i++
-			}
-		}
-		i = min(i, len(s))
-		switch state {
-		case atCmd:
-			w := string(val)
-			switch {
-			case cdPrefixes[w] || isAssignment(w):
-			case w == "cd" || w == "pushd":
-				state = atArg
-			default:
-				state = inCmd
-			}
-		case atArg:
-			if cdArgUnseen(string(val), strings.HasPrefix(s[start:], "~/")) {
-				return true
-			}
-			state = inCmd
-		}
-	}
-	return state == atArg
-}
-
-// isAssignment reports whether w is a `NAME=value` prefix word.
-func isAssignment(w string) bool {
-	name, _, ok := strings.Cut(w, "=")
-	if !ok || name == "" || name[0] >= '0' && name[0] <= '9' {
-		return false
-	}
-	for i := 0; i < len(name); i++ {
-		if c := name[i]; !isAlnum(c) && c != '_' {
-			return false
-		}
-	}
-	return true
-}
-
-// cdArgUnseen reports whether v, a `cd`/`pushd` argument once unquoted, may move the working
-// directory into the cache, under it, or to an ancestor of it: it names `cache` or [CacheRootName]
-// (any case); or it is not ONE of a clean absolute path that [safeDir] admits, an unquoted `~/…`
-// path that would be one under a home directory, or a relative path of [plainSegment]s not
-// starting `-` or `+` — so `$D`, `-`, `~`, `..`, a glob, `$(…)`, a flag (`-P`), `+1` are unseen.
-// One trailing `/` is allowed. (`..` is unseen on purpose: from a repo under the home directory
-// it is an ancestor of the cache, as `cd ~` is.)
-func cdArgUnseen(v string, tilde bool) bool {
-	lv := asciiLower(v)
-	if strings.Contains(lv, "cache") || strings.Contains(lv, CacheRootName) {
-		return true
-	}
-	if v == "" || v[0] == '-' || v[0] == '+' {
-		return true // `cd -` (the previous directory), a flag, a `pushd +N` stack entry
-	}
-	if len(v) > 1 && v[len(v)-1] == '/' {
-		v = v[:len(v)-1]
-	}
-	switch {
-	case tilde:
-		return len(v) < 3 || !safeDir("/home/u/"+v[2:])
-	case strings.HasPrefix(v, "/"):
-		return !safeDir(v)
-	}
-	return !eachSegment(v, plainSegment)
-}
-
-type rootKind int
-
-const (
-	notRoot rootKind = iota
-	cacheRoot
-	relativeRoot
-	unknownRoot
-)
-
-// rootContext classifies the occurrence of [CacheRootName] at i by what precedes it.
-//
-// A parent component is a cache (`cacheRoot`) when it contains `cache`; NOT one (`notRoot`) only
-// when it is a plain LITERAL word — `[a-z0-9._-]+`, as a repo directory, `.config` or a kubectl
-// `deploy/` is. A parent this cannot read as either — empty (`/subsystem-store`), or holding a
-// shell expansion (`$C/…`, `"$C"/…`, `~/…`, `*/…`) — is `unknownRoot`, which is `*`: a spelling of
-// the cache this does not recognise must never fall silently into "not a cache".
-func rootContext(lower string, i int) rootKind {
-	if i == 0 {
-		return relativeRoot
-	}
-	switch c := lower[i-1]; {
-	case c == '/':
-		p := i - 1
-		for p > 0 && lower[p-1] != '/' && !isShellSeparator(lower[p-1]) {
-			p--
-		}
-		parent := lower[p : i-1]
-		switch {
-		case strings.Contains(parent, "cache"):
-			return cacheRoot
-		case parent == "." || parent == "..":
-			return relativeRoot
-		case parent != "" && strings.Trim(parent, "abcdefghijklmnopqrstuvwxyz0123456789._-") == "":
-			return notRoot
-		}
-		return unknownRoot
-	case isAlnum(c) || c == '-' || c == '_' || c == '.':
-		return notRoot // inside a longer word
-	}
-	return relativeRoot // after whitespace, a quote, `=`, `(` …
-}
-
-// isShellSeparator ends a path token: whitespace and the shell's control and redirection bytes.
-// Quotes, `$`, `{`, `*` and `\` are NOT separators, so a component holding them fails
-// [ValidScope] instead of being cut short into a valid-looking prefix (`al"pha"` is `alpha` to
-// the shell, and must not read as `al`).
-func isShellSeparator(c byte) bool {
-	return strings.IndexByte(" \t\n\r\f\v;&|<>()`", c) >= 0
-}
-
-// isPathByte is a byte that continues a file name.
-func isPathByte(c byte) bool {
-	return isAlnum(c) || c == '.' || c == '-' || c == '_' || c == '/'
 }
 
 func isAlnum(c byte) bool {

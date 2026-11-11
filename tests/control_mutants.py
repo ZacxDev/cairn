@@ -5256,8 +5256,7 @@ MUTANTS: tuple[Mutant, ...] = (
         "dropping F2 because \"the ledger covers reads now\" is the plausible simplification, and it "
         "makes every cache read invisible.",
     ),
-    # F2 narrowed from the bare substring `subsystem-store` to the cache-root PATH: three guards
-    # of the narrowing, each of which a plausible edit removes.
+    # F2 narrowed from the bare substring `subsystem-store` to the cache-root PATH.
     Mutant(
         name="scopeuse-f2-bare-substring",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
@@ -5266,52 +5265,99 @@ MUTANTS: tuple[Mutant, ...] = (
         new="\tfor _, l := range lowers {\n\t\tif strings.Contains(l, CacheRootName) {\n\t\t\td.namesCache = true\n\t\t}\n\t}\n"
         "\teachCacheRead(ss, lowers, roles, func(sc string) {\n\t\tif sc == Star {",
         killer="TestF2NamedCacheReadAddsThatScope",
-        extra_killers=("TestF2CacheReadAddsItsScope", "TestF2NonCachePathsAddNothing"),
+        extra_killers=("TestF2CacheReadAddsItsScope", "TestF2MustStayNamed"),
         why="\"any mention of the store is `*`\" is the rule this replaced, and it reads as the safer "
-        "one — it made every named cache read owner-only (13 of 13 `*` sessions in the 2026-11-11 "
-        "census came from it).",
-    ),
-    Mutant(
-        name="scopeuse-f2-bare-root-not-star",
-        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
-        path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tif alias || next != '/' {\n\t\t\t\temit(Star)\n",
-        new="\t\t\tif alias || next != '/' {\n\t\t\t\tif next == '/' {\n\t\t\t\t\temit(Star)\n\t\t\t\t}\n",
-        killer="TestF2UnattributableCacheReadAddsStar",
-        why="a bare root names no scope, and \"no scope component, nothing to add\" reads as tidy — "
-        "but `S=~/.cache/subsystem-store` is how a later `$S/<scope>/…` read, which this cannot "
-        "see, gets its path.",
+        "one — it made every named cache read owner-only (13 of 13 `*` sessions in the census came "
+        "from it).",
     ),
     Mutant(
         name="scopeuse-f2-component-not-validated",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tif !ValidScope(sc) {",
-        new="\t\t\tif sc == \"\" {",
+        old="\tif !ok || !ValidScope(sc) || !eachSegment(rest, plainSegment) {",
+        new="\tif !ok || sc == \"\" || !eachSegment(rest, plainSegment) {",
         killer="TestF2UnattributableCacheReadAddsStar",
         why="the component after the root LOOKS like the scope, so taking it as-is is the obvious "
-        "parse — and a glob, `$VAR` or `{a,b}` then reads as one scope it never was.",
+        "parse — and a name that is no valid scope then reads as one scope it never was.",
     ),
+    # #314 round 6: MAIN + ALLOWLIST. The bare-substring rule decides first; only an input the
+    # grammar proves, every mention inside an accepted clean path, gets named scopes instead of `*`.
     Mutant(
-        name="scopeuse-f2-other-instance-scope-trusted",
+        name="scopeuse-f2-no-mention-adds-star",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tif alias || next != '/' {",
-        new="\t\t\tif _ = alias; next != '/' {",
-        killer="TestF2UnattributableCacheReadAddsStar",
-        why="`subsystem-store-<alias>/<scope>/…` is laid out exactly like the default cache, so "
-        "parsing it the same way is natural — but derived scopes carry no instance, and routing "
-        "would send that scope by NAME to whatever instance the table says.",
+        old="\tif !namesCacheRoot(lowers) {\n\t\treturn\n\t}",
+        new="\tif !namesCacheRoot(lowers) {\n\t\temit(Star)\n\t\treturn\n\t}",
+        killer="TestF2NeverNarrowerThanMain",
+        extra_killers=("TestF2NoMentionAddsNothing",),
+        why="\"when in doubt, `*`\" reads as the fail-closed default — and an input that never names the "
+        "cache is not in doubt on main: starring it is the over-poisoning round 5's `cd` rule shipped.",
     ),
     Mutant(
-        name="scopeuse-f2-unknown-parent-not-a-cache",
+        name="scopeuse-f2-grammar-verdict-skipped",
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\treturn unknownRoot\n",
-        new="\t\treturn notRoot\n",
-        killer="TestF2UnattributableCacheReadAddsStar",
-        why="\"a parent that does not say `cache` is not the cache\" is one line shorter, and "
-        "`C=~/.cache; cat $C/subsystem-store/…` then falls silently into \"not a cache path\".",
+        old="\tnamed, ok := provenScopes(ss, lowers, roles)\n\tif !ok {",
+        new="\tnamed, ok := provenScopes(ss, lowers, roles)\n\tif _ = ok; false {",
+        killer="TestF2NeverNarrowerThanMain",
+        extra_killers=("TestF2MustBeStar",),
+        why="the grammar only ever decides whether to NAME scopes, so a rejected input looks like one "
+        "with nothing to add — and that is narrower than main, which stars every mention.",
+    ),
+    Mutant(
+        name="scopeuse-f2-bare-word-mention-accepted",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\treturn named, covered == total\n",
+        new="\treturn named, true\n",
+        killer="TestF2EveryMentionInsideACleanPath",
+        extra_killers=("TestF2NeverNarrowerThanMain",),
+        why="the grammar already checked every word, so counting the name's occurrences reads as "
+        "belt and braces — and `echo subsystem-store`, a pattern, a description or a workdir naming it "
+        "then passes as a proven read of nothing, narrower than main.",
+    ),
+    Mutant(
+        name="scopeuse-f2-grep-index-allowed",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\"--files-with-matches\", \"--files-without-match\", \"--quiet\", \"--silent\", \"--no-messages\"}},",
+        new="\t\t\"--files-with-matches\", \"--files-without-match\", \"--quiet\", \"--silent\", \"--no-messages\", \"--index\"}},",
+        killer="TestF2FlagAllowlist",
+        extra_killers=("TestF2MustBeStar",),
+        why="`--index` only makes ugrep faster, so allowing it reads as harmless — and it is a ugrep "
+        "mode the allowlist cannot reason about, beside a grep with no file word.",
+    ),
+    Mutant(
+        name="scopeuse-f2-attached-digit-accepted",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\treturn noArg, f.attach\n",
+        new="\t\t\treturn noArg, true\n",
+        killer="TestF2FlagAllowlist",
+        extra_killers=("TestF2MustBeStar",),
+        why="`-m1` is how everyone writes `-m 1`, so accepting it reads as removing a false positive — "
+        "and under Claude Code's ugrep an attached digit is one letter from `-NUM`, which recurses.",
+    ),
+    Mutant(
+        name="scopeuse-f2-ls-recursive-accepted",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\"ls\":     {bare: \"1aAdFhilnrSt\",",
+        new="\t\"ls\":     {bare: \"1aAdFhilnrStR\",",
+        killer="TestF2FlagAllowlist",
+        why="`ls` only lists names, so its flags read as beside the point — and `-R` lists every scope's "
+        "file names beside a read that derives one.",
+    ),
+    Mutant(
+        name="scopeuse-f2-flag-not-allowlisted",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\t\t\tok = ok && fok\n",
+        new="\t\t\tok = ok || fok\n",
+        killer="TestF2FlagAllowlist",
+        extra_killers=("TestF2RelativeAndRecursiveReadsAddStar",),
+        why="every path the line names is already checked, so a flag reads as beside the point — and "
+        "`grep -r x foo`, `ls -R` or `wc --files0-from=-` read files no word of the line names.",
     ),
     # #314: F2 decides over one tool input WHOLE, and (round 3) by an ALLOWLIST grammar. Each row
     # below removes ONE rule of it and is killed by the test pinning that rule alone.
@@ -5319,8 +5365,8 @@ MUTANTS: tuple[Mutant, ...] = (
         name='scopeuse-f2-poisoned-per-string',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\td.toolInputStrings(ss, roles)\n}",
-        new="\tfor k, s := range ss {\n\t\td.toolInputStrings([]string{s}, roles[k:k+1])\n\t}\n}",
+        old="\tss, roles := inputStrings(tool, v)\n\td.toolInputStrings(ss, roles)\n}",
+        new="\tss, roles := inputStrings(tool, v)\n\tfor k, s := range ss {\n\t\td.toolInputStrings([]string{s}, roles[k:k+1])\n\t}\n}",
         killer='TestF2DecidesOverTheWholeInput',
         why="`eachString(input, d.ToolInput)` — one call per string — is how every other input scan here "
         "is fed, and it is how F2 was fed: an ancestor `workdir` then cannot poison the cache path in "
@@ -5353,13 +5399,12 @@ MUTANTS: tuple[Mutant, ...] = (
         name='scopeuse-f2-other-path-accepted',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tok = !quoted && cleanCachePath(raw)",
+        old="\t\t\tok = !quoted && accept(raw)",
         new="\t\t\tok = !quoted",
         killer='TestF2GrammarRejectsOtherPaths',
-        extra_killers=('TestF2AllowlistRejectsTheRoundTwoShapes',),
         why="a path that is not under the cache cannot read the cache, so requiring every `/` word to be a "
-        "cache file reads as over-strict — and `~/.cache/.`, `/home//u1`, a scope directory or a "
-        "`..` path is exactly such a word.",
+        "cache file reads as over-strict — and `~/.cache/.`, `/home//u1`, or a `/tmp` path is exactly "
+        "such a word.",
     ),
     Mutant(
         name='scopeuse-f2-dot-word-accepted',
@@ -5376,34 +5421,23 @@ MUTANTS: tuple[Mutant, ...] = (
         name='scopeuse-f2-cache-word-accepted',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\tcase strings.Contains(lv, \"cache\") || strings.Contains(lv, CacheRootName):",
-        new="\t\tcase false && lv != \"\":",
+        old="\t\tcase strings.Contains(asciiLower(v), \"cache\"):",
+        new="\t\tcase false:",
         killer='TestF2GrammarRejectsCacheWords',
-        why="a word with no `/` is never a cache PATH, so checking it for the cache's name reads as a "
-        "false positive on `--cached` — and `.cache` or `subsystem-store` from the home directory is an "
-        "ancestor of every scope, beside a read that derives only one.",
-    ),
-    Mutant(
-        name='scopeuse-f2-recursive-flag-accepted',
-        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
-        path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t} else if readsBeyondItsWords(prog, v) {",
-        new="\t\t} else if false && readsBeyondItsWords(prog, v) {",
-        killer='TestF2GrammarRejectsRecursiveReads',
-        extra_killers=('TestF2RelativeAndRecursiveReadsAddStar',),
-        why="every path a provable line names is already checked, so a flag reads as beside the point — "
-        "and `grep -r x foo`, `ls -R` or `wc --files0-from=-` read files no word of the line names.",
+        why="a word with no `/` is never a cache PATH, so checking it for `cache` reads as a false "
+        "positive on `--cached` — and `.cache` from the home directory is the parent of every scope, "
+        "beside a read that derives only one.",
     ),
     Mutant(
         name='scopeuse-f2-command-not-allowlisted',
         pkgs=PKGS + ("./internal/transcript/scopeuse/",),
         path="internal/transcript/scopeuse/scopeuse.go",
-        old="\t\t\tok = ok && provableCommands[v]",
-        new="\t\t\tok = ok && v != \"\"",
+        old="\t\t\tok = ok && known",
+        new="\t\t\tok = ok && (known || v != \"\")",
         killer='TestF2GrammarRejectsCommands',
         why="the grammar already checks every path the text names, so which program runs reads as beside "
-        "the point — and `… | sed s,a.x.md,, | xargs grep -r t`, `cd` alone, or `| bash` derive a "
-        "path, or run a program, that the text never names.",
+        "the point — and `awk`, `X=1 cat`, or `| bash` run a program, or derive a path, the text "
+        "never names.",
     ),
     Mutant(
         name='scopeuse-f2-workdir-under-cache-accepted',
@@ -5412,9 +5446,8 @@ MUTANTS: tuple[Mutant, ...] = (
         old="\t\treturn plainSegment(seg) && !strings.Contains(asciiLower(seg), \"cache\")",
         new="\t\treturn plainSegment(seg)",
         killer='TestF2WorkdirMustBeOutsideTheCache',
-        why="a clean absolute working directory reads as safe whatever it names — and one under the cache "
-        "is what the input's relative words resolve against: `grep -r t birch` from the root reads "
-        "`birch`.",
+        why="a clean absolute working directory reads as safe whatever it names — and one that is the "
+        "cache's parent is what the input's relative words resolve against.",
     ),
     Mutant(
         name='scopeuse-f2-workdir-ancestor-accepted',
@@ -5448,29 +5481,6 @@ MUTANTS: tuple[Mutant, ...] = (
         why="`description` is free text in every tool that has one today, so dropping the tool check reads "
         "as tidy — and a tool whose `description` is passed on, or run, then carries an unchecked "
         "read.",
-    ),
-    Mutant(
-        name="scopeuse-f2-cache-flag-dropped",
-        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
-        path="internal/transcript/scopeuse/scopeuse.go",
-        old="\tif cacheFlag(lowers) {",
-        new="\tif false && cacheFlag(lowers) {",
-        killer="TestF2CacheFlagAddsStar",
-        why="F2 is about paths under `subsystem-store`, and a flag is not a path — but `--cache PATH` "
-        "makes any directory the store, so the read it starts is attributable to no scope.",
-    ),
-    # #314 round 5: a directory change in an EARLIER call (fail-open vs main's bare-substring rule).
-    Mutant(
-        name="scopeuse-f2-directory-change-ignored",
-        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
-        path="internal/transcript/scopeuse/scopeuse.go",
-        old="\tif movesIntoUnseen(ss, roles) {",
-        new="\tif false && movesIntoUnseen(ss, roles) {",
-        killer="TestF2DirectoryChangeAddsStar",
-        extra_killers=("TestF2DirectoryChangeChainAddsStar", "TestF2DirectoryChangeStrings"),
-        why="a `cd` reads nothing, and the grammar already rejects one beside a named read — but Claude "
-        "Code's Bash cwd persists, so `cd ~/.cache`, `cd subsystem-store`, `cd alder` and then "
-        "`cat x.md` reads a scope no call names as a cache path.",
     ),
     # S2 review round 1 (F3): four guards that each SURVIVED a mutation with no test reaching them.
     Mutant(

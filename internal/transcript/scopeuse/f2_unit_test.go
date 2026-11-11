@@ -48,6 +48,7 @@ type unitCase struct {
 func checkUnits(t *testing.T, cases []unitCase) {
 	t.Helper()
 	for _, c := range cases {
+		record(c.tool, c.input)
 		if got := viaClaude(c.tool, c.input); !slices.Equal(got, c.want) {
 			t.Errorf("%s (claude tool_use %s %v): Declare = %v, want %v", c.name, c.tool, c.input, got, c.want)
 		}
@@ -60,6 +61,7 @@ func checkUnits(t *testing.T, cases []unitCase) {
 func checkStrings(t *testing.T, cases map[string][]string) {
 	t.Helper()
 	for in, want := range cases {
+		record("", []string{in})
 		if got := CacheScopes(in); !slices.Equal(got, want) {
 			t.Errorf("CacheScopes(%q) = %v, want %v", in, got, want)
 		}
@@ -165,36 +167,30 @@ func TestF2AncestorArgumentAddsStar(t *testing.T) {
 		"grep -c secret ~/.cache/subsystem-store/alder-a8 $XDG_CACHE_HOME":  star,
 		"grep -c secret ~/.cache/subsystem-store/alder-a9 ${HOME}":          star,
 		// Controls: a flag, or a word, that is not a path is not an ancestor. (A word that says
-		// "cache" is `*` now, whatever it is: TestF2GrammarRejectsCacheWords.)
-		"grep -c --no-color x ~/.cache/subsystem-store/alder-b0/x.md": {"alder-b0"},
-		"echo done; cat ~/.cache/subsystem-store/alder-b1/x.md":       {"alder-b1"},
+		// "cache" is `*` now, whatever it is: TestF2GrammarRejectsCacheWords; so is a flag not on
+		// the command's allowlist: TestF2FlagAllowlist.)
+		"grep -c -i x ~/.cache/subsystem-store/alder-b0/x.md":   {"alder-b0"},
+		"echo done; cat ~/.cache/subsystem-store/alder-b1/x.md": {"alder-b1"},
 	})
 }
 
-// TestF2CacheFlagAddsStar (🟡): the client's `--cache PATH` makes ANY directory a cache root, so an
-// input carrying it is `*` whatever it names.
-func TestF2CacheFlagAddsStar(t *testing.T) {
+// TestF2CacheFlagFollowsMain (🟡): the client's `--cache PATH` makes ANY directory a cache root,
+// but F2 has no rule of its own for it any more: an input naming `subsystem-store` is `*` (the
+// flag never passes the grammar — it names `cache`), and one that does not adds nothing, as on
+// origin/main. The second half is T3 (the package doc), not a guarantee.
+func TestF2CacheFlagFollowsMain(t *testing.T) {
 	star := []string{Star}
 	checkStrings(t, map[string][]string{
 		"cairn --cache /tmp/x/subsystem-store recall q": star,
-		"cairn --cache=/tmp/x get alder-f1":             star,
-		`cairn "--cache" /srv/copy ls`:                  star,
+		"cat /tmp/x/subsystem-store/birch-t/x.md":       star,
+		"cairn --cache=/tmp/x get alder-f1":             {},
+		`cairn "--cache" /srv/copy ls`:                  {},
+		"git diff --cached":                             {},
+		"pip install --no-cache-dir pkg":                {},
 	})
 	checkUnits(t, []unitCase{
 		{"flag", "bash", map[string]any{"command": "cairn --cache /srv/copy/subsystem-store recall q"}, star},
 	})
-	for _, in := range []string{
-		// T3, named in the package doc: a store copy under a non-cache parent read DIRECTLY.
-		"cat /tmp/x/subsystem-store/birch-t/x.md",
-		// Controls: flags that merely start with `--cache` or contain it.
-		"git diff --cached",
-		"pip install --no-cache-dir pkg",
-		"npm ci --cache-min 9",
-	} {
-		if got := CacheScopes(in); len(got) != 0 {
-			t.Errorf("CacheScopes(%q) = %v, want nothing", in, got)
-		}
-	}
 }
 
 // #314 round 3: F2 is an ALLOWLIST. A named scope is derived only when the whole input provably
@@ -370,7 +366,7 @@ func TestF2WorkdirMustBeOutsideTheCache(t *testing.T) {
 
 // TestF2WorkdirMustNotBeAnAncestor: a working directory a home directory, and so its cache, lies
 // under is `*` — `grep -r t u1` from `/home` reads every scope. Since #314 round 4 the recursive
-// flag is `*` by itself ([readsBeyondItsWords]), so the command here is NON-recursive and only
+// flag is `*` by itself ([commandFlags]), so the command here is NON-recursive and only
 // this rule decides; it stays the second fence for a host `grep` whose modes the grammar does not
 // know.
 func TestF2WorkdirMustNotBeAnAncestor(t *testing.T) {
@@ -400,9 +396,14 @@ func TestF2OnlyABashDescriptionIsFreeText(t *testing.T) {
 			"command": "cat ~/.cache/subsystem-store/alder-f3/x.md", "comment": "$X > y"}, []string{Star}},
 		{"control: a bash description is free", "bash", map[string]any{
 			"command": "cat ~/.cache/subsystem-store/alder-f4/x.md", "description": `see "$X" > y`}, []string{"alder-f4"}},
-		{"control: a description still names a read", "bash", map[string]any{
+		// A description is skipped, so a cache path there is not an accepted one: `*` (main's rule).
+		{"a description naming a read is `*`", "bash", map[string]any{
 			"command": "wc -l ~/.cache/subsystem-store/alder-f5/x.md", "description": "~/.cache/subsystem-store/birch-f5/y.md"},
-			[]string{"alder-f5", "birch-f5"}},
+			[]string{Star}},
+		// Another tool's description is a shell line: a metacharacter there poisons the read in
+		// another key, which a mention-count alone would not.
+		{"another tool's description beside a read", "Task", map[string]any{
+			"prompt": "cat ~/.cache/subsystem-store/alder-f6/x.md", "description": "$X > y"}, []string{Star}},
 	})
 }
 
