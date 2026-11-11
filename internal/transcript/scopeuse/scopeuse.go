@@ -54,7 +54,9 @@
 //     that is NOT a cache path — a namespace (`-n subsystem-store`), a repo path
 //     (`apps/subsystem-store/…`), the config dir (`~/.config/subsystem-store/`), a file name
 //     (`check-subsystem-store.sh`), the `.lock` sibling — adds nothing ([eachCacheRead] has the
-//     exact rule).
+//     exact rule). And an input whose shell line changes directory to anywhere this cannot show
+//     is outside the cache (`cd subsystem-store`, `cd ~`, `cd "$D"`) adds `*` whether or not it
+//     names a read ([movesIntoUnseen]): the next call's relative words resolve there.
 //
 // ⚠ WHAT IT CANNOT SEE (threat T3): a session mixing a ledger-writing client with one that writes
 // nothing (non-empty ledger, so F1 is silent); a file read of a store copy whose path lacks
@@ -68,23 +70,33 @@
 // .cache` is `*` (it added only `<scope>` at #314 round 3). What a named read can still sit beside
 // unseen is a RELATIVE, NON-RECURSIVE FILE word (`cat ~/.cache/subsystem-store/<scope>/a.md x.md`):
 // it reads one file of the working directory, which the input does not fix — harmless unless that
-// directory is inside the cache. In Claude Code it is: Bash's working directory persists between
-// calls, and an EARLIER call that moved it there is `*` only when its text names a cache path
-// (`cd ~/.cache/subsystem-store/<scope>`, `cd ~/.cache/subsystem-store`); one spelled through bare
-// relative words (`cd ~/.cache`, then `cd subsystem-store`, then `cd <scope>`) names none, adds
-// nothing, and the later `cat <named path> x.md` adds only the named scope. In opencode a bash
-// call's `workdir` is part of its input, which [safeDir] checks; with none it runs in "the current
-// working directory" (the tool's own schema text, opencode 2.0.32), which no input names — so the
-// same gap holds there for that default directory, and whether an earlier call's `cd` can move
-// it is NOT established here (opencode 2.0 keeps shell ids; not read from its source). The
-// same earlier-call gap covers a read through a variable set earlier, and a later `ls <scope>` or
+// directory is inside the cache. In Claude Code it can be: Bash's working directory persists
+// between calls, and an earlier call can step there through bare relative words that name no cache
+// PATH (`cd ~/.cache`, then `cd subsystem-store`, then `cd <scope>`). So ANY input, named read or
+// not, whose shell line runs `cd`/`pushd` (also as `builtin cd`, `command pushd`, after `&&`, `;`,
+// `|` or a newline, inside `$(…)`) with an argument naming `cache`/`subsystem-store` (any case,
+// quotes removed), or one that is not a plain relative path, a clean absolute path or a clean
+// `~/…` path outside every home ancestor — `$D`, `"$D"`, `-`, `~`, `..`, nothing, a glob, `$(…)`,
+// a flag — is `*` ([movesIntoUnseen]); `cd /work/repo`, `cd src`, `pushd /tmp/build` add nothing.
+// What that still cannot see: a directory change it does not parse as one — through `eval`,
+// `bash -c '…'`, `sudo`/`env`/`command -p` before `cd`, a function or alias wrapping it, `CDPATH`
+// (a plain `cd <scope>` resolved against a `CDPATH` entry inside the cache), or a `popd` back to
+// a directory pushed by a spelling it missed; a plain path that IS the cache through a symlink
+// outside it (`cd /work/link` where `link` points into the cache); and a session that STARTS with
+// its working directory inside the cache. In opencode a bash call's `workdir` is part of its
+// input, which [safeDir] checks; with none it runs in "the current working directory" (the tool's
+// own schema text, opencode 2.0.32), which no input names — the same `cd` rule applies to its
+// commands, but whether an earlier call's `cd` can move that default directory at all is NOT
+// established here (opencode 2.0 keeps shell ids; not read from its source). The same
+// earlier-call gap covers a read through a variable set earlier, and a later `ls <scope>` or
 // `grep x <file>` (one directory's names, one file); a call that names a cache path while setting
-// a variable or changing directory (`S=~/.cache/subsystem-store/notes1`, `cd …/notes1`) is itself
-// `*`, since no assignment or `cd` passes the grammar. Also unseen: a function or alias under an
+// a variable (`S=~/.cache/subsystem-store/notes1`) is itself `*`, since no assignment passes the
+// grammar. Also unseen: a function or alias under an
 // allowed command's name, defined in an earlier call or by the HOST (Claude Code's own `grep` is
 // one, its embedded ugrep: the flags [readsBeyondItsWords] knows are GNU's plus ugrep's `-NUM` and
 // `--depth`, and a host wrapper with any other mode is unseen); a bare relative `subsystem-store` with no `/` after
-// it (indistinguishable from the namespace); a symlink into the cache; a read that bypasses the
+// it outside a `cd`/`pushd` argument (indistinguishable from the namespace); a symlink into the
+// cache; a read that bypasses the
 // client entirely; a memo shown by any path that does not print the renderer's block (a memo's
 // text quoted without its fence, or the browser tab).
 package scopeuse
@@ -604,13 +616,18 @@ func CacheScopes(ss ...string) []string {
 // [provable] — an allowlist grammar under which the input's text can read nothing under the cache
 // but files of those scopes. Any input naming a read that is not provable adds `*` instead. And
 // any input with a `--cache` word (the client's explicit cache root, `internal/client`) adds `*`
-// whether or not it names `subsystem-store`: that root can be anywhere ([cacheFlag]).
+// whether or not it names `subsystem-store`: that root can be anywhere ([cacheFlag]). So does any
+// input moving the working directory somewhere unseen ([movesIntoUnseen]), named read or not.
 //
 // LINEAR: every occurrence looks back over its parent component only (disjoint per occurrence)
 // and forward over its scope component; [provable] is one pass over each string, and runs only for
-// an input that names a read.
+// an input that names a read; [movesIntoUnseen] is one pass over each shell line.
 func eachCacheRead(ss, lowers []string, roles []role, emit func(string)) {
 	var named []string
+	starred := false // a `*` already emitted, so the directory rule below does not repeat it
+	emit = func(out func(string)) func(string) {
+		return func(v string) { starred = starred || v == Star; out(v) }
+	}(emit)
 	for k, s := range ss {
 		lower := lowers[k]
 		if !strings.Contains(lower, CacheRootName) {
@@ -678,6 +695,12 @@ func eachCacheRead(ss, lowers []string, roles []role, emit func(string)) {
 	}
 	if cacheFlag(lowers) {
 		emit(Star)
+		return
+	}
+	if movesIntoUnseen(ss, roles) {
+		if !starred {
+			emit(Star)
+		}
 		return
 	}
 	if len(named) == 0 {
@@ -1016,6 +1039,154 @@ func cacheFlag(lowers []string) bool {
 		}
 	}
 	return false
+}
+
+// movesIntoUnseen reports whether any shell-line string of one input ([role]; a bash
+// `description` is not one) runs `cd` or `pushd` with an argument this cannot show stays out of
+// the cache ([cdArgUnseen]). In Claude Code the Bash working directory PERSISTS between calls, so
+// `cd ~/.cache`, then `cd subsystem-store`, then `cd alder`, then `cat x.md` reads a scope no call
+// names — and each `cd` alone names no cache path. So F2 asks of every input, named read or not.
+func movesIntoUnseen(ss []string, roles []role) bool {
+	for k, s := range ss {
+		if (roles == nil || roles[k] == shellRole) && changesDirUnseen(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// cdPrefixes are command-position words after which the next word is still a command's first:
+// `builtin cd`, `command cd`, `{ cd`, `if cd`, `! cd` …
+var cdPrefixes = map[string]bool{
+	"builtin": true, "command": true, "{": true, "!": true, "if": true, "then": true, "else": true,
+	"elif": true, "do": true, "while": true, "until": true, "time": true,
+}
+
+// changesDirUnseen is [movesIntoUnseen] for one shell line, one pass. A rough lexer: words are
+// split by unquoted spaces and tabs; an unquoted newline, `;`, `|`, `&`, `(`, `)` or backtick
+// ends a command (so `$(cd …)` and `(cd …)` are read too — a subshell's `cd` does not persist,
+// which over-poisons); `'…'`, `"…"` and `\x` are unquoted. A command's first word, past any
+// [cdPrefixes] and `NAME=value` assignments, that is `cd` or `pushd` (by its unquoted text) has
+// its first argument checked by [cdArgUnseen]; one with no argument is `$HOME`, so unseen.
+func changesDirUnseen(s string) bool {
+	const (
+		atCmd = iota // the next word is a command's first
+		atArg        // the next word is a `cd`/`pushd` argument
+		inCmd        // the rest of a command: skipped
+	)
+	state := atCmd
+	var val []byte
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\r':
+			i++
+			continue
+		case strings.IndexByte("\n;|&()`", c) >= 0:
+			if state == atArg {
+				return true // `cd` with no argument: the home directory
+			}
+			state = atCmd
+			i++
+			continue
+		}
+		// One word, unquoted into val.
+		start := i
+		val = val[:0]
+		for i < len(s) {
+			c := s[i]
+			if c == ' ' || c == '\t' || c == '\r' || strings.IndexByte("\n;|&()`", c) >= 0 {
+				break
+			}
+			switch c {
+			case '\'':
+				j := strings.IndexByte(s[i+1:], '\'')
+				if j < 0 {
+					j = len(s) - i - 1
+				}
+				val = append(val, s[i+1:i+1+j]...)
+				i = min(i+j+2, len(s))
+			case '"':
+				i++
+				for i < len(s) && s[i] != '"' {
+					if s[i] == '\\' && i+1 < len(s) {
+						i++
+					}
+					val = append(val, s[i])
+					i++
+				}
+				i++
+			case '\\':
+				if i+1 < len(s) {
+					i++
+				}
+				val = append(val, s[i])
+				i++
+			default:
+				val = append(val, c)
+				i++
+			}
+		}
+		i = min(i, len(s))
+		switch state {
+		case atCmd:
+			w := string(val)
+			switch {
+			case cdPrefixes[w] || isAssignment(w):
+			case w == "cd" || w == "pushd":
+				state = atArg
+			default:
+				state = inCmd
+			}
+		case atArg:
+			if cdArgUnseen(string(val), strings.HasPrefix(s[start:], "~/")) {
+				return true
+			}
+			state = inCmd
+		}
+	}
+	return state == atArg
+}
+
+// isAssignment reports whether w is a `NAME=value` prefix word.
+func isAssignment(w string) bool {
+	name, _, ok := strings.Cut(w, "=")
+	if !ok || name == "" || name[0] >= '0' && name[0] <= '9' {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; !isAlnum(c) && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// cdArgUnseen reports whether v, a `cd`/`pushd` argument once unquoted, may move the working
+// directory into the cache, under it, or to an ancestor of it: it names `cache` or [CacheRootName]
+// (any case); or it is not ONE of a clean absolute path that [safeDir] admits, an unquoted `~/…`
+// path that would be one under a home directory, or a relative path of [plainSegment]s not
+// starting `-` or `+` — so `$D`, `-`, `~`, `..`, a glob, `$(…)`, a flag (`-P`), `+1` are unseen.
+// One trailing `/` is allowed. (`..` is unseen on purpose: from a repo under the home directory
+// it is an ancestor of the cache, as `cd ~` is.)
+func cdArgUnseen(v string, tilde bool) bool {
+	lv := asciiLower(v)
+	if strings.Contains(lv, "cache") || strings.Contains(lv, CacheRootName) {
+		return true
+	}
+	if v == "" || v[0] == '-' || v[0] == '+' {
+		return true // `cd -` (the previous directory), a flag, a `pushd +N` stack entry
+	}
+	if len(v) > 1 && v[len(v)-1] == '/' {
+		v = v[:len(v)-1]
+	}
+	switch {
+	case tilde:
+		return len(v) < 3 || !safeDir("/home/u/"+v[2:])
+	case strings.HasPrefix(v, "/"):
+		return !safeDir(v)
+	}
+	return !eachSegment(v, plainSegment)
 }
 
 type rootKind int

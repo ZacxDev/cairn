@@ -5459,6 +5459,19 @@ MUTANTS: tuple[Mutant, ...] = (
         why="F2 is about paths under `subsystem-store`, and a flag is not a path — but `--cache PATH` "
         "makes any directory the store, so the read it starts is attributable to no scope.",
     ),
+    # #314 round 5: a directory change in an EARLIER call (fail-open vs main's bare-substring rule).
+    Mutant(
+        name="scopeuse-f2-directory-change-ignored",
+        pkgs=PKGS + ("./internal/transcript/scopeuse/",),
+        path="internal/transcript/scopeuse/scopeuse.go",
+        old="\tif movesIntoUnseen(ss, roles) {",
+        new="\tif false && movesIntoUnseen(ss, roles) {",
+        killer="TestF2DirectoryChangeAddsStar",
+        extra_killers=("TestF2DirectoryChangeChainAddsStar", "TestF2DirectoryChangeStrings"),
+        why="a `cd` reads nothing, and the grammar already rejects one beside a named read — but Claude "
+        "Code's Bash cwd persists, so `cd ~/.cache`, `cd subsystem-store`, `cd alder` and then "
+        "`cat x.md` reads a scope no call names as a cache path.",
+    ),
     # S2 review round 1 (F3): four guards that each SURVIVED a mutation with no test reaching them.
     Mutant(
         name="scopeuse-restore-ignored",

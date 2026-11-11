@@ -169,6 +169,11 @@ func TestCacheScopesIsLinear(t *testing.T) {
 		{"named reads as words", "cat ", "~/.cache/" + CacheRootName + "/aa/x.md ", []string{"aa"}},
 		{"quoted words", "cat ~/.cache/" + CacheRootName + "/aa/x.md ", "'a|b' ", []string{"aa"}},
 		{"commands", "cat ~/.cache/" + CacheRootName + "/aa/x.md", " | wc", []string{"aa"}},
+		// #314 round 5: the directory-change lexer ([changesDirUnseen]) runs over EVERY input:
+		// plain `cd`s, a run of prefix words, and quoted arguments, each to the end of the input.
+		{"plain cds", "", "cd src && ", nil},
+		{"prefix words", "", "builtin command ", nil},
+		{"quoted cd arguments", "", `pushd "a"'b' ; `, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			best := func(size int) time.Duration {
