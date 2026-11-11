@@ -916,6 +916,15 @@ script that prints only counts.
        `~/.config/subsystem-store/` over-matches too; that fails safe. ⚠ F2 does NOT see a local
        store copy at a path without that name — a `--cache <dir>` root (`internal/client/cli.go:339`)
        or a `CAIRN_MIRROR_ROOT` mirror (`cli.go:834`) read by file tools; T3 names it.
+       *2026-11-11, superseding the bare-substring rule above and O18's "F2 is not narrowed": the
+       operator chose to narrow F2 to the cache-root PATH (the 2026-11-11 census: all 13 derived-`*`
+       sessions in the fresh cohort came from F2, mostly named reads of one cache file). A
+       `…cache…/subsystem-store/<valid scope>/…` path now adds that scope; a path it cannot
+       attribute to one default-instance scope (bare root, glob or `$VAR` component, another
+       instance's `subsystem-store-<alias>`, a relative or unreadably-spelled root, a `..` component,
+       a `cd` into the cache) still adds `*`; a non-cache mention (a namespace, a repo path,
+       `~/.config/subsystem-store/`) adds nothing. The exact rule is
+       `internal/transcript/scopeuse`'s `eachCacheRead`.*
      A call is never matched to "its" ledger record: the rules ask only "is the ledger empty" and
      "does any input name the cache", which is what keeps the shell grammar out of the design.
    - *DELETED in revision 13 (O11), with the ledger in its place:* the shell-command-line parser

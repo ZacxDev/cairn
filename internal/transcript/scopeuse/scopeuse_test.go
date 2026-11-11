@@ -193,13 +193,14 @@ func TestF1EmptyLedgerAddsStar(t *testing.T) {
 	}
 }
 
-// TestF2CacheReadAddsStar: a file-tool read of the client cache root (mutant
-// scopeuse-cache-path-read-ignored).
-func TestF2CacheReadAddsStar(t *testing.T) {
+// TestF2CacheReadAddsItsScope: a file-tool read of one scope's file in the client cache root
+// (`/home/dev/.cache/subsystem-store/alpha-notes/…`) is a NAMED read of that scope (mutant
+// scopeuse-cache-path-read-ignored). It was `*` until F2 was narrowed to the cache-root path.
+func TestF2CacheReadAddsItsScope(t *testing.T) {
 	w := loadWorld(t)
 	r := derive(t, w, "cc-f2-cache-read", false)
-	if !r.F2 || !slices.Equal(r.V, []string{"*"}) {
-		t.Fatalf("F2=%v V=%v, want F2 and [*]", r.F2, r.V)
+	if r.F2 || !slices.Equal(r.V, []string{"alpha-notes"}) {
+		t.Fatalf("F2=%v V=%v, want no F2 and [alpha-notes]", r.F2, r.V)
 	}
 }
 
