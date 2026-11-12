@@ -49,13 +49,13 @@ func TestTheTranscriptVerbAcceptsTimeoutAfterTheVerb(t *testing.T) {
 }
 
 // TestATranscriptReadIsBoundedByTheFloorOrALargerTimeout — the bound the verb hands the client: the
-// floor (120 s) when nothing larger was asked for, the asked value when it is larger, in either flag
+// floor (90 s) when nothing larger was asked for, the asked value when it is larger, in either flag
 // position; a non-positive value is refused with no request rather than raised to the floor. Every
 // asked value is distinct from the floor and from `DefaultTimeout`, so a literal hardcoded where the
 // bound is computed cannot pass.
 func TestATranscriptReadIsBoundedByTheFloorOrALargerTimeout(t *testing.T) {
-	if TranscriptTimeoutFloor != 120 {
-		t.Fatalf("TranscriptTimeoutFloor = %d, want 120", TranscriptTimeoutFloor)
+	if TranscriptTimeoutFloor != 90 {
+		t.Fatalf("TranscriptTimeoutFloor = %d, want 90", TranscriptTimeoutFloor)
 	}
 	stub, _ := transcriptHost(t)
 	skeleton := []string{"transcript", "skeleton", "--session", transcriptStubSession}
@@ -63,11 +63,11 @@ func TestATranscriptReadIsBoundedByTheFloorOrALargerTimeout(t *testing.T) {
 		argv []string
 		want int
 	}{
-		"no --timeout (the store default, 20)": {skeleton, 120},
-		"a smaller --timeout after the verb":   {append(append([]string{}, skeleton...), "--timeout", "7"), 120},
+		"no --timeout (the store default, 20)": {skeleton, 90},
+		"a smaller --timeout after the verb":   {append(append([]string{}, skeleton...), "--timeout", "7"), 90},
 		"a larger --timeout after the verb":    {append(append([]string{}, skeleton...), "--timeout", "377"), 377},
 		"a larger global --timeout":            {append([]string{"--timeout", "401"}, skeleton...), 401},
-		"a smaller global --timeout":           {append([]string{"--timeout", "3"}, skeleton...), 120},
+		"a smaller global --timeout":           {append([]string{"--timeout", "3"}, skeleton...), 90},
 	} {
 		got := recordTranscriptTimeouts(t)
 		code, _, stderr := runCLI(t, tc.argv...)

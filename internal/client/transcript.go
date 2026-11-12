@@ -90,9 +90,12 @@ var transcriptCommonFlags = []string{"--session", "--scope", "--repo", "--timeou
 // stored stream once; for a very large session (hundreds of streams, tens of thousands of tool calls)
 // the listener took about 21 s to answer, all but half a second of it before the first byte — so
 // every credential failed at the 20 s default unless the caller knew to put `--timeout` BEFORE the
-// verb (after it, it was refused as an unknown flag). 120 s is that read with more than 5x headroom. A FLOOR, not a default: an explicit larger `--timeout` (either position) wins, and a
-// smaller one is raised to it, as `audit-refs` does.
-const TranscriptTimeoutFloor = 120
+// verb (after it, it was refused as an unknown flag). 90 s is that read with about 4x headroom, and
+// it stays UNDER a coding agent's usual 2-minute shell-command bound, so an unreachable listener
+// ends in this client's own diagnosis rather than in the harness killing the call. A FLOOR, not a
+// default: an explicit larger `--timeout` wins (when both positions are given, the LAST one is the
+// value), and a smaller one is raised to it, as `audit-refs` does.
+const TranscriptTimeoutFloor = 90
 
 // transcriptTimeout is the bound a transcript read is actually made with.
 func transcriptTimeout(seconds int) int { return max(seconds, TranscriptTimeoutFloor) }
