@@ -42,6 +42,13 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
 - **One predicate.** `Visible(viewer, meta, V)`: the OWNER (an un-narrowed credential whose
   `(Kind, ID)` uploaded the session), or a viewer who reads EVERY scope in a non-empty `V`. `*`, a
   name the viewer's authority does not hold under any verb, and an empty `V` are owner-only.
+- **Single-user instances (`cairn-ui -transcript-single-user`, off by default).** The store's
+  `Policy{SingleUser: true}` widens the owner arm of the CONTENT predicate (`Policy.Visible`, which
+  `Store.View` and `Store.ViewsWithOutputs` ask) to ANY credential whose `(Kind, ID)` uploaded the
+  session, narrowed or not — so the owner's agents read owner-only sessions too. Another principal's
+  narrowed credential, a matching display name and a matching id under another kind are unchanged.
+  Ownership (`Mine`, `OwnedBy`, `Delete`) still requires an un-narrowed owner. `V` is recorded
+  exactly as before, so turning the flag off restores the multi-user answer with no migration.
 - **`V` only grows.** `W_trailer` (every scope in the STORE where a trailer names the root or one of
   its child sessions — never the viewer's readable set, which would make "every" vacuous), plus what
   the pod derived and what the agent declared. A scope with an entry the walk cannot scan counts as
@@ -54,7 +61,7 @@ collapsed reading model the browser surface renders. `claudedocs/plan-cairn-plug
   the `toolUseResult` copy is counted, not shown. An opencode stream is read at each unit's LAST
   stored version.
 - **"My sessions" lists ownership, never visibility (S7).** `Store.Mine` keeps a stored session iff
-  the owner arm holds — the `(Kind, ID)`-and-un-narrowed check `Visible` uses — and reads no `V`, so a
+  the ownership arm holds — `(Kind, ID)` and un-narrowed, on every instance — and reads no `V`, so a
   reader who can open somebody else's session never sees it listed as theirs, and a narrowed
   credential lists nothing. It returns metadata only; content still leaves through `View`.
 - **Read-time bounds only:** `TurnsPerPage` (50), `ChildItemCap` (200), `CollapsedBudget` (2 MiB of

@@ -5529,8 +5529,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-section-without-predicate",
         path="internal/transcript/visible.go",
-        old="\tif !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
-        new="\tif false && !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
+        old="\tif !s.policy.Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
+        new="\tif false && !s.policy.Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{",
         killer="TestTranscriptVisibilityIsTheOwnerOrAReaderOfEveryScope",
         extra_killers=(
             "TestTheTranscriptSectionIsShownToExactlyThoseThePredicateAdmits",
@@ -5589,12 +5589,35 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-narrowed-owner-arm",
         path="internal/transcript/visible.go",
-        old="return !v.Auth.Narrowed() && meta.Owner ==",
-        new="return meta.Owner ==",
+        old="return !v.Auth.Narrowed() && v.isUploader(meta)",
+        new="return v.isUploader(meta)",
         killer="TestVisibleArms",
         why="a narrowed credential is still the owner's credential, so letting it see the owner's "
         "sessions reads as obvious — and it hands an agent credential cut down to one scope every "
         "owner-only session, which is what the narrowing withheld.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-single-user-setting-ignored",
+        path="internal/transcript/visible.go",
+        old="\tif p.SingleUser {\n\t\treturn v.isUploader(meta)\n\t}\n\treturn v.owns(meta)",
+        new="\treturn v.isUploader(meta)",
+        killer="TestSingleUserLetsTheOwnersNarrowedCredentialsReadEveryOwnedSession",
+        extra_killers=("TestSingleUserPolicyOnLiteralSets", "TestVisibleArms"),
+        why="the single-user relaxation reads as the obvious rule once it exists, so dropping the "
+        "check that it is switched on looks like a simplification — and every MULTI-user instance "
+        "then hands each owner's agent credentials every owner-only session.",
+        pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
+    ),
+    Mutant(
+        name="transcript-single-user-widens-delete",
+        path="internal/transcript/plugin.go",
+        old="\treturn s.archive.Delete(root, archive.ReasonOwnerDelete, viewer.owns)",
+        new="\treturn s.archive.Delete(root, archive.ReasonOwnerDelete, func(m *Meta) bool { return s.policy.readsOwn(viewer, m) })",
+        killer="TestSingleUserLeavesOwnershipStrict",
+        why="on a single-user instance the owner's agents may read every owned session, so letting them "
+        "delete one reads as the same rule — and a narrowed credential then destroys transcripts its "
+        "narrowing was never meant to reach.",
         pkgs=PKGS + ("./internal/transcript/", "./internal/transcript/archive/"),
     ),
     Mutant(
@@ -5990,7 +6013,7 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="plugins-output-rendered-without-predicate",
         path="internal/transcript/plugin.go",
-        old="\t\tcase viewer.owns(meta):\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
+        old="\t\tcase s.policy.readsOwn(viewer, meta):\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
         new="\t\tcase true:\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}",
         killer="TestAnOutputIsShownToExactlyTheViewersOfItsTranscript",
         why="a summary is a few sentences ABOUT a session, not the session's content, so showing it on "
@@ -6259,8 +6282,8 @@ MUTANTS: tuple[Mutant, ...] = (
     Mutant(
         name="transcript-read-api-without-predicate",
         path="internal/transcript/visible.go",
-        old="\tif viewer.owns(meta) {\n\t\treturn true\n\t}",
-        new="\tif true || viewer.owns(meta) {\n\t\treturn true\n\t}",
+        old="\tif p.readsOwn(viewer, meta) {\n\t\treturn true\n\t}",
+        new="\tif true || p.readsOwn(viewer, meta) {\n\t\treturn true\n\t}",
         killer="TestTheAgentReadRoutesAskThePredicate",
         why="the read API is for the owner's own agents, so 'an authenticated caller is reading its own "
         "sessions' reads as the rule — and every credential then reads every stored transcript, a stranger's "

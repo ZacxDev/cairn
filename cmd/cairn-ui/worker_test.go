@@ -86,6 +86,7 @@ func TestTheWorkerFlagsAreAllOrNoneAndNeverBlank(t *testing.T) {
 		{"no directory", with(func(s *workerSettings) { s.dir = "" }), "-transcript-dir missing"},
 		{"whitespace tokens", with(func(s *workerSettings) { s.tokens = "  " }), "-worker-tokens is set to a value that reduces to nothing"},
 		{"arming with no listener", workerSettings{armed: true}, "would arm nothing"},
+		{"single-user with no listener", workerSettings{singleUser: true}, "-transcript-single-user is set but there is no worker listener"},
 		{"a directory inside the store", with(func(s *workerSettings) { s.dir = inside }), "INSIDE the store root"},
 		{"an owner the authority does not hold", with(func(s *workerSettings) { s.owner = "user:usr_nobody" }), "does not hold"},
 		{"a retention of zero", with(func(s *workerSettings) { s.retention = "0s" }), "not a positive duration"},
@@ -146,6 +147,7 @@ func TestTheBinaryRefusesEachWorkerMisconfiguration(t *testing.T) {
 	}{
 		{"address alone", []string{"-worker-addr", "127.0.0.1:0"}, "half-configuration"},
 		{"arming with no listener", []string{"-arm-transcript-capture"}, "would arm nothing"},
+		{"single-user with no listener", []string{"-transcript-single-user"}, "-transcript-single-user is set but there is no worker listener"},
 		{"a reachable worker bind with no allowlist", append(workerArgs(t, tokens), "-worker-addr", "0.0.0.0:0"),
 			"refusing to serve the worker listener"},
 		{"a token file that does not exist", append(workerArgs(t, tokens), "-worker-tokens", tokens+".typo"), "cannot be read"},

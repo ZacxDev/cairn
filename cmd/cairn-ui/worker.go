@@ -18,6 +18,7 @@ import (
 	"github.com/ZacxDev/cairn/internal/identity"
 	"github.com/ZacxDev/cairn/internal/plugins"
 	"github.com/ZacxDev/cairn/internal/redact"
+	"github.com/ZacxDev/cairn/internal/transcript"
 	"github.com/ZacxDev/cairn/internal/transcript/archive"
 	"github.com/ZacxDev/cairn/internal/worker"
 )
@@ -34,6 +35,7 @@ const (
 	flagTranscriptRetention = "transcript-retention"
 	flagTranscriptQuota     = "transcript-quota"
 	flagArmCapture          = "arm-transcript-capture"
+	flagSingleUser          = "transcript-single-user"
 	flagIssueWorker         = "issue-worker-token"
 	flagWorkerHost          = "worker-host"
 )
@@ -43,7 +45,11 @@ type workerSettings struct {
 	addr, tokens, owner   string
 	dir, retention, quota string
 	armed                 bool
-	issue, host           string
+	// singleUser is `-transcript-single-user`: the transcript READ policy
+	// ([transcript.Policy.SingleUser]), which lets the capture owner's narrowed credentials read
+	// every session the owner uploaded. It changes no ownership surface.
+	singleUser  bool
+	issue, host string
 	// plugin is the plugin a minted `plugin` token is bound to; registry is `-plugin-registry`, which
 	// a plugin mint reads to refuse a name nobody registered.
 	plugin, registry string
@@ -69,6 +75,7 @@ type workerPlan struct {
 // arm capture: with it unset every upload answers 503 (O16 — the arming gate fails today and the
 // read ledger does not exist). Setting it without the listener refuses, because an arming line
 // that arms nothing would read, to its author, as a deployment that captures.
+// `-transcript-single-user` is separate for the same reason and refuses without the listener too.
 func workerListener(s workerSettings, m control.Model, storeRoot string) (workerPlan, bool, error) {
 	given := map[string]string{flagWorkerAddr: s.addr, flagWorkerTokens: s.tokens, flagWorkerOwner: s.owner,
 		flagTranscriptDir: s.dir, flagTranscriptRetention: s.retention, flagTranscriptQuota: s.quota}
@@ -104,6 +111,10 @@ func workerListener(s workerSettings, m control.Model, storeRoot string) (worker
 		if s.armed {
 			return workerPlan{}, false, fmt.Errorf("-%s is set but there is no worker listener (no -%s), so it "+
 				"would arm nothing. Refusing to start", flagArmCapture, flagWorkerAddr)
+		}
+		if s.singleUser {
+			return workerPlan{}, false, fmt.Errorf("-%s is set but there is no worker listener (no -%s), so there "+
+				"is no transcript store for it to apply to. Refusing to start", flagSingleUser, flagWorkerAddr)
 		}
 		return workerPlan{}, false, nil
 	}
@@ -275,6 +286,16 @@ const armedWarning = "cairn-ui: WARNING transcript capture is ARMED (-" + flagAr
 	"host's client predates the ledger, or the read went around the client), or names the cache directory, or " +
 	"carries a read header naming no scope, is visible to its OWNER only — so keep every capturing host's client " +
 	"current. Arming is your assertion that you accept both"
+
+// transcriptReadSide is the transcript read side over an opened archive, under the instance's read
+// policy, and the clause the startup line appends for it ("" for the multi-user default).
+func transcriptReadSide(a *archive.Archive, storeRoot string, singleUser bool) (*transcript.Store, string) {
+	s := transcript.NewStore(a, storeRoot).WithPolicy(transcript.Policy{SingleUser: singleUser})
+	if !singleUser {
+		return s, ""
+	}
+	return s, ", transcript reads SINGLE-USER (-" + flagSingleUser + ": the owner's narrowed credentials read every owned session)"
+}
 
 // workerMode is the startup line's clause about the third listener and capture.
 func workerMode(addr string, owner worker.Owner, rows int, dir string, armed bool) string {

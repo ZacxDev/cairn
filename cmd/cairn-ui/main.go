@@ -307,6 +307,11 @@ func main() {
 			"answers 503 and nothing is stored. Set it only once the plan's arming preconditions hold (S11's read "+
 			"ledger; S3b's agent upload and e2e gate have landed; "+
 			"O15's held-back gate is WAIVED by operator decision O17, not passed)")
+	singleUser := flag.Bool(flagSingleUser, false,
+		"SINGLE-USER transcript reads: the -"+flagWorkerOwner+"'s NARROWED credentials (its agents) read every "+
+			"session it uploaded, including owner-only ones. Unset — the default — a narrowed credential reads "+
+			"only sessions whose every scope it was narrowed to. Listing, plugin opt-out and deletion are "+
+			"unchanged either way. Set it only on an instance with exactly one user. Needs the worker listener")
 	issueWorker := flag.String(flagIssueWorker, "",
 		"capture: mint ONE worker token for -"+flagWorkerOwner+" on -"+flagWorkerHost+
 			", append its digest to -"+flagWorkerTokens+", print the token once on stdout, and exit")
@@ -512,7 +517,7 @@ func main() {
 	// owner must be a principal the authority holds, and the mint mode exits here.
 	workerFlags := workerSettings{addr: *workerAddr, tokens: *workerTokens, owner: *workerOwner,
 		dir: *transcriptDir, retention: *transcriptRetention, quota: *transcriptQuota, armed: *armCapture,
-		issue: *issueWorker, host: *workerHost, plugin: *workerPlugin, registry: *pluginRegistry}
+		singleUser: *singleUser, issue: *issueWorker, host: *workerHost, plugin: *workerPlugin, registry: *pluginRegistry}
 	workerConf, workerOn, err := workerListener(workerFlags, authority.Model(), *store)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cairn-ui: "+err.Error())
@@ -853,9 +858,16 @@ func main() {
 	// SAME `*store` the browse pages read, because the write half of a session's visibility set is a
 	// walk of that store's trailers. Reading does NOT depend on `-arm-transcript-capture`: disarming
 	// stops uploads, it does not hide what is stored.
+	//
+	// 🔴 ITS READ POLICY IS `-transcript-single-user` (off by default, multi-user): with it, the owner's
+	// narrowed credentials read every session the owner uploaded, on BOTH listeners — both read
+	// through this one Store. Listing, plugin opt-out and deletion ask the ownership arm and do not
+	// change. (The plugin service's Store above asks no viewer predicate, so the policy is moot there.)
 	var transcriptReads *transcript.Store
 	if transcripts != nil {
-		transcriptReads = transcript.NewStore(transcripts, *store)
+		var clause string
+		transcriptReads, clause = transcriptReadSide(transcripts, *store, workerFlags.singleUser)
+		workerModeLine += clause
 	}
 
 	clientAPIModeLine := "client API off (no -" + flagClientAPIAddr + ")"

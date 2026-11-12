@@ -31,7 +31,8 @@ import (
 //
 // 🔴 IT IS SHOWN TO EXACTLY THE PRINCIPALS WHO CAN SEE THE TRANSCRIPT IT WAS DERIVED FROM (clause k)
 // — and that is not re-derived here. An output is read only through a `transcript.View`, and a View
-// exists only where `transcript.Visible` said yes: the session page's comes from `Store.View` (the
+// exists only where the store's content predicate (`transcript.Policy.Visible`, under the instance's
+// read policy) said yes: the session page's comes from `Store.View` (the
 // ONE call that also decides the transcript section), a session ROW's from `Store.ViewsWithOutputs`.
 // So a viewer the predicate refuses gets, on the page and on every row, the bytes a session with no
 // output gets.
