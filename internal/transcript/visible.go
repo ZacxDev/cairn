@@ -62,8 +62,9 @@ func (v Viewer) isUploader(meta *archive.Meta) bool {
 // not the viewer, the session or its `V`. The zero value is the multi-user policy, and it is what
 // [Visible] and a [Store] built by [NewStore] use.
 type Policy struct {
-	// SingleUser is an instance with exactly one user (`cairn-ui -transcript-single-user`). There,
-	// the owner's NARROWED credentials — its agents — read every session the owner uploaded.
+	// SingleUser is `cairn-ui -transcript-single-user`: EVERY narrowed credential of a session's
+	// uploader reads that session, whatever its scope OR verb narrowing (a write-only token too).
+	// Other principals are unaffected; what it trusts is every token the owner has issued.
 	SingleUser bool
 }
 
@@ -76,8 +77,9 @@ type Policy struct {
 // intersected its scopes, so that arm is correct for it as written.
 //
 // 🔴 SINGLE-USER ONLY ([Policy.SingleUser]): ANY credential whose principal `(Kind, ID)` is the
-// uploader's, narrowed or not. On an instance nobody else uses, the narrowing withholds the owner's
-// own transcripts from the owner's own agents and protects nobody. Still `(Kind, ID)` and never
+// uploader's, narrowed or not — and IGNORING the credential's verb narrowing, so a write-only token
+// reads too (operator decision on #315: every credential the owner issued is trusted with every
+// transcript the owner uploaded). Still `(Kind, ID)` and never
 // `Display`: a narrowed credential of ANOTHER principal, or one whose display name matches, is not
 // admitted by this arm. `V` itself is untouched, so turning the setting off restores the
 // multi-user answer for every stored session with no migration.

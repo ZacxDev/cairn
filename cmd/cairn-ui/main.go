@@ -308,10 +308,13 @@ func main() {
 			"ledger; S3b's agent upload and e2e gate have landed; "+
 			"O15's held-back gate is WAIVED by operator decision O17, not passed)")
 	singleUser := flag.Bool(flagSingleUser, false,
-		"SINGLE-USER transcript reads: the -"+flagWorkerOwner+"'s NARROWED credentials (its agents) read every "+
-			"session it uploaded, including owner-only ones. Unset — the default — a narrowed credential reads "+
-			"only sessions whose every scope it was narrowed to. Listing, plugin opt-out and deletion are "+
-			"unchanged either way. Set it only on an instance with exactly one user. Needs the worker listener")
+		"SINGLE-USER transcript reads: EVERY narrowed credential of a session's uploader reads that session, "+
+			"including owner-only ones, WHATEVER its scope or verb narrowing — a write-only bot token included. "+
+			"The uploader is the session's recorded owner, which is the -"+flagWorkerOwner+" at upload time. "+
+			"Unset — the default — a narrowed credential reads only sessions whose every scope it was narrowed "+
+			"to. Other principals are unaffected, and listing, plugin opt-out and deletion are unchanged either "+
+			"way. Set it only where every narrowed credential the owner holds is trusted with every transcript. "+
+			"Needs the worker listener")
 	issueWorker := flag.String(flagIssueWorker, "",
 		"capture: mint ONE worker token for -"+flagWorkerOwner+" on -"+flagWorkerHost+
 			", append its digest to -"+flagWorkerTokens+", print the token once on stdout, and exit")
