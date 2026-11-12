@@ -16,12 +16,13 @@ import (
 // (`internal/worker`'s plugin routes, through `internal/plugins.Effective`) supplies as `on`. So
 // [Store.ForPlugin] is [Store.View] with the predicate REPLACED, never skipped: it hands out a [View]
 // only where `on` said yes, over the session's WHOLE visibility set — the store walk included — so a
-// toggle fold can never be asked over a set narrower than the one [Visible] is asked over.
+// toggle fold can never be asked over a set narrower than the one [Policy.Visible] is asked over.
 //
 // 🔴 AND THE VIEWER'S WAY OUT IS WHAT RENDERS A PLUGIN'S OUTPUT (S6, decision 11, clause k). An
 // output is a CLAIM derived from the transcript, so it is shown to exactly the principals the
 // transcript is: [View.Outputs] hangs off a [View], and the two constructors a viewer has —
-// [Store.View] and [Store.ViewsWithOutputs] — each end in [Visible].
+// [Store.View] and [Store.ViewsWithOutputs] — each end in [Policy.Visible], under the store's ONE
+// instance policy.
 
 // Meta is a stored session's `meta.json`, for callers that decide over it.
 type Meta = archive.Meta
@@ -165,8 +166,9 @@ func (s *Store) ForPlugins(roots []string, on func(meta *Meta, v []string) bool,
 //
 // 🔴 ONE STORE WALK AT MOST, AND THE SAME PREDICATE. Asked per row, [Store.View] walks the whole
 // store once per session a non-owner's stored half admits — one whole-store parse per row of a
-// page. Here the walk is [writtenIndex], once, and only when some candidate needs it (the owner's
-// never do; a viewer the stored half refuses never does). What decides is [Visible], over the same
+// page. Here the walk is [writtenIndex], once, and only when some candidate needs it (one the content
+// owner arm admits never does; a viewer the stored half refuses never does). What decides is
+// [Policy.Visible] under this store's policy — the one [Store.View] asks — over the same
 // set [Store.View] builds: the stored half, this walk's finds (folded into the grow-only
 // `meta.Written`) and this walk's unscanned scopes.
 //
@@ -187,7 +189,7 @@ func (s *Store) ViewsWithOutputs(viewer Viewer, roots []string) (map[string]*Vie
 			continue
 		}
 		switch {
-		case viewer.owns(meta):
+		case s.policy.readsOwn(viewer, meta):
 			out[root] = &View{Meta: meta, a: s.archive}
 		case viewer.readsEvery(VisibilitySet(meta, Written{})):
 			walk = append(walk, meta)
@@ -209,7 +211,7 @@ func (s *Store) ViewsWithOutputs(viewer Viewer, roots []string) (map[string]*Vie
 		if m == nil {
 			continue
 		}
-		if !Visible(viewer, m, VisibilitySet(m, Written{Scopes: found, Unscanned: unscanned})) {
+		if !s.policy.Visible(viewer, m, VisibilitySet(m, Written{Scopes: found, Unscanned: unscanned})) {
 			continue
 		}
 		out[m.Root] = &View{Meta: m, a: s.archive}
@@ -237,9 +239,10 @@ func foundIn(bySession map[string][]string, meta *Meta) []string {
 // journaled (who uploaded it, which root, `owner-delete`, when; no content). It reports whether
 // anything was deleted.
 //
-// 🔴 THE OWNER ARM AND NOTHING ELSE ([Viewer.owns]: `(Kind, ID)`, an UN-NARROWED credential). A
-// reader of every scope the session touched may SEE the transcript and may not delete it; a
-// narrowed credential of the owner may not either. False — and nothing deleted — is ONE answer for
+// 🔴 THE OWNERSHIP ARM AND NOTHING ELSE ([Viewer.owns]: `(Kind, ID)`, an UN-NARROWED credential),
+// on EVERY instance. A reader of every scope the session touched may SEE the transcript and may not
+// delete it; a narrowed credential of the owner may not either — not even on a single-user
+// instance, where [Policy.SingleUser] lets it READ the session. False — and nothing deleted — is ONE answer for
 // "not stored", "not yours" and "not a session id", so the row that calls this cannot be driven to
 // ask what exists.
 //
@@ -251,8 +254,9 @@ func (s *Store) Delete(viewer Viewer, root string) (bool, error) {
 	return s.archive.Delete(root, archive.ReasonOwnerDelete, viewer.owns)
 }
 
-// OwnedBy reports whether `viewer` holds the OWNER ARM of a stored session (decision 4: un-narrowed,
-// `(Kind, ID)` equal to the uploader's). It reads `meta.json` only — no content — and is false for a
+// OwnedBy reports whether `viewer` holds the OWNERSHIP ARM of a stored session (decision 4:
+// un-narrowed, `(Kind, ID)` equal to the uploader's) — [Viewer.owns], never the store's read
+// policy, so a single-user instance's narrowed owner credential is no owner here. It reads `meta.json` only — no content — and is false for a
 // root that is not stored. The session-level toggle (the owner's opt-out) is authorised by it.
 func (s *Store) OwnedBy(viewer Viewer, root string) (bool, error) {
 	if s == nil || s.archive == nil {

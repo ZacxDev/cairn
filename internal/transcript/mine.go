@@ -18,10 +18,11 @@ import (
 // reader's "My sessions" into a feed of everyone's transcripts over their readable scopes. The
 // mutant `my-sessions-lists-another-owner` is exactly that substitution.
 //
-// 🔴 THE OWNER ARM IS THE ONE [Visible] USES, SO IT IS `(Kind, ID)` AND AN UN-NARROWED CREDENTIAL. A
-// narrowed credential of the owner lists NOTHING: it is an agent credential cut down to some scopes,
-// and the owner-only sessions are exactly what the narrowing withheld (it still opens, through the
-// scope arm, a session whose every scope it was narrowed to).
+// 🔴 THE OWNERSHIP ARM: `(Kind, ID)` AND AN UN-NARROWED CREDENTIAL, ON EVERY INSTANCE. A narrowed
+// credential of the owner lists NOTHING: it is an agent credential cut down to some scopes. On a
+// multi-user instance it still opens, through the scope arm, a session whose every scope it was
+// narrowed to; on a single-user instance ([Policy.SingleUser]) it opens any session of the owner's
+// by id — the READ policy widens, this listing does not.
 //
 // ⚠ IT RETURNS METADATA ONLY — no record, no blob, no scope set. A listed session's content is read
 // through [Store.View] like any other, so this function adds no second way to a stored record.

@@ -14,11 +14,13 @@ import (
 // section, the raw-record view and the agent read API (S8, `agent.go`, on both listeners) ask it
 // today; plugin output rendering and edges are later slices and ask the SAME function — through
 // [Store.View], which is the only way this package hands out a stored session's CONTENT. "My
-// sessions" (S7, [Store.Mine]) asks only the owner arm, [Viewer.owns], and hands out metadata: it
-// lists ownership, never visibility.
+// sessions" (S7, [Store.Mine]) asks only the ownership arm, [Viewer.owns], and hands out metadata:
+// it lists ownership, never visibility.
 //
 // The rule (operator decisions O2, O8, O10): a session's content is visible to its OWNER, and to a
-// principal that can read EVERY scope the session wrote to or read from. Stricter than the session
+// principal that can read EVERY scope the session wrote to or read from. "Its owner" is the
+// un-narrowed uploader — and, on an instance configured single-user ([Policy.SingleUser]), any
+// credential of the uploader, its agents' narrowed ones included ([Policy.readsOwn]). Stricter than the session
 // PAGE, which is found by a UNION (a write in ANY readable scope): a viewer can see the page and not
 // the transcript, and then gets exactly what a session with no transcript gets.
 //
@@ -36,18 +38,58 @@ type Viewer struct {
 	Auth      control.Authorization
 }
 
-// owns is the OWNER ARM: the viewer's `(Kind, ID)` is the uploader's, and the credential is not
-// narrowed.
+// owns is the OWNERSHIP ARM: the viewer's `(Kind, ID)` is the uploader's, and the credential is
+// not narrowed. It is what every OWNERSHIP surface asks — [Store.Mine], [Store.OwnedBy] (the
+// session-level plugin opt-out) and [Store.Delete] — on every instance, single-user or not.
 //
 // 🔴 `(Kind, ID)` AND NEVER `Display`: a display name is mutable and is not unique, so a principal
 // renamed to another's id — or to another's name — must not become that owner.
 //
 // 🔴 AN UN-NARROWED CREDENTIAL ONLY. A narrowed credential of the owner is an agent credential cut
-// down to some scopes; handing it the owner arm would give it every owner-only session, which is
+// down to some scopes; it may not list, toggle or delete the owner's sessions. What it may READ is
+// [Policy.readsOwn]'s question, not this one.
+func (v Viewer) owns(meta *archive.Meta) bool {
+	return !v.Auth.Narrowed() && v.isUploader(meta)
+}
+
+// isUploader is `(Kind, ID)` equality with `meta.Owner` and nothing else — no narrowing check, no
+// display name. Both owner arms are built on it.
+func (v Viewer) isUploader(meta *archive.Meta) bool {
+	return meta.Owner == string(v.Principal.Kind)+":"+string(v.Principal.ID)
+}
+
+// Policy is the instance's transcript READ policy: the one input to the content predicate that is
+// not the viewer, the session or its `V`. The zero value is the multi-user policy, and it is what
+// [Visible] and a [Store] built by [NewStore] use.
+type Policy struct {
+	// SingleUser is `cairn-ui -transcript-single-user`: EVERY narrowed credential of a session's
+	// uploader reads that session, whatever its scope OR verb narrowing (a write-only token too).
+	// Other principals are unaffected; what it trusts is every token the owner has issued.
+	SingleUser bool
+}
+
+// readsOwn is the CONTENT owner arm: may this viewer read this session as its owner?
+//
+// 🔴 MULTI-USER (the default): exactly [Viewer.owns] — an UN-NARROWED credential of the uploader. A
+// narrowed credential of the owner is an agent credential cut down to some scopes; handing it the
+// owner arm would give it every owner-only session (an empty `V`, or one holding `*`), which is
 // exactly what the narrowing withheld. It still gets the scope arm, and `control.Narrow` already
 // intersected its scopes, so that arm is correct for it as written.
-func (v Viewer) owns(meta *archive.Meta) bool {
-	return !v.Auth.Narrowed() && meta.Owner == string(v.Principal.Kind)+":"+string(v.Principal.ID)
+//
+// 🔴 SINGLE-USER ONLY ([Policy.SingleUser]): ANY credential whose principal `(Kind, ID)` is the
+// uploader's, narrowed or not — and IGNORING the credential's verb narrowing, so a write-only token
+// reads too (operator decision on #315: every credential the owner issued is trusted with every
+// transcript the owner uploaded). Still `(Kind, ID)` and never
+// `Display`: a narrowed credential of ANOTHER principal, or one whose display name matches, is not
+// admitted by this arm. `V` itself is untouched, so turning the setting off restores the
+// multi-user answer for every stored session with no migration.
+//
+// It never decides ownership: listing, the plugin opt-out and deletion ask [Viewer.owns].
+func (p Policy) readsOwn(v Viewer, meta *archive.Meta) bool {
+	if p.SingleUser {
+		return v.isUploader(meta)
+	}
+	return v.owns(meta)
 }
 
 // reads is the scope arm's question about ONE name of `V`.
@@ -58,7 +100,9 @@ func (v Viewer) owns(meta *archive.Meta) bool {
 func (v Viewer) reads(scope string) bool {
 	// 🔴 `*` IS "UNKNOWN SCOPE", NOT "EVERY SCOPE". It is what a header naming no scope, an
 	// unparseable ledger line and both fallbacks contribute, and it means the session touched
-	// something nobody could identify — so nobody but the owner may read it.
+	// something nobody could identify — so only the content owner arm ([Policy.readsOwn]) admits
+	// it: the un-narrowed owner, and on a single-user instance also the owner's narrowed
+	// credentials. This arm never does, under either policy.
 	if scope == Star {
 		return false
 	}
@@ -72,26 +116,33 @@ func (v Viewer) reads(scope string) bool {
 	return v.Auth.VisibleScopes(control.VerbRead).Allows(scope)
 }
 
-// readsEvery is "every scope of the set", TRUE for the empty set — which is why [Visible] refuses
+// readsEvery is "every scope of the set", TRUE for the empty set — which is why [Policy.Visible] refuses
 // an empty `V` itself rather than leaving it to this.
 func (v Viewer) readsEvery(scopes []string) bool {
 	return !slices.ContainsFunc(scopes, func(scope string) bool { return !v.reads(scope) })
 }
 
-// Visible is decision 4's predicate: may this viewer see this stored session's content, given the
-// session's whole visibility set `V` ([VisibilitySet])?
+// Visible is decision 4's predicate under the MULTI-USER policy (the zero [Policy]): may this
+// viewer see this stored session's content, given the session's whole visibility set `V`
+// ([VisibilitySet])? A [Store] asks [Policy.Visible] with its own instance policy instead.
+func Visible(viewer Viewer, meta *archive.Meta, v []string) bool {
+	return Policy{}.Visible(viewer, meta, v)
+}
+
+// Visible is decision 4's predicate under policy `p`.
 //
-// True iff EITHER the owner arm ([Viewer.owns]) OR the scope arm: `V` is non-empty and the viewer
-// reads every name in it.
+// True iff EITHER the content owner arm ([Policy.readsOwn]: the un-narrowed uploader; on a
+// single-user instance, any credential of the uploader) OR the scope arm: `V` is non-empty and the
+// viewer reads every name in it.
 //
 // 🔴 AN EMPTY `V` IS OWNER-ONLY (O10, clause g). "Every scope of the empty set" is vacuously true,
 // and a session with no recorded write or read is precisely one nothing vouches for: it reaches the
 // store with no scope whose readers could have been asked.
-func Visible(viewer Viewer, meta *archive.Meta, v []string) bool {
+func (p Policy) Visible(viewer Viewer, meta *archive.Meta, v []string) bool {
 	if meta == nil {
 		return false
 	}
-	if viewer.owns(meta) {
+	if p.readsOwn(viewer, meta) {
 		return true
 	}
 	if len(v) == 0 {
@@ -190,6 +241,7 @@ func VisibilitySet(meta *archive.Meta, written Written) []string {
 type Store struct {
 	archive   *archive.Archive
 	storeRoot string
+	policy    Policy
 }
 
 // NewStore is the read side over `a`, whose write trailers are in the store at `storeRoot`. A nil
@@ -198,11 +250,22 @@ func NewStore(a *archive.Archive, storeRoot string) *Store {
 	return &Store{archive: a, storeRoot: storeRoot}
 }
 
+// WithPolicy is a copy of `s` that decides content visibility under `p` instead of the multi-user
+// default. Nil stays nil.
+func (s *Store) WithPolicy(p Policy) *Store {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	c.policy = p
+	return &c
+}
+
 // View is a stored session a viewer MAY see — and the only handle this package gives out on a
 // stored session's content.
 //
 // 🔴 THE ARCHIVE IS UNEXPORTED HERE ON PURPOSE. [View.Read] and [View.Records] are the two ways to
-// read a stored record from outside this package, and a View exists only where [Visible] said yes,
+// read a stored record from outside this package, and a View exists only where [Policy.Visible] said yes,
 // so "render without asking the predicate" is not something a caller can write by accident.
 type View struct {
 	Meta *archive.Meta
@@ -242,7 +305,7 @@ func scanTo(a *archive.Archive, meta *archive.Meta, stream string, fn func(Recor
 func (v *View) Read(turn int) (Reading, error) { return readSession(v.a, v.Meta, turn) }
 
 // View answers "what may this viewer see of this session's transcript": the stored session when
-// [Visible] says so, and NIL otherwise.
+// [Policy.Visible], under this store's policy, says so, and NIL otherwise.
 //
 // 🔴 NIL IS ONE ANSWER FOR THREE STATES — no transcript was ever stored, one is stored and this
 // viewer is refused, and the id is not a session id at all — so no caller CAN render them
@@ -253,9 +316,10 @@ func (v *View) Read(turn int) (Reading, error) { return readSession(v.a, v.Meta,
 // session uploaded under it, so a trailer a child wrote counts toward the root's `V` and the whole
 // tree is visible or none of it.
 //
-// ⚠ THE STORE WALK IS SKIPPED WHEN IT CANNOT CHANGE THE ANSWER: for the owner (the owner arm never
-// reads `V`), and for a viewer the STORED half of `V` already refuses (a superset cannot admit
-// them). [Visible] is still what decides, over the set as far as it was computed.
+// ⚠ THE STORE WALK IS SKIPPED WHEN IT CANNOT CHANGE THE ANSWER: for a viewer the content owner arm
+// admits ([Policy.readsOwn] never reads `V`), and for a viewer the STORED half of `V` already
+// refuses (a superset cannot admit them). [Policy.Visible], under this store's policy, is still
+// what decides, over the set as far as it was computed.
 func (s *Store) View(viewer Viewer, root string) (*View, error) {
 	if s == nil || s.archive == nil {
 		return nil, nil
@@ -265,7 +329,7 @@ func (s *Store) View(viewer Viewer, root string) (*View, error) {
 		return nil, err
 	}
 	v := VisibilitySet(meta, Written{})
-	if !viewer.owns(meta) && viewer.readsEvery(v) {
+	if !s.policy.readsOwn(viewer, meta) && viewer.readsEvery(v) {
 		ids := append([]string{meta.Root}, meta.Children...)
 		written, err := WrittenScopes(s.storeRoot, ids)
 		if err != nil {
@@ -286,7 +350,7 @@ func (s *Store) View(viewer Viewer, root string) (*View, error) {
 		}
 		v = VisibilitySet(meta, written)
 	}
-	if !Visible(viewer, meta, v) {
+	if !s.policy.Visible(viewer, meta, v) {
 		return nil, nil
 	}
 	return &View{Meta: meta, a: s.archive}, nil

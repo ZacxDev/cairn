@@ -225,7 +225,7 @@ func PageStart(turn int) int {
 }
 
 // readSession builds the page of `meta`'s session that holds turn `turn`. UNEXPORTED: outside this
-// package a reading is had only through [View.Read], which exists only where [Visible] said yes.
+// package a reading is had only through [View.Read], which exists only where [Policy.Visible] said yes.
 //
 // ⚠ IT SCANS THE WHOLE MAIN STREAM ON EVERY CALL, one record in memory at a time: a turn boundary
 // is a `human-text` unit, which only classification finds, and nothing indexes it yet (the skeleton

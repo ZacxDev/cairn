@@ -197,7 +197,7 @@ PY
   # (d) The transcript rendered without asking the predicate: a stranger's session page is then
   #     FOUND by the transcript and shows it, and the raw-record row serves it.
   sabotage d-rendered-without-the-predicate internal/transcript/visible.go \
-    $'\tif !Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{' \
+    $'\tif !s.policy.Visible(viewer, meta, v) {\n\t\treturn nil, nil\n\t}\n\treturn &View{' \
     $'\tif false {\n\t\treturn nil, nil\n\t}\n\treturn &View{' \
     "d-owner-sees-it-and-a-stranger-gets-the-no-transcript-bytes"
   # (e) Decision 3's trap: the written set computed over the VIEWER's readable scopes instead of
@@ -242,7 +242,7 @@ PY
   # (k) Outputs rendered without the source predicate: every listed session with an output gets its
   #     derived line, so a reader of ONE scope a session wrote reads the summary of the rest of it.
   sabotage k-outputs-rendered-without-the-predicate internal/transcript/plugin.go \
-    $'\t\tcase viewer.owns(meta):\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}' \
+    $'\t\tcase s.policy.readsOwn(viewer, meta):\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}' \
     $'\t\tcase true:\n\t\t\tout[root] = &View{Meta: meta, a: s.archive}' \
     "k-an-output-is-shown-to-exactly-the-viewers-of-its-transcript"
   # (l) The transcript deleted and its outputs kept: the summary and the ticket edge survive.

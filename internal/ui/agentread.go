@@ -18,9 +18,11 @@ import (
 // 🔴 NOTHING HERE DECIDES ANYTHING. Each row hands the request's own authority — the principal and the
 // RESOLVED, possibly narrowed `control.Authorization` its credential produced — to
 // `transcript.Store.Answer`, the ONE function both listeners serve through: it asks
-// `transcript.Store.View` (decision 4's predicate), and every miss is `transcript.UnseenBody`. A
-// narrowed agent credential reads exactly the sessions its narrowing covers, and never one by the
-// owner arm (`Viewer.owns` refuses a narrowed credential).
+// `transcript.Store.View` (decision 4's predicate), and every miss is `transcript.UnseenBody`. On a
+// multi-user instance a narrowed agent credential reads exactly the sessions its narrowing covers,
+// and never one by the owner arm (it refuses a narrowed credential). On an instance configured
+// single-user (`transcript.Policy.SingleUser`) a narrowed credential OF THE OWNER also reads every
+// session the owner uploaded; anybody else's narrowed credential is unchanged.
 //
 // They are GET rows, so neither cross-site gate applies to them (both derive from the method), and
 // a bearer credential reaches them through the header-borne backends before the cookie one.
