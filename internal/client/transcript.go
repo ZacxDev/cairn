@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ZacxDev/cairn/internal/store"
@@ -78,9 +79,34 @@ var transcriptActionFlags = map[string][]string{
 	transcriptwire.RouteTool:     {"--stream", "--seq", "--id", "--range"},
 }
 
+// transcriptCommonFlags is what every action takes. `--timeout` is here, not in
+// [transcriptFlags], because it bounds the request and is never sent as a query parameter.
+var transcriptCommonFlags = []string{"--session", "--scope", "--repo", "--timeout"}
+
+// TranscriptTimeoutFloor is the least bound, in seconds, a transcript read is given — `audit-refs`'s
+// `max(opts.Timeout, …)` shape, for the same reason: the verb is slower than a store read.
+//
+// 🔴 THE STORE DEFAULT (`DefaultTimeout`) IS BELOW WHAT A REAL READ COSTS. A skeleton reads every
+// stored stream once; for a very large session (hundreds of streams, tens of thousands of tool calls)
+// the listener took about 21 s to answer, all but half a second of it before the first byte — so
+// every credential failed at the 20 s default unless the caller knew to put `--timeout` BEFORE the
+// verb (after it, it was refused as an unknown flag). 90 s is that read with about 4x headroom, and
+// it stays UNDER a coding agent's usual 2-minute shell-command bound, so an unreachable listener
+// ends in this client's own diagnosis rather than in the harness killing the call. A FLOOR, not a
+// default: an explicit larger `--timeout` wins (when both positions are given, the LAST one is the
+// value), and a smaller one is raised to it, as `audit-refs` does.
+const TranscriptTimeoutFloor = 90
+
+// transcriptTimeout is the bound a transcript read is actually made with.
+func transcriptTimeout(seconds int) int { return max(seconds, TranscriptTimeoutFloor) }
+
+// transcriptHTTPClient is the client a transcript read is made with — [httpClient], named so a test
+// can observe the bound the VERB passed rather than only what the helper computes.
+var transcriptHTTPClient = httpClient
+
 // transcriptVerbFlags is the verb's whole flag set, for the verb table.
 func transcriptVerbFlags() []string {
-	out := []string{"--session", "--scope", "--repo"}
+	out := slices.Clone(transcriptCommonFlags)
 	for _, a := range transcriptActions {
 		for _, f := range transcriptActionFlags[a] {
 			if !slices.Contains(out, f) {
@@ -92,7 +118,7 @@ func transcriptVerbFlags() []string {
 }
 
 // transcriptNotes is `transcript --help`'s statement of the actions and of what a read costs.
-const transcriptNotes = "Actions (the one positional):\n" +
+var transcriptNotes = "Actions (the one positional):\n" +
 	"  skeleton  the stream tree, sizes by class and a turn index — no content beyond tool names\n" +
 	"  records   a bounded page of one stream's records (--view conversation by default: bookkeeping and\n" +
 	"            duplicate tool-result copies are left out and named; --view raw is the stored bytes)\n" +
@@ -100,7 +126,10 @@ const transcriptNotes = "Actions (the one positional):\n" +
 	"\n" +
 	"It asks cairn-ui's client listener ($CAIRN_UI_URL) with your own credential ($CAIRN_UI_TOKEN), so\n" +
 	"you read exactly the sessions you may see. --scope/--repo only pick the instance. A served read\n" +
-	"records `*` in this session's read ledger: the session reading a transcript becomes owner-only."
+	"records `*` in this session's read ledger: the session reading a transcript becomes owner-only.\n" +
+	"\n" +
+	"--timeout SECONDS bounds the read (before or after the verb); a transcript read is given at least\n" +
+	strconv.Itoa(TranscriptTimeoutFloor) + " s, since a very large session's skeleton takes tens of seconds to build."
 
 // maxTranscriptAnswer bounds one answer's body: a page is at most 1 MiB of records and a tool range at
 // most 1 MiB of each text, and JSON escaping can grow text several-fold.
@@ -124,7 +153,7 @@ func Transcript(env Env, opts Options) (int, error) {
 	for _, flag := range opts.TranscriptFlagsGiven {
 		if !slices.Contains(allowed, flag) {
 			fmt.Fprintf(env.Stderr, "cairn: transcript %s does not take %s (takes: %s)\n", action, flag,
-				strings.Join(append([]string{"--session", "--scope", "--repo"}, allowed...), ", "))
+				strings.Join(append(slices.Clone(transcriptCommonFlags), allowed...), ", "))
 			return ExitUsage, nil
 		}
 	}
@@ -137,6 +166,12 @@ func Transcript(env Env, opts Options) (int, error) {
 			return ExitUsage, nil
 		}
 		q.Set(transcriptwire.ParamID, opts.ID)
+	}
+	// 🔴 REFUSED BEFORE THE FLOOR, NOT RAISED BY IT: a non-positive bound is a malformed command line
+	// (`memo-check`'s rule), and `max` would otherwise turn it silently into a valid one.
+	if bad := UnboundedTimeoutReason(opts.Timeout); bad != "" {
+		fmt.Fprintln(env.Stderr, "cairn: transcript: "+bad)
+		return ExitUsage, nil
 	}
 	if action == transcriptwire.RouteTool && q.Get(transcriptwire.ParamSeq) == "" {
 		fmt.Fprintln(env.Stderr, "cairn: transcript tool requires --seq (the record holding the call; the skeleton lists each call's)")
@@ -163,7 +198,7 @@ func Transcript(env Env, opts Options) (int, error) {
 	if label != "" {
 		fmt.Fprintf(env.Stderr, "cairn: instance=%s\n", label)
 	}
-	a := transcriptRequest(cfg, transcriptwire.ClientPathPrefix+action+"?"+q.Encode(), opts.Timeout)
+	a := transcriptRequest(cfg, transcriptwire.ClientPathPrefix+action+"?"+q.Encode(), transcriptTimeout(opts.Timeout))
 	switch {
 	case a.err != nil && a.status == 0:
 		fmt.Fprintf(env.Stderr, "🔴 cairn: transcript: nothing was read — %s unreachable: %v\n", cfg.URL, a.err)
@@ -226,7 +261,7 @@ func transcriptRequest(cfg UIConfig, path string, timeout int) memoAnswer {
 		return memoAnswer{err: err}
 	}
 	applyStandardHeaders(req, cfg.Token)
-	resp, err := httpClient(timeout).Do(req)
+	resp, err := transcriptHTTPClient(timeout).Do(req)
 	if err != nil {
 		return memoAnswer{err: errors.New(urlErrorReason(err))}
 	}

@@ -233,7 +233,7 @@ the Go client.
 | `sources --scope X` | which code — repositories and branch — a scope declares it describes | *Go* |
 | `audit-refs --scope X` | check entries' paths, symbols, commits and PRs against the declared sources | *Go* |
 | `memo-send`, `memo-check`, `memo-read`, `memo-retract` | scope memos — § [*Scope memos*](#scope-memos--messages-between-agent-sessions) | *Go* |
-| `transcript skeleton\|records\|tool` | read a stored session transcript | *Go* |
+| `transcript skeleton\|records\|tool` | read a stored session transcript; takes `--timeout` after the verb too, and a smaller positive value is raised to 90 s (a very large session's skeleton takes tens of seconds) | *Go* |
 
 Every verb that takes `--scope` except `sync` also accepts `--repo P` instead, deriving the
 scope from the repository (`sync --repo` is a usage error, exit 2; `routes` and `doctor` take
