@@ -620,8 +620,8 @@ func Parse(argv []string) (Verb, Options, error) {
 				return verb, opts, usagef("cairn: --max-bytes expects an integer, got %q", value)
 			}
 			opts.MaxBytes = &n
-		// `--timeout` AFTER the verb is `memo-check`'s alone (the hook passes `--timeout 1` there,
-		// decision 7); it sets the same bound the global flag does, refused the same way.
+		// `--timeout` AFTER the verb is `memo-check`'s (the hook passes `--timeout 1` there, decision
+		// 7) and `transcript`'s; it sets the same bound the global flag does, refused the same way.
 		case "--timeout":
 			n, err := strconv.Atoi(value)
 			if err != nil {
