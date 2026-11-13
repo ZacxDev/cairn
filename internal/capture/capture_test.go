@@ -263,6 +263,10 @@ type memSink struct {
 	// deletedOn is `instance/root` pairs the instance holds a FINAL deletion of: every write and
 	// every position probe of it answers [ErrDeleted], as the pod's 410 does.
 	deletedOn map[string]bool
+	// tombstone makes every withdrawal that deletes something also record a FINAL deletion of that
+	// root on that instance ([memSink.deletedOn]), as the pod's archive does: a withdrawn root
+	// answers 410 there from then on.
+	tombstone bool
 	// probes is every position asked, as `instance/root/stream`.
 	probes []string
 	// probeErr makes every position ask fail (an unreachable instance).
@@ -346,6 +350,12 @@ func (s *memSink) Withdraw(instance, root string) (bool, error) {
 		if strings.HasPrefix(k, instance+"/"+root+"/") {
 			delete(s.pos, k)
 		}
+	}
+	if s.tombstone {
+		if s.deletedOn == nil {
+			s.deletedOn = map[string]bool{}
+		}
+		s.deletedOn[instance+"/"+root] = true
 	}
 	return true, nil
 }

@@ -145,9 +145,16 @@ type Summary struct {
 	// 3 when either is non-zero. Not printed: the run line's `refused=` is unchanged.
 	Unresumable, NotOwner int
 	// ExportSkipped counts opencode roots whose `opencode export` calls this run made none of
-	// ([Agent.exportSettled]); printed as the summary's LAST field, `export-skipped=`, so the skip
-	// working is visible in the journal and no field before it moved.
+	// ([Agent.exportSettled]); printed as `export-skipped=` (the summary's last field until
+	// `deferred=` followed it), so the skip working is visible in the journal.
 	ExportSkipped int
+	// Deferred counts BOUND sessions sent nothing this run because their F1 is live inside its
+	// deferral window ([DecideRun], [F1DeferWindow]). NOT part of Refused, and never fails a run.
+	// ⚠ Printed after `export-skipped=`, which is MID-line on `--run`'s run line: the fields
+	// `cmd/cairn-capture` appends after the summary (`omitted=` … `held-backlog=`) each moved one
+	// position right — name-keyed parsers are unaffected, positional ones are not. (A session deferred
+	// because its repo routes to an instance with no `-worker` is still a `refused=`, as #293 made it.)
+	Deferred int
 }
 
 // Recurrence is [Recurs]'s answer.
@@ -187,9 +194,9 @@ func Recurs(err error) Recurrence {
 
 // String is the run's one summary line.
 func (s Summary) String() string {
-	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d skipped=%d withdrawal-pending=%d deleted=%d export-skipped=%d",
+	return fmt.Sprintf("sessions=%d shipped=%d held=%d withdrawn=%d records=%d blobs=%d refused=%d skipped=%d withdrawal-pending=%d deleted=%d export-skipped=%d deferred=%d",
 		s.Sessions, s.Shipped, s.Held, s.Withdrawn, s.Records, s.Blobs, s.Refused, s.Skipped, s.WithdrawalPending, s.Deleted,
-		s.ExportSkipped)
+		s.ExportSkipped, s.Deferred)
 }
 
 func (a *Agent) logf(format string, args ...any) {
@@ -539,14 +546,60 @@ func union(a, b []string) []string {
 // to withdraw from and the prefix stayed where the rule says it must not be. Every change of
 // `Instance` or `Held` made here is checkpointed AT ONCE, and a save that fails sends nothing.
 //
-// `f1` is this run's F1 ([scopeuse.Result]): routed on, never persisted ([DecideRun]).
+// `f1` is this run's F1 ([scopeuse.Result]): routed on for a NEW session, never persisted (only its
+// deferral window's start is, [SessionState.F1Since]), and for a session already bound it DEFERS the
+// pass for at most [F1DeferWindow] ([DecideRun]) — F1 reverts when the ledger line lands, a move does
+// not, and a move back onto the instance just withdrawn from is refused 410 and held below.
 func (a *Agent) route(root string, ss *SessionState, f1 bool, sum *Summary) (ship bool, reset bool, err error) {
 	// 🔴 THE REPO ARM GOES THROUGH THIS SAME PATH, AND THAT IS HOW AN ALREADY-SHIPPED SESSION MOVES.
 	// A session with no recorded scope that an earlier version bound to the default instance gets a
 	// different answer here once its repo routes elsewhere — and a changed answer for a bound
 	// session is a MOVE like any other: destination probed, prefix withdrawn, whole session
 	// re-shipped from offset 0. Nothing about the repo arm bypasses the withdrawal.
-	dec := DecideRun(ss.V, f1, a.sessionRepo(ss), a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: ss.Instance})
+	//
+	// 🔴 THE F1 DEFERRAL WINDOW IS KEPT HERE, AND READ BY [DecideRun] — which decides from it, so
+	// `--dry-run` reading the same field answers the same. It starts on the first pass that sees F1
+	// live while the session is bound on a multi-instance host, and is CLEARED on any pass where F1
+	// is false, so a later episode gets a fresh window. Each change is saved at once, like every other
+	// routing fact here.
+	now := a.now()
+	switch {
+	case !f1 && (ss.F1Since != 0 || ss.F1Lapsed):
+		ss.F1Since, ss.F1Lapsed = 0, false
+		if err := a.saveRouting(root); err != nil {
+			return false, false, err
+		}
+	case f1 && ss.Instance != "" && a.Routing.MultiInstance() && (ss.F1Since == 0 || ss.F1Since > now.Unix()):
+		// ⚠ A START IN THE FUTURE — stamped while the clock ran ahead — is RESTAMPED to now: kept, it
+		// would stretch the window by the skew.
+		started := ss.F1Since == 0
+		ss.F1Since = now.Unix()
+		if err := a.saveRouting(root); err != nil {
+			return false, false, err
+		}
+		if started {
+			// Said ONCE per episode, here — not on every deferred pass.
+			a.logf("defer %s: its inputs name the program and its read ledger is empty (F1); bound to %s, nothing of it is "+
+				"shipped or withdrawn until its ledger answers, for at most %s", root, ss.Instance, F1DeferWindow)
+		}
+	}
+	rules := RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: ss.Instance, Now: now}
+	if ss.F1Since != 0 {
+		rules.F1Since = time.Unix(ss.F1Since, 0)
+	}
+	dec := DecideRun(ss.V, f1, a.sessionRepo(ss), a.Routing, rules)
+	if dec.F1Deferred {
+		// Not a refusal: counted `deferred=`, silent after the line above, retried next pass.
+		sum.Deferred++
+		return false, false, nil
+	}
+	if dec.F1Lapsed && !ss.F1Lapsed {
+		ss.F1Lapsed = true
+		if err := a.saveRouting(root); err != nil {
+			return false, false, err
+		}
+		a.logf("defer %s: the %s F1 deferral window expired with F1 still live: %s", root, F1DeferWindow, dec.Reason)
+	}
 	if dec.Deferred {
 		// Before ANY request: no probe, no withdrawal, nothing shipped; the session's refusal for this
 		// run, retried on the next ([RepoRules.place]).

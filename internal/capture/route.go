@@ -1,6 +1,8 @@
 package capture
 
 import (
+	"time"
+
 	"github.com/ZacxDev/cairn/internal/client"
 	"github.com/ZacxDev/cairn/internal/transcript/scopeuse"
 )
@@ -12,8 +14,15 @@ type Decision struct {
 	Held     bool
 	// Deferred is "send nothing of this session THIS run, and ask again next run": its repo routes
 	// to an instance this run has no `-worker` for, and it is bound to a DIFFERENT non-default one
-	// ([RepoRules.place]). Not final, unlike Held.
+	// ([RepoRules.place]); or it is already bound and this run's F1 is live, inside its window
+	// ([DecideRun], [Decision.F1Deferred]). Not final, unlike Held.
 	Deferred bool
+	// F1Deferred marks the second kind of deferral: counted `deferred=` on the run line, not
+	// `refused=`, and logged once per episode rather than every pass ([Agent.route]).
+	F1Deferred bool
+	// F1Lapsed marks a decision made by the BASE rule because the session's F1 deferral window has
+	// expired with F1 still live ([DecideRun]).
+	F1Lapsed bool
 	// OwnerOnly is "ship this session to the default instance, owner-only": it carries `*` (a
 	// visibility statement, not a scope — see [Decide]) or it read scopes on TWO instances and has
 	// been placed on the default one anyway. OwnerOnlyBy says which, and so whether [Agent.route]
@@ -95,14 +104,84 @@ func Decide(v []string, repo Repo, routing client.Routing, rules RepoRules) Deci
 }
 
 // DecideRun is [Decide] over `v` plus, when `f1` holds, F1's `*` for THIS RUN — the session's inputs
-// name the program and its read ledger is empty now ([scopeuse.Result]'s F1). It routes exactly as
-// `v ∪ {*}` would; the one difference is the decision's [OwnerOnlyCause]: when F1's is the ONLY `*`
-// and no two recorded scopes disagree, it is [OwnerOnlyUnledgered], which is not declared (#309).
+// name the program and its read ledger is empty now ([scopeuse.Result]'s F1). For a session not yet
+// bound (and on a one-instance host) it routes exactly as `v ∪ {*}` would; the one difference is the
+// decision's [OwnerOnlyCause]: when F1's is the ONLY `*` and no two recorded scopes disagree, it is [OwnerOnlyUnledgered], which is not declared (#309).
 //
 // 🔴 TWO RECORDED SCOPES DISAGREE ONLY WHEN THEY ROUTE TO DIFFERENT INSTANCES THEMSELVES. A `*`
 // forcing the default instance does not make a session whose only scope routes elsewhere
 // "cross-instance": that answer would declare `*` for good on the strength of F1's one-run `*`.
+//
+// 🔴 F1 PLACES A NEW SESSION; A BOUND ONE IS DEFERRED — FOR AT MOST [F1DeferWindow] — WHILE F1 IS
+// LIVE (operator decisions on #317). A session already bound to an instance (`rules.Bound`) on a host
+// with more than one instance gets [Decision.Deferred] whenever `f1` holds and its window has not
+// expired — whatever the answer with F1 or without it would be, a hold included — so nothing of it
+// is shipped and nothing is withdrawn on that pass. The window runs from the first pass that saw F1
+// live while the session was bound (`rules.F1Since`, persisted as [SessionState.F1Since]; zero means
+// "this pass starts it") and is cleared on any pass where F1 is false. Once it has expired with F1
+// still live, the session is routed by the BASE rule exactly as before #317 — F1's `*` forces the
+// default instance, through the usual move and withdrawal ([Decision.F1Lapsed]).
+//
+// WHY DEFER: F1 reverts when the ledger line lands, and a move does not — the instance a session is
+// withdrawn from keeps the withdrawal as a FINAL deletion, so when the ledger's scope routes the
+// session back there the probe answers 410 and the session is HELD for good ([Agent.route]). That
+// flip was measured on a two-instance host: a session the repo arm had bound to the second instance
+// ran a `cairn` call, Claude Code wrote the call's tool input to the transcript seconds BEFORE the
+// client appended its ledger line, a pass landing in between saw F1 and moved the session to the
+// default, and the next pass held it there. That race clears within one pass, far inside the window.
+//
+// WHY BOUNDED: F1's evidence is sticky — any tool input naming the program, restored every pass —
+// so a bound session that never makes a ledgered call has F1 live for good, and an unbounded
+// deferral stopped its capture for good (measured at several percent of one workstation's sessions,
+// most of their bytes after the first mention, while local transcripts are pruned).
+//
+// WHAT IT GUARANTEES, AND NO MORE: inside the window a bound session ships nothing and withdraws
+// nothing, so an F1 that clears within the window can never flip it into a 410 hold. ⚠ TWO NAMED
+// RESIDUALS:
+//
+//   - THE FLIP SURVIVES PAST THE WINDOW: a session whose F1 stays live longer than [F1DeferWindow]
+//     is moved by the base rule, and if a ledger line later routes it back to the instance it left,
+//     that move is refused 410 and held, exactly as before #317.
+//   - T3 (pre-existing — the new-session path has it on the base too): the pod's view-time F1 hides
+//     a session only while its ledger is EMPTY (`archive.Meta.LedgerScopes`). Once any ledger record
+//     lands, output that reached the transcript with NO ledger record of its own — a call whose
+//     ledger write was swallowed (`client.Env.recordRead`), or one run with no session id in its
+//     environment (`sudo`, `env -i`, `ssh`), including the headerless verbs (`transcript`, `routes`,
+//     `arcs`, `doctor`) whose served call would otherwise have recorded `*` — ships, deferred or not,
+//     under the scope that LATER record names (`TestTheUnledgeredOutputResidualShipsUnderTheLaterScope`
+//     pins it, so a fix flips it deliberately).
+//
+// ⚠ ONE INSTANCE IS EXEMPT: there F1 changes no routing answer and there is no other instance to be
+// withdrawn from, so a deferral would only stall capture.
 func DecideRun(v []string, f1 bool, repo Repo, routing client.Routing, rules RepoRules) Decision {
+	if f1 && rules.Bound != "" && routing.MultiInstance() {
+		if !rules.f1WindowExpired() {
+			return Decision{Deferred: true, F1Deferred: true, Reason: "its inputs name the program and its read ledger " +
+				"is empty this run (F1): a session bound to " + rules.Bound + " ships nothing and withdraws nothing until " +
+				"its ledger answers, for at most " + F1DeferWindow.String() + " (then it is routed by the base rule)"}
+		}
+		dec := decideRun(v, f1, repo, routing, rules)
+		dec.F1Lapsed = true
+		dec.Reason = "F1 stayed live past the " + F1DeferWindow.String() + " deferral window, so the base rule routes it: " +
+			dec.Reason
+		return dec
+	}
+	return decideRun(v, f1, repo, routing, rules)
+}
+
+// F1DeferWindow is how long a BOUND session is deferred while F1 stays live ([DecideRun]) — the
+// operator's decision on #317. `TestTheF1DeferWindowIsTheOperatorsDecision` pins it as a literal.
+const F1DeferWindow = time.Hour
+
+// f1WindowExpired is whether this F1 episode's deferral window has run out: never before it starts
+// (`F1Since` zero — this pass starts it), and from `F1Since + F1DeferWindow` on. A start AFTER `Now`
+// (stamped while the clock ran ahead) is not expired either, which is also what [Agent.route]'s
+// restamp of it to `Now` answers — so a dry run reading the unrestamped state agrees with `--run`.
+func (r RepoRules) f1WindowExpired() bool {
+	return !r.F1Since.IsZero() && !r.Now.Before(r.F1Since.Add(F1DeferWindow))
+}
+
+func decideRun(v []string, f1 bool, repo Repo, routing client.Routing, rules RepoRules) Decision {
 	if len(v) == 0 && !f1 {
 		return decideByRepo(repo, routing, rules)
 	}
@@ -170,6 +249,10 @@ type RepoRules struct {
 	Uploadable map[string]bool
 	// Bound is the instance the session is bound to now ([SessionState.Instance]), "" for a new one.
 	Bound string
+	// F1Since is when the session's current F1 deferral window began ([SessionState.F1Since]), zero
+	// for none yet; Now is this pass's clock. [DecideRun] reads both, and only for a bound session
+	// under F1.
+	F1Since, Now time.Time
 }
 
 func (r RepoRules) uploadable(alias string) bool { return r.Uploadable == nil || r.Uploadable[alias] }
