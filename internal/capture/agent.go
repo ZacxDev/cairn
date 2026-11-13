@@ -539,7 +539,9 @@ func union(a, b []string) []string {
 // to withdraw from and the prefix stayed where the rule says it must not be. Every change of
 // `Instance` or `Held` made here is checkpointed AT ONCE, and a save that fails sends nothing.
 //
-// `f1` is this run's F1 ([scopeuse.Result]): routed on, never persisted ([DecideRun]).
+// `f1` is this run's F1 ([scopeuse.Result]): routed on, never persisted, and never a reason to MOVE a
+// session that is already bound ([DecideRun]) — F1 reverts when the ledger line lands, a move does
+// not, and the move back is refused 410 and held below.
 func (a *Agent) route(root string, ss *SessionState, f1 bool, sum *Summary) (ship bool, reset bool, err error) {
 	// 🔴 THE REPO ARM GOES THROUGH THIS SAME PATH, AND THAT IS HOW AN ALREADY-SHIPPED SESSION MOVES.
 	// A session with no recorded scope that an earlier version bound to the default instance gets a

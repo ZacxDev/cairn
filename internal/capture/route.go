@@ -102,7 +102,39 @@ func Decide(v []string, repo Repo, routing client.Routing, rules RepoRules) Deci
 // 🔴 TWO RECORDED SCOPES DISAGREE ONLY WHEN THEY ROUTE TO DIFFERENT INSTANCES THEMSELVES. A `*`
 // forcing the default instance does not make a session whose only scope routes elsewhere
 // "cross-instance": that answer would declare `*` for good on the strength of F1's one-run `*`.
+//
+// 🔴 F1 PLACES A NEW SESSION; IT NEVER MOVES A BOUND ONE (`rules.Bound`). F1 reverts when the
+// ledger line lands, and a move does not: the instance a session is withdrawn from keeps the
+// withdrawal as a FINAL deletion, so when the ledger's scope routes the session back there the
+// probe answers 410 and the session is HELD for good ([Agent.route]). That flip was measured on a
+// two-instance host — a session the repo arm had bound to the second instance ran a `cairn` call;
+// Claude Code writes the call's tool input to the transcript seconds BEFORE the client appends its
+// ledger line, a pass landing in between saw F1 and moved the session to the default, and the next
+// pass held it there. So for a bound session the answer is the bound instance whenever EITHER the
+// answer with F1 or the answer without it names it; only when BOTH leave it — a move F1 did not
+// cause — does the session move, to the answer with F1 (the conservative one, as before).
+//
+// Why staying is safe for the bytes: a served call appends its ledger line BEFORE it prints, so the
+// call's OUTPUT reaches the transcript only after the line F1 is waiting for; a pass that sees F1
+// over a served call holds its INPUT, not its content. A call whose ledger write FAILED (threat T3)
+// is what is left, and the instance it stays on applies F1 itself at view time from the ledger it
+// holds, owner-only — exactly as it does for a session F1 never touched. ⚠ Both directions are
+// pinned (`TestF1CanOnlyKeepABoundSessionWhereItIs`): ignoring F1 for a bound session would move one
+// F1 had placed on the default back OFF it while F1 still holds — the same flip, mirrored.
 func DecideRun(v []string, f1 bool, repo Repo, routing client.Routing, rules RepoRules) Decision {
+	dec := decideRun(v, f1, repo, routing, rules)
+	if !f1 || rules.Bound == "" || dec.Held || dec.Deferred || dec.Instance == rules.Bound {
+		return dec
+	}
+	if alt := decideRun(v, false, repo, routing, rules); !alt.Held && !alt.Deferred && alt.Instance == rules.Bound {
+		alt.Reason += "; F1's * (its inputs name the program and its read ledger is empty this run) does not move a " +
+			"session bound to " + rules.Bound
+		return alt
+	}
+	return dec
+}
+
+func decideRun(v []string, f1 bool, repo Repo, routing client.Routing, rules RepoRules) Decision {
 	if len(v) == 0 && !f1 {
 		return decideByRepo(repo, routing, rules)
 	}

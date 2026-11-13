@@ -78,7 +78,10 @@ func (t tally) String() string {
 //
 //   - a session the state marks HELD or DELETED prints `held` / `deleted`: `--run` returns before
 //     routing it at all, so any routing answer printed for it would be one `--run` never makes;
-//   - the decision is over `V` as `--run` holds it — the stored `V` UNION what this read derived;
+//   - the decision is over `V` as `--run` holds it — the stored `V` UNION what this read derived
+//     WITHOUT F1's `*` (`declare`) — plus this read's F1 (`f1`), through [DecideRun] exactly as
+//     `--run` routes. Routing the derived `V` with F1's `*` in it treated F1 as a RECORDED `*`, which
+//     forces the default instance for a session `--run` keeps where it is bound;
 //   - its binding ([RepoRules.place]'s answer depends on it) and its repo, through the ONE resolver
 //     [Agent.sessionRepo] over a scratch copy, so the KEPT repo wins exactly as in `--run` — the case
 //     that matters: a worktree removed since `--run` placed the session no longer derives a repo, and
@@ -86,7 +89,7 @@ func (t tally) String() string {
 //
 // `dir` is the directory this read found (a transcript's first `cwd`, a listed `directory`); like
 // `--run`, it is used only when the state recorded none.
-func (a *Agent) decisionText(root string, v []string, dir string) string {
+func (a *Agent) decisionText(root string, declare []string, f1 bool, dir string) string {
 	var view SessionState
 	if a.State != nil {
 		if ss := a.State.Sessions[root]; ss != nil {
@@ -101,11 +104,11 @@ func (a *Agent) decisionText(root string, v []string, dir string) string {
 			view = SessionState{Instance: ss.Instance, V: ss.V, Dir: ss.Dir, Repo: ss.Repo}
 		}
 	}
-	view.V = union(view.V, v)
+	view.V = union(view.V, declare)
 	if view.Dir == "" {
 		view.Dir = dir
 	}
-	dec := Decide(view.V, a.sessionRepo(&view), a.Routing,
+	dec := DecideRun(view.V, f1, a.sessionRepo(&view), a.Routing,
 		RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: view.Instance})
 	switch {
 	case dec.Held:
@@ -158,13 +161,14 @@ func (a *Agent) dryClaude(w io.Writer, cs claudeSession) {
 		}
 	}
 	a.foldLedger(d, cs.Root)
-	v := d.Result().V
+	res := d.Result()
+	v := res.V
 	dir := ""
-	if len(v) == 0 {
+	if len(res.Declare) == 0 { // what `--run` persists as `V` — F1's `*` does not stop it reading the cwd
 		dir = claudeCwd(cs.Streams["main"])
 	}
 	fmt.Fprintf(w, "claude %s streams=%d records=%d blobs=%d refused=%d classes=%s redactions=%s v=[%s] decision=%s\n",
-		cs.Root, len(cs.Streams), records, len(cs.Blobs), refused, classes, hits, strings.Join(v, ","), a.decisionText(cs.Root, v, dir))
+		cs.Root, len(cs.Streams), records, len(cs.Blobs), refused, classes, hits, strings.Join(v, ","), a.decisionText(cs.Root, res.Declare, res.F1, dir))
 }
 
 func (a *Agent) dryOpencode(w io.Writer, lr listedRoot) {
@@ -212,7 +216,8 @@ func (a *Agent) dryOpencode(w io.Writer, lr listedRoot) {
 		}
 	}
 	a.foldLedger(d, root)
-	v := d.Result().V
+	res := d.Result()
+	v := res.V
 	fmt.Fprintf(w, "opencode %s streams=%d units=%d classes=%s redactions=%s v=[%s] decision=%s\n",
-		root, streams, units, classes, hits, strings.Join(v, ","), a.decisionText(root, v, lr.Directory))
+		root, streams, units, classes, hits, strings.Join(v, ","), a.decisionText(root, res.Declare, res.F1, lr.Directory))
 }

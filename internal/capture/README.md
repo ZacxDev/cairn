@@ -38,7 +38,13 @@ operator's act.
    alone (`OwnerOnlyUnledgered`, #309): F1's `*` is a fact about one run, and the pod decides F1
    itself from the ledger it holds and the session's `names_program`, which EVERY upload of the
    session carries when its evidence says a tool input names the program (#312 — so the pod has it
-   even when the stream holding that tool input failed to upload). A session whose scopes name TWO instances is placed
+   even when the stream holding that tool input failed to upload). 🔴 **F1 places a NEW session; it
+   never MOVES a bound one** (`DecideRun`, `f1move_test.go`): a bound session stays where it is
+   whenever the answer with F1 or the answer without it names that instance. F1 reverts when the
+   ledger line lands and a move does not — the instance a session is withdrawn from keeps that as a
+   final deletion — so a pass that ran between a `cairn` call's tool input reaching the transcript and
+   its ledger line reaching the disk moved a repo-placed session to the default, and the next pass's
+   move back answered 410 and HELD it there for good. A session whose scopes name TWO instances is placed
    on the default instance OWNER-ONLY for the same reason — the trade the operator accepted on
    and the reason a cross-instance session is no longer held. A scope the routing table
    explicitly sends to an unconfigured alias is still HELD at any instance count: the table says it
@@ -401,6 +407,16 @@ its scopes to, and nothing new of the session is captured. The alternative (with
 decision 16 reads) keeps the routing rule strict and loses the session's capture whenever the
 destination turns out to have deleted it. Removing a held prefix is the operator's act: the owner's
 delete, on that instance.
+
+⚠ **NOTHING SUPPORTED PUTS A SESSION HELD THIS WAY BACK ON THE INSTANCE ITS SCOPES NAME.** Its hold
+names an instance, so `--list-held` prints it `permanent` and `--clear-held` keeps it; the
+destination's deletion is final for the root (the archive's deletion journal, read at start, has no
+route or verb that removes an entry — and deliberately so); and editing the state file is the
+"do not remove the entry" case above. What exists is the prefix where it is, owner-deletable there.
+That is why the move that CAUSED such a hold must not happen on a one-run answer: F1 no longer moves
+a bound session (step 3 above). ⚠ The fix stops new flips; it does NOT rescue a session an older
+build already moved on F1 — that one is bound to the default now, and when its ledger line lands its
+move back is refused 410 and held, exactly as before.
 
 ⚠ **What it cannot do.** The withdrawal table's third row reads "never landed" off this agent's own
 watermarks, which a kill can leave unsaved — but then the instance DOES hold the prefix and answers
