@@ -38,13 +38,7 @@ operator's act.
    alone (`OwnerOnlyUnledgered`, #309): F1's `*` is a fact about one run, and the pod decides F1
    itself from the ledger it holds and the session's `names_program`, which EVERY upload of the
    session carries when its evidence says a tool input names the program (#312 — so the pod has it
-   even when the stream holding that tool input failed to upload). 🔴 **F1 places a NEW session; it
-   never MOVES a bound one** (`DecideRun`, `f1move_test.go`): a bound session stays where it is
-   whenever the answer with F1 or the answer without it names that instance. F1 reverts when the
-   ledger line lands and a move does not — the instance a session is withdrawn from keeps that as a
-   final deletion — so a pass that ran between a `cairn` call's tool input reaching the transcript and
-   its ledger line reaching the disk moved a repo-placed session to the default, and the next pass's
-   move back answered 410 and HELD it there for good. A session whose scopes name TWO instances is placed
+   even when the stream holding that tool input failed to upload). A session whose scopes name TWO instances is placed
    on the default instance OWNER-ONLY for the same reason — the trade the operator accepted on
    and the reason a cross-instance session is no longer held. A scope the routing table
    explicitly sends to an unconfigured alias is still HELD at any instance count: the table says it
@@ -52,6 +46,26 @@ operator's act.
    cross-instance leak decision 16 exists to stop. A session
    whose `V` is **empty** is placed by the repository it ran in — § *A session that recorded no
    scope* below.
+
+   🔴 **F1 places a NEW session; a BOUND one is DEFERRED while F1 is live** (operator decision,
+   #317; `DecideRun`, `f1move_test.go`). On a host with more than one instance, a session already
+   bound to an instance whose F1 holds this pass gets `deferred` — whatever either answer would be,
+   a hold included: nothing of it is shipped, nothing is withdrawn, it is counted `refused=` (exit
+   0), and it routes normally on the first pass where F1 is false. Why: F1 reverts when the ledger
+   line lands and a move does not — the instance a session is withdrawn from keeps that as a final
+   deletion — so a pass that ran between a `cairn` call's tool input reaching the transcript and its
+   ledger line reaching the disk MOVED a repo-placed session to the default, and the next pass's move
+   back answered 410 and HELD it there for good. **What deferring guarantees:** no ship and no
+   withdrawal while F1 is live, so F1 cannot flip a bound session into a 410 hold. **Its cost:** the
+   session's capture stalls for as long as F1 holds. A one-instance host is exempt (F1 changes no
+   answer there). ⚠ **A NAMED RESIDUAL IT DOES NOT CLOSE** (threat T3, pre-existing — the
+   new-session path has it on the base too): the pod's view-time F1 hides a session only while its
+   ledger is EMPTY (`archive.Meta.LedgerScopes`). Once any ledger record lands, output that reached
+   the transcript with no ledger record of its own — a call whose ledger write was swallowed, or one
+   run with no session id in its environment (`sudo`, `env -i`, `ssh`), including the headerless
+   verbs (`transcript`, `routes`, `arcs`, `doctor`) whose served call would otherwise record `*` —
+   ships under the scope that later record names, deferred or not
+   (`TestTheUnledgeredOutputResidualShipsUnderTheLaterScope` pins it as a residual).
 4. **Acts**: ship to the routed instance — the client read ledger FIRST (S11, decision 3a): the
    root's `<session>.jsonl` and every opencode child's, new complete lines only, as the root's
    `ledger` stream through the opencode path's saved-plan resume, a line that is not JSON (or a
@@ -101,7 +115,7 @@ session is placed by its repo, first match wins (`decideByRepo`):
    state it prints `--run`'s decision (`TestADryRunReadsWhereRunBoundTheSession`): over the stored
    `V` union what it read, by the repo `--run` KEPT (through the same resolver, so a worktree removed
    since still answers as in `--run`), `deferred` for a session `--run` would send nothing of this
-   run, and `held` / `deleted` for one the state marks so, which `--run` skips before routing
+   run (a repo routed to an instance with no `-worker`, or a bound session under F1), and `held` / `deleted` for one the state marks so, which `--run` skips before routing
    (`cmd/cairn-capture/dryparity_test.go`). With no state file it says so on stderr and
    treats every session as bound nowhere yet; with no `-worker` at all it treats every configured
    instance as uploadable.
@@ -413,10 +427,12 @@ names an instance, so `--list-held` prints it `permanent` and `--clear-held` kee
 destination's deletion is final for the root (the archive's deletion journal, read at start, has no
 route or verb that removes an entry — and deliberately so); and editing the state file is the
 "do not remove the entry" case above. What exists is the prefix where it is, owner-deletable there.
-That is why the move that CAUSED such a hold must not happen on a one-run answer: F1 no longer moves
-a bound session (step 3 above). ⚠ The fix stops new flips; it does NOT rescue a session an older
-build already moved on F1 — that one is bound to the default now, and when its ledger line lands its
-move back is refused 410 and held, exactly as before.
+That is why the move that CAUSED such a hold must not happen on a one-run answer: a bound session
+under F1 is deferred, never moved (step 3 above). ⚠ That stops new flips; it does NOT rescue a
+session an older build already moved on F1 — that one is bound to the default now, is deferred while
+its F1 holds, and when its ledger line lands its move back is refused 410 and held, exactly as before.
+Deferring guarantees only "no ship and no withdrawal while F1 is live"; it is not T3 coverage (step 3's
+named residual).
 
 ⚠ **What it cannot do.** The withdrawal table's third row reads "never landed" off this agent's own
 watermarks, which a kill can leave unsaved — but then the instance DOES hold the prefix and answers

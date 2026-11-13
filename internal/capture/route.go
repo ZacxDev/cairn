@@ -12,7 +12,8 @@ type Decision struct {
 	Held     bool
 	// Deferred is "send nothing of this session THIS run, and ask again next run": its repo routes
 	// to an instance this run has no `-worker` for, and it is bound to a DIFFERENT non-default one
-	// ([RepoRules.place]). Not final, unlike Held.
+	// ([RepoRules.place]); or it is already bound and this run's F1 is live ([DecideRun]). Not final,
+	// unlike Held.
 	Deferred bool
 	// OwnerOnly is "ship this session to the default instance, owner-only": it carries `*` (a
 	// visibility statement, not a scope — see [Decide]) or it read scopes on TWO instances and has
@@ -95,43 +96,53 @@ func Decide(v []string, repo Repo, routing client.Routing, rules RepoRules) Deci
 }
 
 // DecideRun is [Decide] over `v` plus, when `f1` holds, F1's `*` for THIS RUN — the session's inputs
-// name the program and its read ledger is empty now ([scopeuse.Result]'s F1). It routes exactly as
-// `v ∪ {*}` would; the one difference is the decision's [OwnerOnlyCause]: when F1's is the ONLY `*`
-// and no two recorded scopes disagree, it is [OwnerOnlyUnledgered], which is not declared (#309).
+// name the program and its read ledger is empty now ([scopeuse.Result]'s F1). For a session not yet
+// bound (and on a one-instance host) it routes exactly as `v ∪ {*}` would; the one difference is the
+// decision's [OwnerOnlyCause]: when F1's is the ONLY `*` and no two recorded scopes disagree, it is [OwnerOnlyUnledgered], which is not declared (#309).
 //
 // 🔴 TWO RECORDED SCOPES DISAGREE ONLY WHEN THEY ROUTE TO DIFFERENT INSTANCES THEMSELVES. A `*`
 // forcing the default instance does not make a session whose only scope routes elsewhere
 // "cross-instance": that answer would declare `*` for good on the strength of F1's one-run `*`.
 //
-// 🔴 F1 PLACES A NEW SESSION; IT NEVER MOVES A BOUND ONE (`rules.Bound`). F1 reverts when the
-// ledger line lands, and a move does not: the instance a session is withdrawn from keeps the
-// withdrawal as a FINAL deletion, so when the ledger's scope routes the session back there the
-// probe answers 410 and the session is HELD for good ([Agent.route]). That flip was measured on a
-// two-instance host — a session the repo arm had bound to the second instance ran a `cairn` call;
-// Claude Code writes the call's tool input to the transcript seconds BEFORE the client appends its
-// ledger line, a pass landing in between saw F1 and moved the session to the default, and the next
-// pass held it there. So for a bound session the answer is the bound instance whenever EITHER the
-// answer with F1 or the answer without it names it; only when BOTH leave it — a move F1 did not
-// cause — does the session move, to the answer with F1 (the conservative one, as before).
+// 🔴 F1 PLACES A NEW SESSION; A BOUND ONE IS DEFERRED WHILE F1 IS LIVE (operator decision, #317).
+// A session already bound to an instance (`rules.Bound`) on a host with more than one instance gets
+// [Decision.Deferred] whenever `f1` holds — whatever the answer with F1 or without it would be,
+// a hold included — so nothing of it is shipped and nothing is withdrawn on that pass. It is asked
+// again next pass and routes normally on the first pass where F1 is false.
 //
-// Why staying is safe for the bytes: a served call appends its ledger line BEFORE it prints, so the
-// call's OUTPUT reaches the transcript only after the line F1 is waiting for; a pass that sees F1
-// over a served call holds its INPUT, not its content. A call whose ledger write FAILED (threat T3)
-// is what is left, and the instance it stays on applies F1 itself at view time from the ledger it
-// holds, owner-only — exactly as it does for a session F1 never touched. ⚠ Both directions are
-// pinned (`TestF1CanOnlyKeepABoundSessionWhereItIs`): ignoring F1 for a bound session would move one
-// F1 had placed on the default back OFF it while F1 still holds — the same flip, mirrored.
+// WHY: F1 reverts when the ledger line lands, and a move does not — the instance a session is
+// withdrawn from keeps the withdrawal as a FINAL deletion, so when the ledger's scope routes the
+// session back there the probe answers 410 and the session is HELD for good ([Agent.route]). That
+// flip was measured on a two-instance host: a session the repo arm had bound to the second instance
+// ran a `cairn` call, Claude Code wrote the call's tool input to the transcript seconds BEFORE the
+// client appended its ledger line, a pass landing in between saw F1 and moved the session to the
+// default, and the next pass held it there. Routing a bound session on F1 in EITHER direction can
+// make that flip; deferring makes no routing decision on a one-run fact at all.
+//
+// WHAT DEFERRING GUARANTEES, AND NO MORE: while F1 is live a bound session ships nothing and
+// withdraws nothing, so F1 can never flip it into a 410 hold. The cost is a capture stall for as long
+// as F1 holds — counted `refused=` each pass, exit 0 — which for a `cairn` mention that never writes
+// a ledger line lasts until the session's first served call does.
+//
+// ⚠ A NAMED RESIDUAL THIS DOES NOT CLOSE (threat T3, pre-existing — the new-session path has it on
+// the base too): the pod's view-time F1 hides a session only while its ledger is EMPTY
+// (`archive.Meta.LedgerScopes`). Once any ledger record lands, output that reached the transcript
+// with NO ledger record of its own — a call whose ledger write was swallowed
+// (`client.Env.recordRead`), or one run with no session id in its environment (`sudo`, `env -i`,
+// `ssh`), including the headerless verbs (`transcript`, `routes`, `arcs`, `doctor`) whose served call
+// would otherwise have recorded `*` — ships, deferred or not, under the scope that LATER record names.
+// `TestTheUnledgeredOutputResidualShipsUnderTheLaterScope` pins it as a residual, so a fix flips it
+// deliberately.
+//
+// ⚠ ONE INSTANCE IS EXEMPT: there F1 changes no routing answer and there is no other instance to be
+// withdrawn from, so a deferral would only stall capture.
 func DecideRun(v []string, f1 bool, repo Repo, routing client.Routing, rules RepoRules) Decision {
-	dec := decideRun(v, f1, repo, routing, rules)
-	if !f1 || rules.Bound == "" || dec.Held || dec.Deferred || dec.Instance == rules.Bound {
-		return dec
+	if f1 && rules.Bound != "" && routing.MultiInstance() {
+		return Decision{Deferred: true, Reason: "its inputs name the program and its read ledger is empty this run (F1): " +
+			"a session bound to " + rules.Bound + " ships nothing and withdraws nothing until its ledger answers " +
+			"(asked again next run)"}
 	}
-	if alt := decideRun(v, false, repo, routing, rules); !alt.Held && !alt.Deferred && alt.Instance == rules.Bound {
-		alt.Reason += "; F1's * (its inputs name the program and its read ledger is empty this run) does not move a " +
-			"session bound to " + rules.Bound
-		return alt
-	}
-	return dec
+	return decideRun(v, f1, repo, routing, rules)
 }
 
 func decideRun(v []string, f1 bool, repo Repo, routing client.Routing, rules RepoRules) Decision {

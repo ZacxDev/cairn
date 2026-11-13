@@ -539,9 +539,9 @@ func union(a, b []string) []string {
 // to withdraw from and the prefix stayed where the rule says it must not be. Every change of
 // `Instance` or `Held` made here is checkpointed AT ONCE, and a save that fails sends nothing.
 //
-// `f1` is this run's F1 ([scopeuse.Result]): routed on, never persisted, and never a reason to MOVE a
-// session that is already bound ([DecideRun]) — F1 reverts when the ledger line lands, a move does
-// not, and the move back is refused 410 and held below.
+// `f1` is this run's F1 ([scopeuse.Result]): routed on for a NEW session, never persisted, and for a
+// session already bound it DEFERS the pass ([DecideRun]) — F1 reverts when the ledger line lands, a
+// move does not, and a move back onto the instance just withdrawn from is refused 410 and held below.
 func (a *Agent) route(root string, ss *SessionState, f1 bool, sum *Summary) (ship bool, reset bool, err error) {
 	// 🔴 THE REPO ARM GOES THROUGH THIS SAME PATH, AND THAT IS HOW AN ALREADY-SHIPPED SESSION MOVES.
 	// A session with no recorded scope that an earlier version bound to the default instance gets a
@@ -551,7 +551,7 @@ func (a *Agent) route(root string, ss *SessionState, f1 bool, sum *Summary) (shi
 	dec := DecideRun(ss.V, f1, a.sessionRepo(ss), a.Routing, RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: ss.Instance})
 	if dec.Deferred {
 		// Before ANY request: no probe, no withdrawal, nothing shipped; the session's refusal for this
-		// run, retried on the next ([RepoRules.place]).
+		// run, retried on the next ([RepoRules.place]; a bound session under F1, [DecideRun]).
 		return false, false, errors.New(dec.Reason)
 	}
 	if ss.Instance != "" && !dec.Held && dec.Instance != "" && ss.Instance != dec.Instance {
