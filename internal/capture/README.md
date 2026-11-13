@@ -27,7 +27,7 @@ operator's act.
    that began at least `OpencodeSettle` (60 min) after that `updated` and less than
    `OpencodeMaxExportAge` (24 h) ago, is NOT exported (`Agent.exportSettled`): its ledgers are
    still folded, it is still routed, and its ledger still ships. The run line counts these as
-   `export-skipped=`.
+   `export-skipped=`, followed only by `deferred=` (step 3's F1 deferral).
 2. **Derives `V`'s read half** with `internal/transcript/scopeuse` over the new records, the
    persisted evidence of earlier runs, and the client read ledgers of the root and every child —
    a UNION with the stored `V`, so a deleted ledger cannot shrink it.
@@ -47,24 +47,37 @@ operator's act.
    whose `V` is **empty** is placed by the repository it ran in — § *A session that recorded no
    scope* below.
 
-   🔴 **F1 places a NEW session; a BOUND one is DEFERRED while F1 is live** (operator decision,
-   #317; `DecideRun`, `f1move_test.go`). On a host with more than one instance, a session already
-   bound to an instance whose F1 holds this pass gets `deferred` — whatever either answer would be,
-   a hold included: nothing of it is shipped, nothing is withdrawn, it is counted `refused=` (exit
-   0), and it routes normally on the first pass where F1 is false. Why: F1 reverts when the ledger
-   line lands and a move does not — the instance a session is withdrawn from keeps that as a final
-   deletion — so a pass that ran between a `cairn` call's tool input reaching the transcript and its
-   ledger line reaching the disk MOVED a repo-placed session to the default, and the next pass's move
-   back answered 410 and HELD it there for good. **What deferring guarantees:** no ship and no
-   withdrawal while F1 is live, so F1 cannot flip a bound session into a 410 hold. **Its cost:** the
-   session's capture stalls for as long as F1 holds. A one-instance host is exempt (F1 changes no
-   answer there). ⚠ **A NAMED RESIDUAL IT DOES NOT CLOSE** (threat T3, pre-existing — the
-   new-session path has it on the base too): the pod's view-time F1 hides a session only while its
-   ledger is EMPTY (`archive.Meta.LedgerScopes`). Once any ledger record lands, output that reached
-   the transcript with no ledger record of its own — a call whose ledger write was swallowed, or one
-   run with no session id in its environment (`sudo`, `env -i`, `ssh`), including the headerless
-   verbs (`transcript`, `routes`, `arcs`, `doctor`) whose served call would otherwise record `*` —
-   ships under the scope that later record names, deferred or not
+   🔴 **F1 places a NEW session; a BOUND one is DEFERRED while F1 is live — for at most
+   `F1DeferWindow` (1 h) — then routed by the base rule** (operator decisions, #317; `DecideRun`,
+   `f1move_test.go`). On a host with more than one instance, a session already bound to an instance
+   whose F1 holds this pass gets `deferred` — whatever either answer would be, a hold included:
+   nothing of it is shipped, nothing is withdrawn, it is counted **`deferred=`** on the run line (not
+   `refused=`; exit status unchanged), and it is logged ONCE when its window starts (`defer <root>:
+   …`). The window runs from the first pass that saw F1 live while the session was bound — saved as
+   `f1_since` (unix seconds) in the state — and is CLEARED on any pass where F1 is false, so a later
+   episode gets a fresh one. If it expires with F1 still live, the session is routed exactly as
+   before #317 — F1's `*` forces the default instance, through the usual probe and withdrawal —
+   logged once (`… window expired …`). **Why defer:** F1 reverts when the ledger line lands and a
+   move does not — the instance a session is withdrawn from keeps that as a final deletion — so a
+   pass that ran between a `cairn` call's tool input reaching the transcript and its ledger line
+   reaching the disk MOVED a repo-placed session to the default, and the next pass's move back
+   answered 410 and HELD it there for good. That race clears within one pass. **Why bounded:** F1's
+   evidence is sticky (any tool input naming the program, restored every pass), so a bound session
+   that never makes a ledgered call has F1 live for good, and an unbounded deferral stopped its
+   capture for good. **What it guarantees:** inside the window, no ship and no withdrawal, so an F1
+   that clears within the window cannot flip a bound session into a 410 hold. **Its cost:** up to
+   one hour of capture lag for such a session (an opencode root is re-exported on each deferred
+   pass, since nothing of it completed). A one-instance host is exempt (F1 changes no answer there).
+   ⚠ **TWO NAMED RESIDUALS:** (1) **the flip survives past the window** — a session whose F1 stays
+   live longer than the window is moved by the base rule, and a ledger line that later routes it back
+   to the instance it left is refused 410 and held, exactly as before
+   (`TestF1PastTheWindowFallsBackToTheBaseRule` pins it); (2) **T3**, pre-existing — the new-session
+   path has it on the base too: the pod's view-time F1 hides a session only while its ledger is
+   EMPTY (`archive.Meta.LedgerScopes`). Once any ledger record lands, output that reached the
+   transcript with no ledger record of its own — a call whose ledger write was swallowed, or one run
+   with no session id in its environment (`sudo`, `env -i`, `ssh`), including the headerless verbs
+   (`transcript`, `routes`, `arcs`, `doctor`) whose served call would otherwise record `*` — ships
+   under the scope that later record names, deferred or not
    (`TestTheUnledgeredOutputResidualShipsUnderTheLaterScope` pins it as a residual).
 4. **Acts**: ship to the routed instance — the client read ledger FIRST (S11, decision 3a): the
    root's `<session>.jsonl` and every opencode child's, new complete lines only, as the root's
@@ -115,7 +128,9 @@ session is placed by its repo, first match wins (`decideByRepo`):
    state it prints `--run`'s decision (`TestADryRunReadsWhereRunBoundTheSession`): over the stored
    `V` union what it read, by the repo `--run` KEPT (through the same resolver, so a worktree removed
    since still answers as in `--run`), `deferred` for a session `--run` would send nothing of this
-   run (a repo routed to an instance with no `-worker`, or a bound session under F1), and `held` / `deleted` for one the state marks so, which `--run` skips before routing
+   run (a repo routed to an instance with no `-worker`, or a bound session under F1 inside the
+   window `--run` saved as `f1_since`, read against this run's clock — after it, the base rule's
+   answer), and `held` / `deleted` for one the state marks so, which `--run` skips before routing
    (`cmd/cairn-capture/dryparity_test.go`). With no state file it says so on stderr and
    treats every session as bound nowhere yet; with no `-worker` at all it treats every configured
    instance as uploadable.
@@ -265,7 +280,7 @@ means something else).
 
 | exit | means |
 |---|---|
-| 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run, as is a session DEFERRED because its repo now routes to an instance with no `-worker` (§ *A session that recorded no scope*); a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` — and each of those holds is made by ONE pass, so the level is `held-backlog=` (§ *`held=` is not the backlog*) |
+| 0 | the pass completed with no refusal that RECURS — whatever `refused=` says. A network error, a 5xx, a 400, an unanswered withdrawal, an unlistable opencode project, an incomplete export and a 503/507 are counted in `refused=` and retried next run, as is a session DEFERRED because its repo now routes to an instance with no `-worker` (§ *A session that recorded no scope*); a bound session deferred under F1 (step 3) is counted `deferred=`, not `refused=`, and never fails a pass; a 422 hold and a rewritten stream are marked once (below); a 410 is `deleted=`, a routing hold `held=` — and each of those holds is made by ONE pass, so the level is `held-backlog=` (§ *`held=` is not the backlog*) |
 | 3 | the pass **completed** — every other session processed, the state saved — but refused at least one session for a reason that recurs on every run with nothing changed on either side (`capture.Recurs`): an **unresumable position** or **another uploader** (table below) — or **`-opencode-discover` was refused**: project discovery failed (a missing binary, non-zero exits from both the v2 API and v1 CLI fallback, or an answer that is not a list of projects with absolute canonical paths/worktrees and sandboxes — never read as "no projects"). That refuses only the DISCOVERED projects: Claude Code and every explicit `-opencode-project` directory are still captured, and a `refused opencode discovery` line says so at the start. One last stderr line per cause names the count and that cause's remedy |
 | 1 | the state cannot be read or saved, a session tree cannot be listed, or an instance refused the capture token (401/403); wins over 3 |
 | 2 | usage, and `--self-test`'s "could not vouch" |
@@ -428,11 +443,12 @@ destination's deletion is final for the root (the archive's deletion journal, re
 route or verb that removes an entry — and deliberately so); and editing the state file is the
 "do not remove the entry" case above. What exists is the prefix where it is, owner-deletable there.
 That is why the move that CAUSED such a hold must not happen on a one-run answer: a bound session
-under F1 is deferred, never moved (step 3 above). ⚠ That stops new flips; it does NOT rescue a
-session an older build already moved on F1 — that one is bound to the default now, is deferred while
-its F1 holds, and when its ledger line lands its move back is refused 410 and held, exactly as before.
-Deferring guarantees only "no ship and no withdrawal while F1 is live"; it is not T3 coverage (step 3's
-named residual).
+under F1 is deferred for up to an hour rather than moved (step 3 above). ⚠ That stops the flip whose
+F1 clears inside the window; a session whose F1 outlives the window is moved by the base rule and
+can still flip into this hold (step 3's residual 1). And it does NOT rescue a session an older build
+already moved on F1 — that one is bound to the default now, is deferred while its window runs, and
+when its ledger line lands its move back is refused 410 and held, exactly as before. Deferring
+guarantees only "no ship and no withdrawal inside the window"; it is not T3 coverage (residual 2).
 
 ⚠ **What it cannot do.** The withdrawal table's third row reads "never landed" off this agent's own
 watermarks, which a kill can leave unsaved — but then the instance DOES hold the prefix and answers

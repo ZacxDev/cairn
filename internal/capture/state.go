@@ -118,6 +118,13 @@ type SessionState struct {
 	// ledger was empty would sit in the pod's grow-only `declared_scopes` and make the session
 	// owner-only for good, after the ledger that answers F1 had landed (#266's audit, #309).
 	Declared []string `json:"declared,omitempty"`
+	// F1Since is when (unix seconds) the current F1 episode's DEFERRAL window began: the first pass
+	// that saw F1 live while the session was bound to an instance on a multi-instance host
+	// ([F1DeferWindow], [DecideRun]). F1Lapsed says that window has expired and the episode fell back
+	// to the base rule (logged once). Both are CLEARED on any pass where F1 is false, so a later
+	// episode gets a fresh window; 0/false is "no episode".
+	F1Since  int64 `json:"f1_since,omitempty"`
+	F1Lapsed bool  `json:"f1_lapsed,omitempty"`
 	// OpencodeUpdated and OpencodeExportedAt are an opencode root's export-skip record
 	// ([Agent.exportSettled]): the `updated` its `session list` row carried (epoch ms) at the last
 	// pass whose export and ship of the root AND every child completed with nothing refused, held,
