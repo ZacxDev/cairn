@@ -25,7 +25,7 @@ import (
 //     is refused and the session is HELD on the default for good.
 //
 // The operator's ruling (#317): while F1 is live a BOUND session is DEFERRED — nothing shipped,
-// nothing withdrawn — for at most [f1Window] from the first pass that saw it, then routed by the
+// nothing withdrawn — for at most [F1DeferWindow] from the first pass that saw it, then routed by the
 // base rule; the window is cleared whenever F1 is false. A NEW session keeps F1's placement.
 // Synthetic throughout: scopes `*-notes`, aliases `personal` (default) and `client`, a year-2000 clock.
 
@@ -344,16 +344,17 @@ func TestF1DefersOnlyABoundSession(t *testing.T) {
 	}
 }
 
-// TestThef1WindowIsTheOperatorsDecision pins the window as a LITERAL: every other test reads the
+// TestTheF1DeferWindowIsTheOperatorsDecision pins the window as a LITERAL: every other test reads the
 // constant, so a changed value would move them along with it.
-func TestThef1WindowIsTheOperatorsDecision(t *testing.T) {
+func TestTheF1DeferWindowIsTheOperatorsDecision(t *testing.T) {
 	if f1Window != time.Hour {
-		t.Fatalf("f1Window is %v; the operator decided 1h0m0s", f1Window)
+		t.Fatalf("F1DeferWindow is %v; the operator decided 1h0m0s", f1Window)
 	}
 }
 
-// TestTheRunLinePrintsDeferred: `deferred=` is the summary's LAST field, after `export-skipped=`, so
-// no field before it moved; it carries the count, not a constant.
+// TestTheRunLinePrintsDeferred: `deferred=` is the summary's LAST field, after `export-skipped=` —
+// MID-line on `--run`'s run line, whose trailing fields each moved one position — and carries the
+// count, not a constant.
 func TestTheRunLinePrintsDeferred(t *testing.T) {
 	for _, n := range []int{0, 4} {
 		line := summaryDeferred(n, 9).String()
@@ -387,5 +388,64 @@ func TestTheUnledgeredOutputResidualShipsUnderTheLaterScope(t *testing.T) {
 		t.Fatalf("KNOWN RESIDUAL MOVED: the unledgered output shipped=%v, declared %v (pinned: shipped, declared "+
 			"[beta-notes] with no `*`). If a fix closed T3 here, invert this test deliberately\n%s",
 			shipped, w.e.sink.declared["client/"+w.id], w.log.String())
+	}
+}
+
+// TestAFutureDatedF1StartIsRestampedToNow: a window start stamped while the clock ran AHEAD would
+// stretch the window by the skew. The first pass with a correct clock restamps it to now (persisted),
+// so the window ends one hour after THAT pass — not one hour after the skewed stamp.
+//
+// RED without the clamp: `f1_since` keeps the skewed stamp and the session is still deferred at the
+// true start + 1h.
+func TestAFutureDatedF1StartIsRestampedToNow(t *testing.T) {
+	w := boundToClient(t, "s-skew")
+	appendTo(t, w.path, claudeToolUse(w.id, w.repo, 2))
+	skewed := 5*time.Minute + 3*time.Hour // the clock ran three hours ahead on this pass
+	w.mustBeDeferred(t, "the pass with the clock ahead", w.at(t, skewed), 2)
+	if got := f1Since(w.ss()); got != t0.Add(skewed).Unix() {
+		t.Fatalf("CONTROL: the skewed pass must stamp its own (future) clock, got %d", got)
+	}
+
+	trueStart := 10 * time.Minute // the clock is right again
+	w.mustBeDeferred(t, "the first pass with a correct clock", w.at(t, trueStart), 2)
+	if got := f1Since(w.ss()); got != t0.Add(trueStart).Unix() {
+		t.Fatalf("a future-dated f1_since %d was not restamped to now %d — it stretches the window by the skew",
+			got, t0.Add(trueStart).Unix())
+	}
+	if sum := w.at(t, trueStart+f1Window); deferredCount(sum) != 0 || w.ss().Instance != "personal" {
+		t.Fatalf("one window after the restamp: deferred=%d, bound %q — want the base move to personal\n%s",
+			deferredCount(sum), w.ss().Instance, w.log.String())
+	}
+	if n := w.count("defer s-skew: its inputs"); n != 1 {
+		t.Fatalf("the restamp logged a second window start (%d lines), want the episode's ONE\n%s", n, w.log.String())
+	}
+}
+
+// TestASecondEpisodeLapsesAgain: when F1 clears, BOTH halves of the episode's record clear — the
+// start AND the "window expired" mark — so a later episode that also outlives its window is routed
+// by the base rule and logged as expired again.
+func TestASecondEpisodeLapsesAgain(t *testing.T) {
+	w := boundToClient(t, "s-twice")
+	appendTo(t, w.path, claudeToolUse(w.id, w.repo, 2))
+	w.mustBeDeferred(t, "episode 1", w.at(t, 5*time.Minute), 2)
+	w.at(t, 5*time.Minute+f1Window) // expires: the base rule moves it to personal
+	if ss := w.ss(); ss.Instance != "personal" || !f1Lapsed(ss) {
+		t.Fatalf("CONTROL: episode 1 must lapse onto personal: bound %q, lapsed %v", ss.Instance, f1Lapsed(ss))
+	}
+
+	w.ledger(t, "alpha-notes") // a scope of personal: F1 clears and nothing moves
+	w.at(t, 2*time.Hour)
+	if ss := w.ss(); f1Since(ss) != 0 || f1Lapsed(ss) || ss.Instance != "personal" || ss.Held {
+		t.Fatalf("F1 false: f1_since %d, lapsed %v, bound %q, held %v — want BOTH cleared, still on personal",
+			f1Since(ss), f1Lapsed(ss), ss.Instance, ss.Held)
+	}
+
+	w.noLedger(t) // episode 2
+	w.at(t, 3*time.Hour)
+	if sum := w.at(t, 3*time.Hour+f1Window); deferredCount(sum) != 0 {
+		t.Fatalf("episode 2 at its window's end: deferred=%d, want the base rule", deferredCount(sum))
+	}
+	if n := w.count("window expired"); n != 2 {
+		t.Fatalf("the expiry was logged %d times over two lapsed episodes, want once per episode (2)\n%s", n, w.log.String())
 	}
 }

@@ -146,13 +146,14 @@ type Summary struct {
 	Unresumable, NotOwner int
 	// ExportSkipped counts opencode roots whose `opencode export` calls this run made none of
 	// ([Agent.exportSettled]); printed as `export-skipped=` (the summary's last field until
-	// `deferred=` followed it), so the skip working is visible in the journal and no field before it
-	// moved.
+	// `deferred=` followed it), so the skip working is visible in the journal.
 	ExportSkipped int
 	// Deferred counts BOUND sessions sent nothing this run because their F1 is live inside its
-	// deferral window ([DecideRun], [F1DeferWindow]). NOT part of Refused, and never fails a run;
-	// printed after `export-skipped=`, so no field before it moved. (A session deferred because its
-	// repo routes to an instance with no `-worker` is still a `refused=`, as #293 made it.)
+	// deferral window ([DecideRun], [F1DeferWindow]). NOT part of Refused, and never fails a run.
+	// ⚠ Printed after `export-skipped=`, which is MID-line on `--run`'s run line: the fields
+	// `cmd/cairn-capture` appends after the summary (`omitted=` … `held-backlog=`) each moved one
+	// position right — name-keyed parsers are unaffected, positional ones are not. (A session deferred
+	// because its repo routes to an instance with no `-worker` is still a `refused=`, as #293 made it.)
 	Deferred int
 }
 
@@ -568,14 +569,19 @@ func (a *Agent) route(root string, ss *SessionState, f1 bool, sum *Summary) (shi
 		if err := a.saveRouting(root); err != nil {
 			return false, false, err
 		}
-	case f1 && ss.Instance != "" && a.Routing.MultiInstance() && ss.F1Since == 0:
+	case f1 && ss.Instance != "" && a.Routing.MultiInstance() && (ss.F1Since == 0 || ss.F1Since > now.Unix()):
+		// ⚠ A START IN THE FUTURE — stamped while the clock ran ahead — is RESTAMPED to now: kept, it
+		// would stretch the window by the skew.
+		started := ss.F1Since == 0
 		ss.F1Since = now.Unix()
 		if err := a.saveRouting(root); err != nil {
 			return false, false, err
 		}
-		// Said ONCE per episode, here — not on every deferred pass.
-		a.logf("defer %s: its inputs name the program and its read ledger is empty (F1); bound to %s, nothing of it is "+
-			"shipped or withdrawn until its ledger answers, for at most %s", root, ss.Instance, F1DeferWindow)
+		if started {
+			// Said ONCE per episode, here — not on every deferred pass.
+			a.logf("defer %s: its inputs name the program and its read ledger is empty (F1); bound to %s, nothing of it is "+
+				"shipped or withdrawn until its ledger answers, for at most %s", root, ss.Instance, F1DeferWindow)
+		}
 	}
 	rules := RepoRules{Owners: a.OwnerRoutes, Uploadable: a.Uploadable, Bound: ss.Instance, Now: now}
 	if ss.F1Since != 0 {

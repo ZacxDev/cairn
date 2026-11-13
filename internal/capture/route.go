@@ -174,7 +174,9 @@ func DecideRun(v []string, f1 bool, repo Repo, routing client.Routing, rules Rep
 const F1DeferWindow = time.Hour
 
 // f1WindowExpired is whether this F1 episode's deferral window has run out: never before it starts
-// (`F1Since` zero — this pass starts it), and from `F1Since + F1DeferWindow` on.
+// (`F1Since` zero — this pass starts it), and from `F1Since + F1DeferWindow` on. A start AFTER `Now`
+// (stamped while the clock ran ahead) is not expired either, which is also what [Agent.route]'s
+// restamp of it to `Now` answers — so a dry run reading the unrestamped state agrees with `--run`.
 func (r RepoRules) f1WindowExpired() bool {
 	return !r.F1Since.IsZero() && !r.Now.Before(r.F1Since.Add(F1DeferWindow))
 }

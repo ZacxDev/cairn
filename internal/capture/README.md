@@ -27,7 +27,7 @@ operator's act.
    that began at least `OpencodeSettle` (60 min) after that `updated` and less than
    `OpencodeMaxExportAge` (24 h) ago, is NOT exported (`Agent.exportSettled`): its ledgers are
    still folded, it is still routed, and its ledger still ships. The run line counts these as
-   `export-skipped=`, followed only by `deferred=` (step 3's F1 deferral).
+   `export-skipped=`. ⚠ `deferred=` (step 3's F1 deferral) is INSERTED after `export-skipped=`, inside the `cairn-capture: run …` line, so the four fields `--run` prints after the summary — `omitted=`, `recheck-omitted=`, `requests=`, `held-backlog=` — each shift one position right: a parser keyed on field NAMES is unaffected, a POSITIONAL one must update.
 2. **Derives `V`'s read half** with `internal/transcript/scopeuse` over the new records, the
    persisted evidence of earlier runs, and the client read ledgers of the root and every child —
    a UNION with the stored `V`, so a deleted ledger cannot shrink it.
@@ -54,7 +54,7 @@ operator's act.
    nothing of it is shipped, nothing is withdrawn, it is counted **`deferred=`** on the run line (not
    `refused=`; exit status unchanged), and it is logged ONCE when its window starts (`defer <root>:
    …`). The window runs from the first pass that saw F1 live while the session was bound — saved as
-   `f1_since` (unix seconds) in the state — and is CLEARED on any pass where F1 is false, so a later
+   `f1_since` (unix seconds) in the state, restamped to now if it lies in the future (a clock that ran ahead) — and is CLEARED on any pass where F1 is false, so a later
    episode gets a fresh one. If it expires with F1 still live, the session is routed exactly as
    before #317 — F1's `*` forces the default instance, through the usual probe and withdrawal —
    logged once (`… window expired …`). **Why defer:** F1 reverts when the ledger line lands and a

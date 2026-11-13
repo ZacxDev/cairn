@@ -116,8 +116,7 @@ func TestTheSkipWindowsAreTheOperatorsDecision(t *testing.T) {
 }
 
 // TestTheRunLinePrintsExportSkipped: the skip is visible in the journal — `export-skipped=` follows
-// `deleted=` (so no field before it moved), carrying the count, not a constant; only `deferred=`
-// (#317) follows it.
+// `deleted=`, carrying the count, not a constant; only `deferred=` (#317) follows it in the summary.
 func TestTheRunLinePrintsExportSkipped(t *testing.T) {
 	for _, n := range []int{0, 3} {
 		line := Summary{ExportSkipped: n, Deleted: 7}.String()
